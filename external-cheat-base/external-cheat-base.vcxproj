@@ -140,6 +140,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="button.hpp" />
     <ClInclude Include="client_dll.hpp" />
     <ClInclude Include="esp.hpp" />
     <ClInclude Include="math\vector.h" />

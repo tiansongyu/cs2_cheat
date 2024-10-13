@@ -5,6 +5,7 @@
 #include"renderer/renderer.h"
 #include"client_dll.hpp"
 #include"offset.hpp"
+#include "button.hpp"
 
 struct viewMatrix
 {
@@ -24,6 +25,7 @@ namespace esp
 	void loop();
 	void render();
 	void aim_bot();
+	void auto_trigger();
 
 	bool w2s(const vec3& world, vec2& screen, float m[16]);
 

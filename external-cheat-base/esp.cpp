@@ -4,8 +4,6 @@
 void esp::loop() {
 
 	uintptr_t entity_list = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwEntityList);
-
-
 	while (true)
 	{
 		uintptr_t localPlayerPawn = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
@@ -40,6 +38,7 @@ void esp::loop() {
 		Sleep(10);
 	}
 }
+
 
 void esp::aim_bot()
 {
@@ -80,8 +79,7 @@ void esp::aim_bot()
 		{
 			vec3 entityEyePos = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin)
 				+ memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
-			float current_distance = player_distance(entity_position, entityEyePos);
-
+			float current_distance = player_distance(entity_position, entityEyePos); 
 			if (closet_distance < 0 || current_distance < closet_distance)
 			{
 				closet_distance = current_distance;
@@ -91,6 +89,38 @@ void esp::aim_bot()
 	}
 	vec3 relativeAngle = (enemyPos - entity_position).RelativeAngle();
 	memory::Write<vec3>(modBase + cs2_dumper::offsets::client_dll::dwViewAngles, relativeAngle);
+}
+
+void esp::auto_trigger()
+{
+	uintptr_t entity_list = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwEntityList);
+	uintptr_t localPlayerPawn = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
+	BYTE team = memory::Read<BYTE>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
+
+
+	int corsshair_entity_index = memory::Read<uintptr_t>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawnBase::m_iIDEntIndex);
+	if (corsshair_entity_index < 0)
+	{
+		return;
+	}
+
+	uintptr_t listEntry = memory::Read<uintptr_t>(entity_list + 0x8 * (corsshair_entity_index >> 9) + 0x10);
+	uintptr_t entity = memory::Read<uintptr_t>(listEntry +120 * (corsshair_entity_index & 0x1ff));
+	if (!entity) {
+		return;
+	}
+	if (team == memory::Read<BYTE>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum))
+		return;
+	if(memory::Read<int>(entity+ cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth)<=0)
+	{
+		return;
+	}
+	memory::Write<int>(modBase + cs2_dumper::buttons::attack, 65537);
+	Sleep(5);
+	memory::Write<int>(modBase + cs2_dumper::buttons::attack, 256);
+	Sleep(5);
+
+	Sleep(20);
 }
 
 void esp::frame()

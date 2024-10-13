@@ -6,10 +6,10 @@
 
 #include "../math/vector.h"
 
-static uint32_t WIDTH = 2560;
-static uint32_t HEIGHT = 1440;
-static uint32_t WINDOW_W = 2560;
-static uint32_t WINDOW_H = 1440;
+extern uint32_t WIDTH;
+extern uint32_t HEIGHT;
+extern uint32_t WINDOW_W;
+extern uint32_t WINDOW_H;
 namespace renderer
 {
 	inline IDirect3D9* pD3D = nullptr;

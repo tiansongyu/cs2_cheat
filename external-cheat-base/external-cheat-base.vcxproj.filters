@@ -33,6 +33,9 @@
     <ClInclude Include="offset.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="button.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="renderer\renderer.cpp">
