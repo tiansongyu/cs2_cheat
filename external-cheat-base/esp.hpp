@@ -21,10 +21,12 @@ namespace esp
 	inline uintptr_t pID;
 	inline uintptr_t modBase;
 	inline uintptr_t modEngine2;
+	inline bool auto_aimBotEnabled = false;
 	void frame();
 	void loop();
 	void render();
 	void aim_bot();
+	void auto_aim_bot();
 	void auto_trigger();
 
 	bool w2s(const vec3& world, vec2& screen, float m[16]);

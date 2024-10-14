@@ -39,33 +39,47 @@ int main()
         std::cout << "failed " << std::endl;
     }
 
+    std::thread auto_aim_bot_thread(esp::auto_aim_bot);
+
     bool aimBotEnabled = false;
-        while (!GetAsyncKeyState(VK_F9) && renderer::running)
+    while (!GetAsyncKeyState(VK_F9) && renderer::running)
+    {
+        esp::frame();
+
+        if (GetAsyncKeyState(VK_RSHIFT) & 0x8000)
         {
-            esp::frame();
-
-            if (GetAsyncKeyState(VK_RSHIFT) & 0x8000)
-            {
-                    aimBotEnabled = !aimBotEnabled;
-                    if (aimBotEnabled)
-                    {
-                        MessageBox(NULL, L"Aim Bot Enabled", L"Info", MB_OK | MB_TOPMOST);
-                    }
-                    else
-                    {
-                        MessageBox(NULL, L"Aim Bot Disabled", L"Info",MB_OK | MB_TOPMOST);
-                    }
-                
-            }
-            if (aimBotEnabled && (GetAsyncKeyState(VK_LSHIFT) & 0x8000))
-            {
-                esp::aim_bot();
-            }
-            if (aimBotEnabled) {
-                esp::auto_trigger();
-
-            }
+                aimBotEnabled = !aimBotEnabled;
+                if (aimBotEnabled)
+                {
+                    MessageBox(NULL, L"Aim Bot Enabled", L"Info", MB_OK | MB_TOPMOST);
+                }
+                else
+                {
+                    MessageBox(NULL, L"Aim Bot Disabled", L"Info",MB_OK | MB_TOPMOST);
+                }
+            
         }
+        if (aimBotEnabled && (GetAsyncKeyState(VK_LSHIFT) & 0x8000))
+        {
+            esp::aim_bot();
+        }
+        if (aimBotEnabled) {
+            esp::auto_trigger();
+        }
+        if (GetAsyncKeyState(VK_RCONTROL) & 0x8000)
+        {
+            esp::auto_aimBotEnabled = !esp::auto_aimBotEnabled;
+            if (esp::auto_aimBotEnabled)
+            {
+                MessageBox(NULL, L"auto aim Bot Enabled ", L"Info", MB_OK | MB_TOPMOST);
+            }
+            else
+            {
+                MessageBox(NULL, L"auto aim Bot Disabled", L"Info", MB_OK | MB_TOPMOST);
+            }
+
+        }
+    }
     renderer::destroy();
 
     return 0;

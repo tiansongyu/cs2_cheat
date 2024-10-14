@@ -40,6 +40,60 @@ void esp::loop() {
 }
 
 
+void esp::auto_aim_bot()
+{
+	uintptr_t entity_list = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwEntityList);
+	if (!entity_list)
+	{
+		return;
+	}
+	while (true) {
+		if (!auto_aimBotEnabled)
+		{
+			Sleep(100);
+			continue;
+		}
+		uintptr_t localPlayerPawn = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
+		if (!localPlayerPawn) {
+			return;
+		}
+		BYTE team = memory::Read<BYTE>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
+		vec3 entity_position = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin) +
+			memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
+		float closet_distance = -1;
+		vec3 enemyPos;
+		for (uint32_t i = 1; i < 32; i++)
+		{
+			uintptr_t listEntry = memory::Read<uintptr_t>(entity_list + ((8 * (i & 0x7ff) >> 9) + 16));
+			if (!listEntry) continue;
+
+			uintptr_t entityController = memory::Read<uintptr_t>(listEntry + 120 * (i & 0x1ff));
+			if (!entityController)continue;
+
+			uintptr_t entityControllerPawn = memory::Read<uintptr_t>(entityController +
+				cs2_dumper::schemas::client_dll::CCSPlayerController::m_hPlayerPawn);
+
+			if (!entityControllerPawn)continue;
+
+			uintptr_t entity = memory::Read<uintptr_t>(listEntry + 120 * (entityControllerPawn & 0x1ff));
+			uint8_t current_flag = uint8_t(memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum));
+			uint32_t health = uint8_t(memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth));
+
+			bool is_diff_team = team == current_flag ? false : true;
+			if (!is_diff_team)
+				continue;
+			if (health <= 0)
+				continue;
+			vec3 entityEyePos = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin)
+				+ memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
+			vec3 relativeAngle = (entityEyePos - entity_position).RelativeAngle();
+			memory::Write<vec3>(modBase + cs2_dumper::offsets::client_dll::dwViewAngles, relativeAngle);
+			Sleep(100);
+			esp::auto_trigger();
+		}
+	}
+
+}
 void esp::aim_bot()
 {
 	uintptr_t entity_list = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwEntityList);
@@ -116,10 +170,8 @@ void esp::auto_trigger()
 		return;
 	}
 	memory::Write<int>(modBase + cs2_dumper::buttons::attack, 65537);
-	Sleep(5);
+	Sleep(20);
 	memory::Write<int>(modBase + cs2_dumper::buttons::attack, 256);
-	Sleep(5);
-
 	Sleep(20);
 }
 
@@ -174,8 +226,8 @@ bool esp::w2s(const vec3& world, vec2& screen, float m[16]) {
 	ndc.x = clipCoords.x / clipCoords.w;
 	ndc.y = clipCoords.y / clipCoords.w;
 
-	screen.x = (WINDOW_W / 2.0f * ndc.x) + (ndc.x + WINDOW_W / 2.0f);
-	screen.y = -(WINDOW_H / 2.0f * ndc.y) + (ndc.y + WINDOW_H / 2.0f);
+	screen.x = (WINDOW_W / 2.0f * ndc.x) +  WINDOW_W / 2.0f;
+	screen.y = -(WINDOW_H / 2.0f * ndc.y) +  WINDOW_H / 2.0f;
 
 	return true;
 }
