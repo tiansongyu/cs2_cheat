@@ -4,7 +4,7 @@
 
 #include"renderer/renderer.h"
 #include"client_dll.hpp"
-#include"offset.hpp"
+#include"offsets.hpp"
 #include "button.hpp"
 
 struct viewMatrix

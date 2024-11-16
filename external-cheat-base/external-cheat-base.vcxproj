@@ -145,7 +145,7 @@
     <ClInclude Include="esp.hpp" />
     <ClInclude Include="math\vector.h" />
     <ClInclude Include="memory\memory.h" />
-    <ClInclude Include="offset.hpp" />
+    <ClInclude Include="offsets.hpp" />
     <ClInclude Include="renderer\renderer.h" />
   </ItemGroup>
   <ItemGroup>

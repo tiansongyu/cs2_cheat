@@ -30,7 +30,7 @@
     <ClInclude Include="esp.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="offset.hpp">
+    <ClInclude Include="offsets.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="button.hpp">
