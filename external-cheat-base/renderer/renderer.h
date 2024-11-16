@@ -24,8 +24,6 @@ namespace renderer
 	bool init(HWND hwnd);
 	void destroy();
 
-	void frame();
-	void handle_events();
 
 	namespace draw
 	{

@@ -79,20 +79,6 @@ bool renderer::init(HWND hwnd)
 
 }
 
-void renderer::frame()
-{
-	handle_events();
-	pDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, NULL, 1.0f, 0);
-
-	pDevice->BeginScene();
-
-	// render here
-	renderer::draw::line(D3DXVECTOR2(0, 0), D3DXVECTOR2(WIDTH, HEIGHT), D3DCOLOR_XRGB(255, 0, 0));
-
-	pDevice->EndScene();
-	pDevice->Present(NULL, NULL, NULL, NULL);
-}
-
 void renderer::destroy()
 {
 	if (pDevice)
@@ -134,14 +120,5 @@ void renderer::draw::box(D3DXVECTOR2 tl, D3DXVECTOR2 br, D3DCOLOR color)
 	mLine->Begin();
 	mLine->Draw(list, 5, color);
 	mLine->End();
-}
-
-void renderer::handle_events()
-{
-	while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
-	{
-		TranslateMessage(&msg);
-		DispatchMessage(&msg);
-	}
 }
 

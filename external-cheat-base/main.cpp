@@ -7,6 +7,18 @@ uint32_t WIDTH;
 uint32_t HEIGHT;
 uint32_t WINDOW_W;
 uint32_t WINDOW_H;
+
+std::atomic<bool> aimBotEnabled(false);
+
+void autoTriggerThread() {
+    while (true) {
+        if (aimBotEnabled) {
+            esp::auto_trigger();
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1)); // 控制执行频率
+    }
+}
+
 int main()
 {
     esp::pID = memory::GetProcID(L"cs2.exe");
@@ -38,13 +50,14 @@ int main()
     else {
         std::cout << "failed " << std::endl;
     }
+    std::thread triggerThread(autoTriggerThread);
 
-    std::thread auto_aim_bot_thread(esp::auto_aim_bot);
+    triggerThread.detach();
 
-    bool aimBotEnabled = false;
+
     while (!GetAsyncKeyState(VK_F9) && renderer::running)
     {
-        esp::frame();
+        esp::frame(aimBotEnabled);
 
         if (GetAsyncKeyState(VK_RSHIFT) & 0x8000)
         {
@@ -63,22 +76,20 @@ int main()
         {
             esp::aim_bot();
         }
-        if (aimBotEnabled) {
-            esp::auto_trigger();
-        }
-        if (GetAsyncKeyState(VK_RCONTROL) & 0x8000)
-        {
-            esp::auto_aimBotEnabled = !esp::auto_aimBotEnabled;
-            if (esp::auto_aimBotEnabled)
-            {
-                MessageBox(NULL, L"auto aim Bot Enabled ", L"Info", MB_OK | MB_TOPMOST);
-            }
-            else
-            {
-                MessageBox(NULL, L"auto aim Bot Disabled", L"Info", MB_OK | MB_TOPMOST);
-            }
 
-        }
+        // if (GetAsyncKeyState(VK_RCONTROL) & 0x8000)
+        // {
+        //     esp::auto_aimBotEnabled = !esp::auto_aimBotEnabled;
+        //     if (esp::auto_aimBotEnabled)
+        //     {
+        //         MessageBox(NULL, L"auto aim Bot Enabled ", L"Info", MB_OK | MB_TOPMOST);
+        //     }
+        //     else
+        //     {
+        //         MessageBox(NULL, L"auto aim Bot Disabled", L"Info", MB_OK | MB_TOPMOST);
+        //     }
+
+        // }
     }
     renderer::destroy();
 

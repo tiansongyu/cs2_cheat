@@ -7,6 +7,11 @@
 #include"offsets.hpp"
 #include "button.hpp"
 
+extern uint32_t WIDTH;
+extern uint32_t HEIGHT;
+extern uint32_t WINDOW_W;
+extern uint32_t WINDOW_H;
+
 struct viewMatrix
 {
 	float m[16];
@@ -22,9 +27,12 @@ namespace esp
 	inline uintptr_t modBase;
 	inline uintptr_t modEngine2;
 	inline bool auto_aimBotEnabled = false;
-	void frame();
+	inline int squareX;
+	inline int squareY;
+	inline int squareSize; 
+	void frame(bool isDrawAim);
 	void loop();
-	void render();
+	void render(bool isDrawAim);
 	void aim_bot();
 	void auto_aim_bot();
 	void auto_trigger();

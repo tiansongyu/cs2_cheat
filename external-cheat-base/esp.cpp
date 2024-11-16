@@ -111,6 +111,10 @@ void esp::aim_bot()
 		memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
 	float closet_distance = -1;
 	vec3 enemyPos;
+	enemyPos.x = -1;
+	enemyPos.y = -1;
+	enemyPos.z = -1;
+	vec2 head;
 	for (uint32_t i = 1; i < 32; i++)
 	{
 		uintptr_t listEntry = memory::Read<uintptr_t>(entity_list + ((8 * (i & 0x7ff) >> 9) + 16));
@@ -132,14 +136,19 @@ void esp::aim_bot()
 		if (entity && is_diff_team && health > 0)
 		{
 			vec3 entityEyePos = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin)
-				+ memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
-			float current_distance = player_distance(entity_position, entityEyePos); 
-			if (closet_distance < 0 || current_distance < closet_distance)
-			{
-				closet_distance = current_distance;
-				enemyPos = entityEyePos;
+				+ memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
+                        if (w2s(entityEyePos, head, vm.m)) {
+                          if (head.x > squareX && head.y > squareY &&
+                              head.x < squareX + squareSize &&
+                              head.y < squareY + squareSize) {
+                            enemyPos = entityEyePos;
+                            break;
+                          }
 			}
 		}
+	}
+	if (enemyPos.x == -1 || enemyPos.y == -1 || enemyPos.z == -1) {
+		return;
 	}
 	vec3 relativeAngle = (enemyPos - entity_position).RelativeAngle();
 	memory::Write<vec3>(modBase + cs2_dumper::offsets::client_dll::dwViewAngles, relativeAngle);
@@ -151,13 +160,11 @@ void esp::auto_trigger()
 	uintptr_t localPlayerPawn = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
 	BYTE team = memory::Read<BYTE>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
 
-
 	int corsshair_entity_index = memory::Read<uintptr_t>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawnBase::m_iIDEntIndex);
 	if (corsshair_entity_index < 0)
 	{
 		return;
 	}
-
 	uintptr_t listEntry = memory::Read<uintptr_t>(entity_list + 0x8 * (corsshair_entity_index >> 9) + 0x10);
 	uintptr_t entity = memory::Read<uintptr_t>(listEntry +120 * (corsshair_entity_index & 0x1ff));
 	if (!entity) {
@@ -169,27 +176,42 @@ void esp::auto_trigger()
 	{
 		return;
 	}
+	Sleep(1);
 	memory::Write<int>(modBase + cs2_dumper::buttons::attack, 65537);
 	Sleep(20);
 	memory::Write<int>(modBase + cs2_dumper::buttons::attack, 256);
 	Sleep(20);
 }
 
-void esp::frame()
+void esp::frame(bool isDrawAim)
 {
 	renderer::pDevice->Clear(0, 0, D3DCLEAR_TARGET, NULL, 1.f, 0);
 	renderer::pDevice->BeginScene();
 
-	render();
+	render(isDrawAim);
 
 	renderer::pDevice->EndScene();
 	renderer::pDevice->Present(0, 0, 0, 0);
 
 }
 
-void  esp::render()
+void  esp::render(bool isDrawAim)
 {
 	vm = memory::Read<viewMatrix>(modBase + cs2_dumper::offsets::client_dll::dwViewMatrix);
+    
+    squareSize = WIDTH / 13; // 正方形的边长
+    int centerX = WIDTH / 2;
+    int centerY = HEIGHT / 2;
+    squareX = centerX - (squareSize / 2);
+    squareY = centerY - (squareSize / 2);
+
+    // 绘制蓝色正方形
+	if (isDrawAim) {
+		renderer::draw::box(D3DXVECTOR2{ static_cast<float>(squareX), static_cast<float>(squareY) },
+			D3DXVECTOR2{ static_cast<float>(squareX + squareSize), static_cast<float>(squareY + squareSize) },
+			D3DCOLOR_XRGB(0, 0, 255));
+	}
+                        
     for (uintptr_t entity : entities)
 	{
 		vec3 absOrigin = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
