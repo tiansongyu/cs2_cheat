@@ -20,6 +20,18 @@
 
 ## 编译和运行
 
-1. 确保已安装必要的编译工具和库。
+1. 确保已安装必要的编译工具和库
+
+下载安装D3D SDK
+```
+https://www.microsoft.com/en-gb/download/details.aspx?id=6812
+```
+
+这里查看CS2所有属性地址，实时更新
+```
+https://github.com/a2x/cs2-dumper/
+```
+
 2. 克隆或下载源代码到本地。
-3. 使用以下命令编译源代码：
+
+3. 使用vs2022编译源代码：
