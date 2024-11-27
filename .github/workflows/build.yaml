@@ -81,3 +81,25 @@ jobs:
       with:
         name: Release-Binaries
         path: x64/Release/
+
+    - name: Create Release
+      if: env.UPDATE_AVAILABLE == 'true'
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: 'v1.0.${{ github.run_number }}'
+        release_name: 'Release v1.0.${{ github.run_number }}'
+        draft: false
+        prerelease: false
+
+    - name: Upload Release Asset
+      if: env.UPDATE_AVAILABLE == 'true'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: x64/Release/
+        asset_name: Release-Binaries.zip
+        asset_content_type: application/zip
