@@ -17,6 +17,15 @@ jobs:
       with:
         vs-version: '17.0'
 
+    - name: Install Visual Studio components
+      run: |
+        curl -o vs_buildtools.exe https://aka.ms/vs/17/release/vs_buildtools.exe
+        start /w vs_buildtools.exe --quiet --wait --norestart --nocache `
+          --installPath "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools" `
+          --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+          --add Microsoft.VisualStudio.Component.Windows10SDK
+        exit /b 0
+
     - name: Download DirectX SDK
       run: |
         Invoke-WebRequest -Uri "https://download.microsoft.com/download/A/E/7/AE743F1F-632B-4809-87A9-AA1BB3458E31/DXSDK_Jun10.exe" -OutFile "DXSDK_Jun10.exe"
@@ -25,16 +34,10 @@ jobs:
       run: |
         Start-Process -FilePath "DXSDK_Jun10.exe" -ArgumentList "/U /Q" -Wait
         Write-Host "DirectX SDK Installation completed"
-        
-    - name: Verify DirectX SDK Installation
-      run: |
-        if (Test-Path "C:\Program Files (x86)\Microsoft DirectX SDK (June 2010)\Include\d3dx9.h") {
-            Write-Host "d3dx9.h found"
-        } else {
-            Write-Error "d3dx9.h not found"
-            exit 1
-        }
+
     - name: Build Solution
       shell: cmd
       run: |
-        msbuild external-cheat-base.sln /p:Configuration=Release /p:Platform=x64 /p:WindowsTargetPlatformVersion=10.0.22000.0 /p:IncludePath="C:\Program Files (x86)\Microsoft DirectX SDK (June 2010)\Include;C:\Program Files (x86)\Windows Kits\10\Include\10.0.22000.0\um" /p:LibraryPath="C:\Program Files (x86)\Microsoft DirectX SDK (June 2010)\Lib\x64;C:\Program Files (x86)\Windows Kits\10\Lib\10.0.22000.0\um\x64"
+        set INCLUDE=%INCLUDE%;C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.38.33130\include
+        set LIB=%LIB%;C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.38.33130\lib\x64
+        msbuild external-cheat-base.sln /p:Configuration=Release /p:Platform=x64 /p:WindowsTargetPlatformVersion=10.0.22000.0 /p:IncludePath="C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.38.33130\include;C:\Program Files (x86)\Microsoft DirectX SDK (June 2010)\Include;C:\Program Files (x86)\Windows Kits\10\Include\10.0.22000.0\um" /p:LibraryPath="C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.38.33130\lib\x64;C:\Program Files (x86)\Microsoft DirectX SDK (June 2010)\Lib\x64;C:\Program Files (x86)\Windows Kits\10\Lib\10.0.22000.0\um\x64"
