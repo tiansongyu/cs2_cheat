@@ -25,8 +25,8 @@ jobs:
         
     - name: Add DirectX SDK to include path
       run: |
-        echo "::add-path::C:\\Program Files (x86)\\Microsoft DirectX SDK (June 2010)\\Include"
-        echo "::add-path::C:\\Program Files (x86)\\Microsoft DirectX SDK (June 2010)\\Lib\\x64"
+        echo "C:\\Program Files (x86)\\Microsoft DirectX SDK (June 2010)\\Include" >> $GITHUB_PATH
+        echo "C:\\Program Files (x86)\\Microsoft DirectX SDK (June 2010)\\Lib\\x64" >> $GITHUB_PATH
 
     - name: Build solution
       run: |
