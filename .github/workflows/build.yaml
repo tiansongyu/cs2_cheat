@@ -25,7 +25,15 @@ jobs:
       run: |
         Start-Process -FilePath "DXSDK_Jun10.exe" -ArgumentList "/U /Q" -Wait
         Write-Host "DirectX SDK Installation completed"
-
+        
+    - name: Verify DirectX SDK Installation
+      run: |
+        if (Test-Path "C:\Program Files (x86)\Microsoft DirectX SDK (June 2010)\Include\d3dx9.h") {
+            Write-Host "d3dx9.h found"
+        } else {
+            Write-Error "d3dx9.h not found"
+            exit 1
+        }
     - name: Build Solution
       shell: cmd
       run: |
