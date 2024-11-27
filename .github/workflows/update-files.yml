@@ -1,8 +1,8 @@
 name: Update Header Files
 
 on:
-  schedule:
-    - cron: '0 * * * *'  # 每小时运行一次
+  # schedule:
+  #   - cron: '0 * * * *'  # 每小时运行一次
   #push:
   #  branches: [ main ]
   workflow_dispatch:
