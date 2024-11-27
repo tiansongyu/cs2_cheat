@@ -24,6 +24,12 @@ jobs:
         
         if ($lastCommit -ne $latestCommit) {
           echo "UPDATE_AVAILABLE=true" >> $env:GITHUB_ENV
+          $latestCommit | Out-File -FilePath "last_commit.txt"
+          
+          # Download updated header files
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/client_dll.hpp" -OutFile "external-cheat-base/client_dll.hpp"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.hpp" -OutFile "external-cheat-base/offsets.hpp"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/buttons.hpp" -OutFile "external-cheat-base/buttons.hpp"
         } else {
           echo "UPDATE_AVAILABLE=false" >> $env:GITHUB_ENV
         }
@@ -78,6 +84,7 @@ jobs:
 
     - name: Create Release
       if: env.UPDATE_AVAILABLE == 'true'
+      id: create_release
       uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
