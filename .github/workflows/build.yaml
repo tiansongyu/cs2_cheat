@@ -1,6 +1,8 @@
 name: Build VS2022 D3D9 Project
 
 on:
+  schedule:
+    - cron: '0 * * * *'  # 每小时运行一次
   push:
     branches: [ main ]
   workflow_dispatch:
@@ -12,12 +14,34 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Check cs2-dumper updates
+      id: check_updates
+      shell: powershell
+      run: |
+        $response = Invoke-RestMethod -Uri "https://api.github.com/repos/a2x/cs2-dumper/commits/main"
+        $latestCommit = $response.sha
+        $lastCommit = Get-Content -Path "last_commit.txt" -ErrorAction SilentlyContinue
+        
+        if ($lastCommit -ne $latestCommit) {
+          echo "UPDATE_AVAILABLE=true" >> $env:GITHUB_ENV
+          $latestCommit | Out-File -FilePath "last_commit.txt"
+          
+          # Download updated header files
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/client_dll.hpp" -OutFile "external-cheat-base/client_dll.hpp"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.hpp" -OutFile "external-cheat-base/offsets.hpp"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/buttons.hpp" -OutFile "external-cheat-base/buttons.hpp"
+        } else {
+          echo "UPDATE_AVAILABLE=false" >> $env:GITHUB_ENV
+        }
+
     - name: Setup MSBuild
+      if: env.UPDATE_AVAILABLE == 'true'
       uses: microsoft/setup-msbuild@v1.3.1
       with:
         vs-version: '17.0'
 
     - name: Install Visual Studio components
+      if: env.UPDATE_AVAILABLE == 'true'
       shell: powershell
       run: |
         Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_buildtools.exe" -OutFile "vs_buildtools.exe"
@@ -25,6 +49,7 @@ jobs:
         Remove-Item -Path "vs_buildtools.exe"
 
     - name: Get MSVC Version
+      if: env.UPDATE_AVAILABLE == 'true'
       shell: powershell
       run: |
         $MSVCVersion = (Get-ChildItem "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC").Name | Select-Object -Last 1
@@ -32,15 +57,18 @@ jobs:
         Write-Host "Found MSVC Version: $MSVCVersion"
 
     - name: Download DirectX SDK
+      if: env.UPDATE_AVAILABLE == 'true'
       run: |
         Invoke-WebRequest -Uri "https://download.microsoft.com/download/A/E/7/AE743F1F-632B-4809-87A9-AA1BB3458E31/DXSDK_Jun10.exe" -OutFile "DXSDK_Jun10.exe"
 
     - name: Install DirectX SDK
+      if: env.UPDATE_AVAILABLE == 'true'
       run: |
         Start-Process -FilePath "DXSDK_Jun10.exe" -ArgumentList "/U /Q" -Wait
         Write-Host "DirectX SDK Installation completed"
 
     - name: Build Solution
+      if: env.UPDATE_AVAILABLE == 'true'
       shell: cmd
       run: |
         set INCLUDE=%INCLUDE%;C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\%MSVC_VERSION%\include
@@ -48,12 +76,14 @@ jobs:
         msbuild external-cheat-base.sln /p:Configuration=Release /p:Platform=x64 /p:WindowsTargetPlatformVersion=10.0.22000.0 /p:IncludePath="C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\%MSVC_VERSION%\include;C:\Program Files (x86)\Microsoft DirectX SDK (June 2010)\Include;C:\Program Files (x86)\Windows Kits\10\Include\10.0.22000.0\um;C:\Program Files (x86)\Windows Kits\10\Include\10.0.22000.0\ucrt" /p:LibraryPath="C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\%MSVC_VERSION%\lib\x64;C:\Program Files (x86)\Microsoft DirectX SDK (June 2010)\Lib\x64;C:\Program Files (x86)\Windows Kits\10\Lib\10.0.22000.0\um\x64;C:\Program Files (x86)\Windows Kits\10\Lib\10.0.22000.0\ucrt\x64"
 
     - name: Upload artifacts
+      if: env.UPDATE_AVAILABLE == 'true'
       uses: actions/upload-artifact@v3
       with:
         name: Release-Binaries
         path: x64/Release/
 
     - name: Create Release
+      if: env.UPDATE_AVAILABLE == 'true'
       uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -64,6 +94,7 @@ jobs:
         prerelease: false
 
     - name: Upload Release Asset
+      if: env.UPDATE_AVAILABLE == 'true'
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
