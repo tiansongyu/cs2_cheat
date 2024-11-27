@@ -1,33 +1,37 @@
-name: Build VS2022 Project
+name: Build VS2022 D3D9 Project
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   pull_request:
-    branches:
-      - main
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v2
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-    - name: Set up Visual Studio
-      uses: microsoft/setup-msbuild@v1
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v1.3.1
+      with:
+        vs-version: '17.0'
 
     - name: Install DirectX SDK
       run: |
-        choco install directx-sdk
-        
-    - name: Add DirectX SDK to include path
-      run: |
-        echo "C:\\Program Files (x86)\\Microsoft DirectX SDK (June 2010)\\Include" >> $GITHUB_PATH
-        echo "C:\\Program Files (x86)\\Microsoft DirectX SDK (June 2010)\\Lib\\x64" >> $GITHUB_PATH
+        curl -L https://download.microsoft.com/download/A/E/7/AE743F1F-632B-4809-87A9-AA1BB3458E31/DXSDK_Jun10.exe -o DXSDK_Jun10.exe
+        .\DXSDK_Jun10.exe /U /O:"C:\DXSDK" /F
 
-    - name: Build solution
+    - name: Set Environment Variables
+      run: |
+        echo "DXSDK_DIR=C:\DXSDK\" >> $env:GITHUB_ENV
+        echo "C:\DXSDK\Include" >> $env:GITHUB_PATH
+        echo "C:\DXSDK\Lib\x86" >> $env:GITHUB_PATH
+        echo "C:\DXSDK\Lib\x64" >> $env:GITHUB_PATH
+
+    - name: Build Solution
       run: |
         msbuild external-cheat-base.sln /p:Configuration=Release /p:Platform=x64
