@@ -3,35 +3,42 @@ name: Build VS2022 D3D9 Project
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
-
+    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-    - name: Add MSBuild to PATH
+    - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v1.3.1
       with:
         vs-version: '17.0'
 
+    - name: Download DirectX SDK
+      run: |
+        Invoke-WebRequest -Uri "https://download.microsoft.com/download/A/E/7/AE743F1F-632B-4809-87A9-AA1BB3458E31/DXSDK_Jun10.exe" -OutFile "DXSDK_Jun10.exe"
+
     - name: Install DirectX SDK
       run: |
-        curl -L https://download.microsoft.com/download/A/E/7/AE743F1F-632B-4809-87A9-AA1BB3458E31/DXSDK_Jun10.exe -o DXSDK_Jun10.exe
-        .\DXSDK_Jun10.exe /U /O:"C:\DXSDK" /F
-
-    - name: Set Environment Variables
+        Start-Process -FilePath "DXSDK_Jun10.exe" -ArgumentList "/U /Q" -Wait
+        Write-Host "DirectX SDK Installation completed"
+        
+    - name: Verify DirectX SDK Installation
       run: |
-        echo "DXSDK_DIR=C:\DXSDK\" >> $env:GITHUB_ENV
-        echo "C:\DXSDK\Include" >> $env:GITHUB_PATH
-        echo "C:\DXSDK\Lib\x86" >> $env:GITHUB_PATH
-        echo "C:\DXSDK\Lib\x64" >> $env:GITHUB_PATH
+        if (Test-Path "C:\Program Files (x86)\Microsoft DirectX SDK (June 2010)\Include\d3dx9.h") {
+            Write-Host "d3dx9.h found"
+        } else {
+            Write-Error "d3dx9.h not found"
+            exit 1
+        }
 
     - name: Build Solution
       run: |
-        msbuild external-cheat-base.sln /p:Configuration=Release /p:Platform=x64
+        msbuild external-cheat-base.sln `
+          /p:Configuration=Release `
+          /p:Platform=x64 `
+          /p:IncludePath="C:\Program Files (x86)\Microsoft DirectX SDK (June 2010)\Include;$(IncludePath)" `
+          /p:LibraryPath="C:\Program Files (x86)\Microsoft DirectX SDK (June 2010)\Lib\x64;$(LibraryPath)"
