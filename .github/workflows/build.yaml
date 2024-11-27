@@ -1,0 +1,28 @@
+name: Build VS2022 Project
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Visual Studio
+      uses: microsoft/setup-msbuild@v1
+
+    - name: Install DirectX SDK
+      run: |
+        choco install directx-sdk
+
+    - name: Build solution
+      run: |
+        msbuild external-cheat-base.sln /p:Configuration=Release /p:Platform=x64
