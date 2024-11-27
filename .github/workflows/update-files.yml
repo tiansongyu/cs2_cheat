@@ -3,8 +3,6 @@ name: Update Header Files
 on:
   schedule:
     - cron: '0 * * * *'  # 每小时运行一次
-  push:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -13,6 +11,14 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        persist-credentials: false  # Disable automatic token authentication
+
+    - name: Set up Git
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
 
     - name: Check cs2-dumper updates
       id: check_updates
@@ -37,8 +43,6 @@ jobs:
     - name: Commit and push changes
       if: env.UPDATE_AVAILABLE == 'true'
       run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions[bot]@users.noreply.github.com"
         git add external-cheat-base/client_dll.hpp external-cheat-base/offsets.hpp external-cheat-base/buttons.hpp last_commit.txt
         git commit -m "Update header files from cs2-dumper"
-        git push
+        git push origin HEAD:main
