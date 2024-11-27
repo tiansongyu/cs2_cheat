@@ -18,13 +18,11 @@ jobs:
         vs-version: '17.0'
 
     - name: Install Visual Studio components
+      shell: powershell
       run: |
-        curl -o vs_buildtools.exe https://aka.ms/vs/17/release/vs_buildtools.exe
-        start /w vs_buildtools.exe --quiet --wait --norestart --nocache `
-          --installPath "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools" `
-          --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-          --add Microsoft.VisualStudio.Component.Windows10SDK
-        exit /b 0
+        Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_buildtools.exe" -OutFile "vs_buildtools.exe"
+        Start-Process -FilePath "vs_buildtools.exe" -ArgumentList "--quiet", "--wait", "--norestart", "--nocache", "--installPath", "`"${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools`"", "--add", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "--add", "Microsoft.VisualStudio.Component.Windows10SDK" -NoNewWindow -Wait
+        Remove-Item -Path "vs_buildtools.exe"
 
     - name: Download DirectX SDK
       run: |
