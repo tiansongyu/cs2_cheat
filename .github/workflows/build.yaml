@@ -2,7 +2,7 @@ name: Build VS2022 D3D9 Project
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 每小时运行一次
+    - cron: '0 * * * *'  # Run every hour
   push:
     branches: [ main ]
   workflow_dispatch:
