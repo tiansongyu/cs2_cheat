@@ -7,8 +7,8 @@ curl -o offsets.hpp https://raw.githubusercontent.com/a2x/cs2-dumper/refs/heads/
 echo Updating client_dll.hpp...
 curl -o client_dll.hpp https://raw.githubusercontent.com/a2x/cs2-dumper/refs/heads/main/output/client_dll.hpp
 
-echo Updating button.hpp...
-curl -o button.hpp https://raw.githubusercontent.com/a2x/cs2-dumper/refs/heads/main/output/buttons.hpp
+echo Updating buttons.hpp...
+curl -o buttons.hpp https://raw.githubusercontent.com/a2x/cs2-dumper/refs/heads/main/output/buttons.hpp
 
 echo Update complete.
 endlocal

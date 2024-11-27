@@ -5,7 +5,7 @@
 #include"renderer/renderer.h"
 #include"client_dll.hpp"
 #include"offsets.hpp"
-#include "button.hpp"
+#include "buttons.hpp"
 
 extern uint32_t WIDTH;
 extern uint32_t HEIGHT;

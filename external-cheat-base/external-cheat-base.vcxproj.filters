@@ -33,7 +33,7 @@
     <ClInclude Include="offsets.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="button.hpp">
+    <ClInclude Include="buttons.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
