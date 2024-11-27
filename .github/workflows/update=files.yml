@@ -1,0 +1,44 @@
+name: Update Header Files
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # 每小时运行一次
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  update-files:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check cs2-dumper updates
+      id: check_updates
+      run: |
+        latest_commit=$(curl -s https://api.github.com/repos/a2x/cs2-dumper/commits/main | jq -r .sha)
+        last_commit=$(cat last_commit.txt || echo "none")
+        
+        if [ "$latest_commit" != "$last_commit" ]; then
+          echo "UPDATE_AVAILABLE=true" >> $GITHUB_ENV
+          echo $latest_commit > last_commit.txt
+        else
+          echo "UPDATE_AVAILABLE=false" >> $GITHUB_ENV
+        fi
+
+    - name: Update header files
+      if: env.UPDATE_AVAILABLE == 'true'
+      run: |
+        curl -o external-cheat-base/client_dll.hpp https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/client_dll.hpp
+        curl -o external-cheat-base/offsets.hpp https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.hpp
+        curl -o external-cheat-base/buttons.hpp https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/buttons.hpp
+
+    - name: Commit and push changes
+      if: env.UPDATE_AVAILABLE == 'true'
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git add external-cheat-base/client_dll.hpp external-cheat-base/offsets.hpp external-cheat-base/buttons.hpp last_commit.txt
+        git commit -m "Update header files from cs2-dumper"
+        git push
