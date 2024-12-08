@@ -81,7 +81,7 @@ int main()
                 }
             
         }
-        if (aimBotEnabled && (GetAsyncKeyState(VK_LSHIFT) & 0x8000))
+        if (aimBotEnabled && (GetAsyncKeyState(VK_CAPITAL) & 0x8000))
         {
             esp::aim_bot();
         }
