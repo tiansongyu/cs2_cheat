@@ -8,31 +8,46 @@ void esp::loop() {
 	{
 		uintptr_t localPlayerPawn = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
 		BYTE team = memory::Read<BYTE>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
-		player_position = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin) + 
+		player_position = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin) +
 			memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
 
 		std::vector<uintptr_t> buffer = {};
 
-		for (uint32_t i = 1; i < 32; i++)
+		for (uint32_t i = 0; i < 64; i++)
 		{
-			uintptr_t listEntry = memory::Read<uintptr_t>(entity_list + ((8 * (i & 0x7ff) >> 9) + 16));
+			uintptr_t listEntry = memory::Read<uintptr_t>(entity_list + 0x10 + ((8 * (i & 0x7fff) >> 9)));
 
 			if (!listEntry) continue;
 
-			uintptr_t entityController = memory::Read<uintptr_t>(listEntry + 120 * (i & 0x1ff));
+			uintptr_t entityController = memory::Read<uintptr_t>(listEntry + 0x78 * (i & 0x1FF));
 
-			if (!entityController)continue;
+			if (!entityController) continue;
 
 			uintptr_t entityControllerPawn = memory::Read<uintptr_t>(entityController + cs2_dumper::schemas::client_dll::CCSPlayerController::m_hPlayerPawn);
 
-			if (!entityControllerPawn)continue;
+			if (!entityControllerPawn) continue;
 
-			uintptr_t entity = memory::Read<uintptr_t>(listEntry + 120 * (entityControllerPawn & 0x1ff));
-			uint8_t current_flag = uint8_t(memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum));
-			uint32_t health = uint8_t(memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth));
+			uintptr_t listEntry_2 = memory::Read<uintptr_t>(entity_list + 0x10 + ((8 * (entityControllerPawn & 0x7fff) >> 9)));
 
-			bool is_diff_team = team == current_flag ? false : true;
-			if (entity&& is_diff_team && health > 0) buffer.emplace_back(entity);
+			uintptr_t entity = memory::Read<uintptr_t>(listEntry + 0x78 * (entityControllerPawn & 0x1ff));
+			uintptr_t entity_2 = memory::Read<uintptr_t>(listEntry_2 + 0x78 * (entityControllerPawn & 0x1ff));
+
+			if (!entity && !entity_2) continue;
+
+			auto processEntity = [&](uintptr_t entity) {
+				if (!entity) return;
+
+				uint8_t current_flag = uint8_t(memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum));
+				uint32_t health = uint8_t(memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth));
+				bool is_diff_team = team != current_flag;
+
+				if (is_diff_team && health > 0) {
+					buffer.emplace_back(entity);
+				}
+				};
+
+			processEntity(entity);
+			processEntity(entity_2);
 		}
 		entities = buffer;
 		Sleep(10);
@@ -62,7 +77,7 @@ void esp::auto_aim_bot()
 			memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
 		float closet_distance = -1;
 		vec3 enemyPos;
-		for (uint32_t i = 1; i < 32; i++)
+		for (uint32_t i = 0; i < 64; i++)
 		{
 			uintptr_t listEntry = memory::Read<uintptr_t>(entity_list + ((8 * (i & 0x7ff) >> 9) + 16));
 			if (!listEntry) continue;
@@ -137,13 +152,13 @@ void esp::aim_bot()
 		{
 			vec3 entityEyePos = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin)
 				+ memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
-                        if (w2s(entityEyePos, head, vm.m)) {
-                          if (head.x > squareX && head.y > squareY &&
-                              head.x < squareX + squareSize &&
-                              head.y < squareY + squareSize) {
-                            enemyPos = entityEyePos;
-                            break;
-                          }
+			if (w2s(entityEyePos, head, vm.m)) {
+				if (head.x > squareX && head.y > squareY &&
+					head.x < squareX + squareSize &&
+					head.y < squareY + squareSize) {
+					enemyPos = entityEyePos;
+					break;
+				}
 			}
 		}
 	}
@@ -166,13 +181,13 @@ void esp::auto_trigger()
 		return;
 	}
 	uintptr_t listEntry = memory::Read<uintptr_t>(entity_list + 0x8 * (corsshair_entity_index >> 9) + 0x10);
-	uintptr_t entity = memory::Read<uintptr_t>(listEntry +120 * (corsshair_entity_index & 0x1ff));
+	uintptr_t entity = memory::Read<uintptr_t>(listEntry + 120 * (corsshair_entity_index & 0x1ff));
 	if (!entity) {
 		return;
 	}
 	if (team == memory::Read<BYTE>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum))
 		return;
-	if(memory::Read<int>(entity+ cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth)<=0)
+	if (memory::Read<int>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth) <= 0)
 	{
 		return;
 	}
@@ -198,25 +213,25 @@ void esp::frame(bool isDrawAim)
 void  esp::render(bool isDrawAim)
 {
 	vm = memory::Read<viewMatrix>(modBase + cs2_dumper::offsets::client_dll::dwViewMatrix);
-    
-    squareSize = WIDTH / 13; // 正方形的边长
-    int centerX = WIDTH / 2;
-    int centerY = HEIGHT / 2;
-    squareX = centerX - (squareSize / 2);
-    squareY = centerY - (squareSize / 2);
 
-    // 绘制蓝色正方形
+	squareSize = WIDTH / 13; // 正方形的边长
+	int centerX = WIDTH / 2;
+	int centerY = HEIGHT / 2;
+	squareX = centerX - (squareSize / 2);
+	squareY = centerY - (squareSize / 2);
+
+	// 绘制蓝色正方形
 	if (isDrawAim) {
 		renderer::draw::box(D3DXVECTOR2{ static_cast<float>(squareX), static_cast<float>(squareY) },
 			D3DXVECTOR2{ static_cast<float>(squareX + squareSize), static_cast<float>(squareY + squareSize) },
 			D3DCOLOR_XRGB(0, 0, 255));
 	}
-                        
-    for (uintptr_t entity : entities)
+
+	for (uintptr_t entity : entities)
 	{
 		vec3 absOrigin = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
 		vec3 eyePos = absOrigin + memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
-		
+
 		vec2 head, feet;
 		double distance = player_distance(absOrigin, player_position);
 		if (w2s(absOrigin, head, vm.m))
@@ -226,7 +241,7 @@ void  esp::render(bool isDrawAim)
 				float width = (head.y - feet.y);
 				feet.x += width / 3.0f;
 				head.x -= width / 3.0f;
-				renderer::draw::box(D3DXVECTOR2{ head.x ,head.y}, D3DXVECTOR2{ feet.x ,feet.y }, distance < 1500.0f ? D3DCOLOR_XRGB(255, 0, 0): D3DCOLOR_XRGB(0, 255, 0));
+				renderer::draw::box(D3DXVECTOR2{ head.x ,head.y }, D3DXVECTOR2{ feet.x ,feet.y }, distance < 1500.0f ? D3DCOLOR_XRGB(255, 0, 0) : D3DCOLOR_XRGB(0, 255, 0));
 			}
 		}
 	}
@@ -248,8 +263,8 @@ bool esp::w2s(const vec3& world, vec2& screen, float m[16]) {
 	ndc.x = clipCoords.x / clipCoords.w;
 	ndc.y = clipCoords.y / clipCoords.w;
 
-	screen.x = (WINDOW_W / 2.0f * ndc.x) +  WINDOW_W / 2.0f;
-	screen.y = -(WINDOW_H / 2.0f * ndc.y) +  WINDOW_H / 2.0f;
+	screen.x = (WINDOW_W / 2.0f * ndc.x) + WINDOW_W / 2.0f;
+	screen.y = -(WINDOW_H / 2.0f * ndc.y) + WINDOW_H / 2.0f;
 
 	return true;
 }
