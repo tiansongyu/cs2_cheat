@@ -231,7 +231,9 @@ void  esp::render(bool isDrawAim)
 	{
 		vec3 absOrigin = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
 		vec3 eyePos = absOrigin + memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
-
+		uint32_t current_health = uint32_t(memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth));
+		std::cout << "current_health: " << current_health << std::endl;
+		uint32_t max_health = 100;
 		vec2 head, feet;
 		double distance = player_distance(absOrigin, player_position);
 		if (w2s(absOrigin, head, vm.m))
@@ -242,7 +244,20 @@ void  esp::render(bool isDrawAim)
 				feet.x += width / 3.0f;
 				head.x -= width / 3.0f;
 				renderer::draw::box(D3DXVECTOR2{ head.x ,head.y }, D3DXVECTOR2{ feet.x ,feet.y }, distance < 1500.0f ? D3DCOLOR_XRGB(255, 0, 0) : D3DCOLOR_XRGB(0, 255, 0));
-			}
+				std::cout << "width: " << width << std::endl;
+            // 绘制血量矩形
+            float health_percentage = static_cast<float>(current_health) / static_cast<float>(max_health);
+            float health_bar_height = width * health_percentage;
+            float health_bar_x = head.x - 5.0f; // 血量矩形的X坐标，位于正方形左侧
+            float health_bar_y = feet.y + (width - health_bar_height); // 血量矩形的Y坐标，随血量变化
+
+            // 绘制背景矩形
+            renderer::draw::box(D3DXVECTOR2{ health_bar_x - 1, head.y - 1 }, D3DXVECTOR2{ health_bar_x + 3, feet.y + 1 }, D3DCOLOR_XRGB(0, 0, 0));
+
+            // 绘制血量矩形
+            renderer::draw::box(D3DXVECTOR2{ health_bar_x, health_bar_y }, D3DXVECTOR2{ health_bar_x + 2, head.y }, D3DCOLOR_XRGB(0, 255, 0));
+      
+            }
 		}
 	}
 }
