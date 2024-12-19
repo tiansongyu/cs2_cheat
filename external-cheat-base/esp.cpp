@@ -232,7 +232,6 @@ void  esp::render(bool isDrawAim)
 		vec3 absOrigin = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
 		vec3 eyePos = absOrigin + memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
 		uint32_t current_health = uint32_t(memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth));
-		std::cout << "current_health: " << current_health << std::endl;
 		uint32_t max_health = 100;
 		vec2 head, feet;
 		double distance = player_distance(absOrigin, player_position);
@@ -244,7 +243,6 @@ void  esp::render(bool isDrawAim)
 				feet.x += width / 3.0f;
 				head.x -= width / 3.0f;
 				renderer::draw::box(D3DXVECTOR2{ head.x ,head.y }, D3DXVECTOR2{ feet.x ,feet.y }, distance < 1500.0f ? D3DCOLOR_XRGB(255, 0, 0) : D3DCOLOR_XRGB(0, 255, 0));
-				std::cout << "width: " << width << std::endl;
             // 绘制血量矩形
             float health_percentage = static_cast<float>(current_health) / static_cast<float>(max_health);
             float health_bar_height = width * health_percentage;
