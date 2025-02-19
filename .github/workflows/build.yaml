@@ -82,7 +82,7 @@ jobs:
 
     - name: Upload artifacts
       if: env.UPDATE_AVAILABLE == 'true'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: Release-Binaries
         path: x64/Release/Release-Binaries.zip
