@@ -45,7 +45,7 @@ jobs:
       shell: powershell
       run: |
         Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_buildtools.exe" -OutFile "vs_buildtools.exe"
-        Start-Process -FilePath "vs_buildtools.exe" -ArgumentList "--quiet", "--wait", "--norestart", "--nocache", "--installPath", "`"${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools`"", "--add", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "--add", "Microsoft.VisualStudio.Component.Windows10SDK" -NoNewWindow -Wait
+        Start-Process -FilePath "vs_buildtools.exe" -ArgumentList "--quiet", "--wait", "--norestart", "--nocache", "--installPath", "`"${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools`"", "--add", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "--add", "Microsoft.VisualStudio.Component.Windows10SDK.22000" -NoNewWindow -Wait
         Remove-Item -Path "vs_buildtools.exe"
 
     - name: Get MSVC Version
