@@ -5,7 +5,7 @@
 
 struct vec4
 {
-	float w, x, y, z;
+	float x, y, z, w;
 };
 
 struct vec3
