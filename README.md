@@ -24,7 +24,7 @@
 
 ## 🖼️ 截图
 
-*（待添加）*
+![1](https://github.com/tiansongyu/cs2_cheat/blob/main/img/1.png)
 
 ## 🚀 快速开始
 
