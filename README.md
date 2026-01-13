@@ -2,8 +2,6 @@
 
 基于 SDL2 + ImGui 的 CS2 外部 ESP 透视工具。
 
-![Build](https://github.com/tiansongyu/cs2_cheat/actions/workflows/msbuild.yml/badge.svg)
-
 ## ✨ 功能特性
 
 ### ESP 透视
@@ -22,7 +20,7 @@
 - 全屏透明覆盖层
 - 低资源占用
 
-## 🖼️ 截图
+## 🖼️ 示例
 
 ![1](https://github.com/tiansongyu/cs2_cheat/blob/main/img/hack.png)
 
