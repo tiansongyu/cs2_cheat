@@ -12,7 +12,8 @@
 build*
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
-~external-cheat-base\SDL2\lib
+# 保留 SDL2 vendor 库文件
+!external-cheat-base/vendor/SDL2/lib/
 # Mono auto generated files
 mono_crash.*
 imgui.ini
@@ -21,8 +22,9 @@ imgui.ini
 [Dd]ebugPublic/
 [Rr]elease/
 [Rr]eleases/
-x64/
-x86/
+# 排除根目录的x64/x86，但保留vendor下的
+/x64/
+/x86/
 [Ww][Ii][Nn]32/
 [Aa][Rr][Mm]/
 [Aa][Rr][Mm]64/
