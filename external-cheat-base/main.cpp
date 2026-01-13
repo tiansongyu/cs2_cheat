@@ -1,4 +1,5 @@
 #include "esp.hpp"
+#include "renderer/sdl_renderer.h"
 #include <thread>
 #include <iostream>
 #include <locale>
@@ -10,60 +11,60 @@ uint32_t HEIGHT;
 uint32_t WINDOW_W;
 uint32_t WINDOW_H;
 
-int main()
+int main(int argc, char* argv[])
 {
-    // Set console output encoding to UTF-8
     SetConsoleOutputCP(CP_UTF8);
-
-    // Set locale to user default
     std::locale::global(std::locale(""));
 
     std::cout << "======================================" << std::endl;
-    std::cout << "    CS2 Entity Debug Tool" << std::endl;
+    std::cout << "    CS2 ESP Tool (SDL2 Version)" << std::endl;
     std::cout << "======================================" << std::endl;
     std::cout << std::endl;
 
-    esp::pID = memory::GetProcID(L"cs2.exe");
-    if (!esp::pID) {
-        std::cout << "ERROR: Cannot find cs2.exe process!" << std::endl;
+    // Initialize ESP (find process and module)
+    if (!esp::init()) {
         std::cout << "Make sure CS2 is running." << std::endl;
         system("pause");
         return -1;
     }
-    std::cout << "Found cs2.exe, PID: " << esp::pID << std::endl;
 
-    esp::modBase = memory::GetModuleBaseAddress(esp::pID, L"client.dll");
-    if (!esp::modBase) {
-        std::cout << "ERROR: Cannot find client.dll!" << std::endl;
+    // Get screen size as default
+    WIDTH = GetSystemMetrics(SM_CXSCREEN);
+    HEIGHT = GetSystemMetrics(SM_CYSCREEN);
+    WINDOW_W = WIDTH;
+    WINDOW_H = HEIGHT;
+
+    // Initialize SDL2 renderer
+    std::cout << "Initializing SDL2 overlay..." << std::endl;
+    if (!sdl_renderer::init(L"Counter-Strike 2")) {
+        std::cout << "ERROR: Failed to initialize SDL2 renderer!" << std::endl;
+        std::cout << "Make sure CS2 window is visible." << std::endl;
         system("pause");
         return -1;
     }
-    std::cout << "client.dll base: 0x" << std::hex << esp::modBase << std::dec << std::endl;
+    std::cout << "SDL2 overlay initialized successfully!" << std::endl;
+    std::cout << "Window size: " << WIDTH << "x" << HEIGHT << std::endl;
     std::cout << std::endl;
-
-    int width = GetSystemMetrics(SM_CXSCREEN);
-    int height = GetSystemMetrics(SM_CYSCREEN);
-
-    WIDTH = width;
-    HEIGHT = height;
-    WINDOW_W = width;
-    WINDOW_H = height;
-
-    std::cout << "Press ENTER to scan entities (must be in a game with bots)..." << std::endl;
-    std::cout << "Press F9 to exit." << std::endl;
+    std::cout << "========== Controls ==========" << std::endl;
+    std::cout << "  F9 - Exit program" << std::endl;
+    std::cout << "==============================" << std::endl;
     std::cout << std::endl;
+    std::cout << "ESP is now active!" << std::endl;
 
-    while (!GetAsyncKeyState(VK_F9))
+    // Main loop
+    while (sdl_renderer::running)
     {
-        if (GetAsyncKeyState(VK_RETURN) & 0x8000)
-        {
-            std::cout << "\n--- Scanning... ---\n" << std::endl;
-            esp::debug_loop();
-            std::cout << "\nPress ENTER to scan again, F9 to exit.\n" << std::endl;
-            Sleep(500); // Prevent continuous trigger
-        }
-        Sleep(50);
+        sdl_renderer::pollEvents();
+        sdl_renderer::updateWindowPosition();
+        esp::updateEntities();
+        sdl_renderer::beginFrame();
+        esp::render();
+        sdl_renderer::endFrame();
+        Sleep(16);
     }
+
+    std::cout << "Cleaning up..." << std::endl;
+    sdl_renderer::destroy();
 
     std::cout << "Exiting..." << std::endl;
     return 0;

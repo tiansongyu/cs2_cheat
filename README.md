@@ -1,37 +1,48 @@
-# 软件说明
+# CS2 ESP Tool (SDL2 Version)
 
 ## 功能介绍
 
-该软件提供了两个主要功能：
-
-1. **透视功能**：默认开启，绿色方框表示敌人，当敌人距离较近时，方框会变为红色。
-2. **自动瞄准功能**：按下右 Shift 键可以开启或关闭该功能。开启后，屏幕中央会显示一个蓝色方框。当敌人的头部在蓝色方框内时，按下左 Shift 键会自动瞄准敌人的头部并自动开枪。
+ESP 透视功能：
+- 绿色方框：远距离敌人 (>30米)
+- 黄色方框：中距离敌人 (10-30米)
+- 红色方框：近距离敌人 (<10米)
+- 血条显示：显示敌人当前血量
 
 ## 使用方法
 
-1. 下载并编译源代码。
-2. 运行编译后的可执行文件。
-3. 在游戏中，透视功能默认开启。
-4. 按下右 Shift 键可以开启或关闭自动瞄准功能。
-5. 当自动瞄准功能开启时，屏幕中央会显示一个蓝色方框。当敌人的头部在蓝色方框内时，按下左 Shift 键会自动瞄准敌人的头部并自动开枪。
-6. 按下 F9 键可以退出程序。
-
-7. 当软件打开后没有效果时，运行update_offset.bat可修复内存偏移
+1. 启动 CS2 并进入游戏
+2. 运行编译后的可执行文件
+3. ESP 会自动覆盖在游戏窗口上
+4. 按 **F9** 键退出程序
 
 ## 编译和运行
 
-1. 确保已安装必要的编译工具和库
+### 1. 安装 SDL2
 
-下载安装D3D SDK
-```
-https://www.microsoft.com/en-gb/download/details.aspx?id=6812
-```
-
-这里查看CS2所有属性地址，实时更新
-```
-https://github.com/a2x/cs2-dumper/
+运行 setup 脚本自动下载 SDL2：
+```batch
+cd external-cheat-base
+setup_sdl2.bat
 ```
 
-2. 克隆或下载源代码到本地。
+或手动下载：
+- 下载地址: https://github.com/libsdl-org/SDL/releases
+- 下载 `SDL2-devel-x.x.x-VC.zip`
+- 解压到 `external-cheat-base/SDL2` 目录
 
-3. 使用vs2022编译源代码：
+### 2. 编译项目
+
+使用 Visual Studio 2022 打开 `external-cheat-base.sln` 并编译（x64 Release）
+
+### 3. 运行
+
+确保 `SDL2.dll` 在可执行文件同目录下（编译时会自动复制）
+
+## 偏移更新
+
+CS2 更新后可能需要更新内存偏移，运行：
+```batch
+update_offset.bat
+```
+
+或参考: https://github.com/a2x/cs2-dumper/

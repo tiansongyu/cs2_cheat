@@ -9,10 +9,10 @@
 *.user
 *.userosscache
 *.sln.docstates
-
+build*
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
-
+~external-cheat-base\SDL2\lib
 # Mono auto generated files
 mono_crash.*
 
