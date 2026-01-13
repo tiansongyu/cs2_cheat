@@ -90,6 +90,9 @@ namespace menu
             ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "CS2 External ESP");
             ImGui::Text("SDL2 + ImGui Overlay");
             ImGui::Text("Build: v2.0");
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "GitHub:");
+            ImGui::TextWrapped("github.com/tiansongyu/cs2_cheat");
         }
 
         ImGui::End();

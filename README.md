@@ -1,48 +1,101 @@
-# CS2 ESP Tool (SDL2 Version)
+# CS2 External ESP
 
-## 功能介绍
+基于 SDL2 + ImGui 的 CS2 外部 ESP 透视工具。
 
-ESP 透视功能：
-- 绿色方框：远距离敌人 (>30米)
-- 黄色方框：中距离敌人 (10-30米)
-- 红色方框：近距离敌人 (<10米)
-- 血条显示：显示敌人当前血量
+![Build](https://github.com/tiansongyu/cs2_cheat/actions/workflows/msbuild.yml/badge.svg)
 
-## 使用方法
+## ✨ 功能特性
 
-1. 启动 CS2 并进入游戏
-2. 运行编译后的可执行文件
-3. ESP 会自动覆盖在游戏窗口上
-4. 按 **F9** 键退出程序
+### ESP 透视
+- **方框 ESP** - 显示敌人位置，支持自定义颜色
+- **血条显示** - 实时显示敌人血量
+- **距离显示** - 显示与敌人的距离（米），支持自定义颜色
+- **射线 (Snaplines)** - 从屏幕指向敌人，支持自定义颜色和起点位置
 
-## 编译和运行
+### 菜单系统
+- **F4** - 打开/关闭设置菜单
+- **F9** - 退出程序
+- ImGui 图形界面，可实时调整所有设置
 
-### 1. 安装 SDL2
+### 其他特性
+- 单实例运行（自动关闭旧进程）
+- 全屏透明覆盖层
+- 低资源占用
 
-运行 setup 脚本自动下载 SDL2：
-```batch
-cd external-cheat-base
-setup_sdl2.bat
+## 🖼️ 截图
+
+*（待添加）*
+
+## 🚀 快速开始
+
+### 环境要求
+- Windows 10/11
+- Visual Studio 2022 或更高版本
+- CS2 游戏
+
+### 编译
+
+1. 克隆仓库
+```bash
+git clone https://github.com/tiansongyu/cs2_cheat.git
+cd cs2_cheat
 ```
 
-或手动下载：
-- 下载地址: https://github.com/libsdl-org/SDL/releases
-- 下载 `SDL2-devel-x.x.x-VC.zip`
-- 解压到 `external-cheat-base/SDL2` 目录
+2. 使用 Visual Studio 打开 `external-cheat-base.sln`
 
-### 2. 编译项目
+3. 选择 **Release | x64** 配置并编译
 
-使用 Visual Studio 2022 打开 `external-cheat-base.sln` 并编译（x64 Release）
+4. 编译产物位于 `x64/Release/external-cheat-base.exe`
 
-### 3. 运行
+### 运行
 
-确保 `SDL2.dll` 在可执行文件同目录下（编译时会自动复制）
+1. 启动 CS2 并进入游戏
+2. 运行 `external-cheat-base.exe`
+3. 按 **F4** 打开菜单调整设置
+4. 按 **F9** 退出
 
-## 偏移更新
-dw
-CS2 更新后可能需要更新内存偏移，运行：
+## 🔄 更新偏移
+
+CS2 游戏更新后需要更新内存偏移：
+
 ```batch
 update_offset.bat
 ```
 
-或参考: https://github.com/a2x/cs2-dumper/
+偏移来源：[a2x/cs2-dumper](https://github.com/a2x/cs2-dumper)
+
+## 📁 项目结构
+
+```
+cs2_cheat/
+├── external-cheat-base/
+│   ├── src/
+│   │   ├── core/
+│   │   │   ├── memory/      # 内存读取模块
+│   │   │   └── renderer/    # SDL2 渲染器
+│   │   ├── features/
+│   │   │   ├── esp.cpp/hpp  # ESP 功能实现
+│   │   │   └── menu.hpp     # ImGui 菜单
+│   │   ├── utils/math/      # 数学工具
+│   │   └── main.cpp         # 程序入口
+│   ├── generated/           # 自动生成的偏移头文件
+│   └── vendor/
+│       ├── SDL2/            # SDL2 库
+│       └── imgui/           # ImGui 库
+├── update_offset.bat        # 偏移更新脚本
+└── docs/                    # 文档
+```
+
+## ⚠️ 免责声明
+
+本项目仅供学习和研究目的。使用本工具可能违反游戏服务条款，导致账号被封禁。作者不对任何因使用本工具造成的后果负责。
+
+## 📜 许可证
+
+MIT License
+
+## 🙏 致谢
+
+- [a2x/cs2-dumper](https://github.com/a2x/cs2-dumper) - 偏移量来源
+- [libsdl-org/SDL](https://github.com/libsdl-org/SDL) - SDL2 图形库
+- [ocornut/imgui](https://github.com/ocornut/imgui) - ImGui 界面库
