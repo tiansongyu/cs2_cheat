@@ -17,6 +17,7 @@ namespace sdl_renderer
     inline bool running = true;
     inline HWND overlayHwnd = nullptr;
     inline HWND gameHwnd = nullptr;
+    inline bool menuVisible = true;
 
     bool init(const wchar_t* targetWindowName);
     void destroy();
@@ -24,6 +25,11 @@ namespace sdl_renderer
     void endFrame();
     void pollEvents();
     void updateWindowPosition();
+
+    void initImGui();
+    void shutdownImGui();
+    void newFrameImGui();
+    void renderImGui();
 
     namespace draw
     {

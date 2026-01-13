@@ -1,5 +1,6 @@
 #include "esp.hpp"
 #include "renderer/sdl_renderer.h"
+#include "menu.hpp"
 #include <iostream>
 #include <cmath>
 
@@ -102,37 +103,31 @@ void esp::render()
         int w = static_cast<int>(width);
         int h = static_cast<int>(height);
 
-        // Color based on distance
-        // Close (< 10m) = Red
-        // Medium (10-30m) = Yellow
-        // Far (> 30m) = Green
-        uint8_t r, g, b;
-        float distanceMeters = enemy.distance / 100.0f;
-
-        if (distanceMeters < 10.0f) {
-            r = 255; g = 50; b = 50;
-        } else if (distanceMeters < 30.0f) {
-            r = 255; g = 255; b = 50;
-        } else {
-            r = 50; g = 255; b = 50;
-        }
+        // Use menu color settings
+        uint8_t r = static_cast<uint8_t>(menu::espBoxColor[0] * 255);
+        uint8_t g = static_cast<uint8_t>(menu::espBoxColor[1] * 255);
+        uint8_t b = static_cast<uint8_t>(menu::espBoxColor[2] * 255);
+        uint8_t a = static_cast<uint8_t>(menu::espBoxColor[3] * 255);
 
         // Draw box
-        sdl_renderer::draw::box(x, y, w, h, r, g, b, 255);
-
-        // Draw health bar background
-        int healthBarWidth = w;
-        int healthBarHeight = 4;
-        int healthBarX = x;
-        int healthBarY = y - 8;
-
-        sdl_renderer::draw::filledBox(healthBarX, healthBarY, healthBarWidth, healthBarHeight, 50, 50, 50, 200);
+        if (menu::espBox) {
+            sdl_renderer::draw::box(x, y, w, h, r, g, b, a);
+        }
 
         // Draw health bar
-        int healthWidth = static_cast<int>((enemy.health / 100.0f) * healthBarWidth);
-        uint8_t healthR = static_cast<uint8_t>(255 * (1.0f - enemy.health / 100.0f));
-        uint8_t healthG = static_cast<uint8_t>(255 * (enemy.health / 100.0f));
-        sdl_renderer::draw::filledBox(healthBarX, healthBarY, healthWidth, healthBarHeight, healthR, healthG, 0, 255);
+        if (menu::espHealth) {
+            int healthBarWidth = w;
+            int healthBarHeight = 4;
+            int healthBarX = x;
+            int healthBarY = y - 8;
+
+            sdl_renderer::draw::filledBox(healthBarX, healthBarY, healthBarWidth, healthBarHeight, 50, 50, 50, 200);
+
+            int healthWidth = static_cast<int>((enemy.health / 100.0f) * healthBarWidth);
+            uint8_t healthR = static_cast<uint8_t>(255 * (1.0f - enemy.health / 100.0f));
+            uint8_t healthG = static_cast<uint8_t>(255 * (enemy.health / 100.0f));
+            sdl_renderer::draw::filledBox(healthBarX, healthBarY, healthWidth, healthBarHeight, healthR, healthG, 0, 255);
+        }
     }
 }
 
