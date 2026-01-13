@@ -58,10 +58,6 @@ cd cs2_cheat
 
 CS2 游戏更新后需要更新内存偏移：
 
-```batch
-update_offset.bat
-```
-
 偏移来源：[a2x/cs2-dumper](https://github.com/a2x/cs2-dumper)
 
 ## 📁 项目结构
