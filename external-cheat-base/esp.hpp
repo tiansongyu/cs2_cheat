@@ -2,10 +2,11 @@
 
 #include<vector>
 
-#include"renderer/renderer.h"
+#include"memory/memory.h"
 #include"client_dll.hpp"
 #include"offsets.hpp"
 #include "buttons.hpp"
+#include "math/vector.h"
 
 extern uint32_t WIDTH;
 extern uint32_t HEIGHT;
@@ -29,7 +30,11 @@ namespace esp
 	inline bool auto_aimBotEnabled = false;
 	inline int squareX;
 	inline int squareY;
-	inline int squareSize; 
+	inline int squareSize;
+
+	// 调试模式 - 打印实体信息
+	void debug_loop();
+
 	void frame(bool isDrawAim);
 	void loop();
 	void render(bool isDrawAim);

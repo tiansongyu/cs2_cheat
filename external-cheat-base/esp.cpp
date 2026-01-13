@@ -1,5 +1,182 @@
 #include "esp.hpp"
 #include <iostream>
+#include <iomanip>
+
+// Debug function: print all entity info
+void esp::debug_loop() {
+	std::cout << "=== Entity Debug Mode ===" << std::endl;
+
+	uintptr_t entity_list = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwEntityList);
+	std::cout << "entity_list: 0x" << std::hex << entity_list << std::dec << std::endl;
+
+	if (!entity_list) {
+		std::cout << "ERROR: entity_list is NULL!" << std::endl;
+		return;
+	}
+
+	uintptr_t localController = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerController);
+	uintptr_t localPlayerPawn = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
+
+	std::cout << "LocalController: 0x" << std::hex << localController << std::dec << std::endl;
+	std::cout << "LocalPlayerPawn (direct): 0x" << std::hex << localPlayerPawn << std::dec << std::endl;
+
+	if (!localPlayerPawn) {
+		std::cout << "ERROR: localPlayerPawn is NULL!" << std::endl;
+		return;
+	}
+
+	uint8_t myTeam = memory::Read<uint8_t>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
+	int32_t myHealth = memory::Read<int32_t>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth);
+	vec3 myPos = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
+
+	std::cout << "Local Player - Team: " << (int)myTeam << ", Health: " << myHealth << std::endl;
+	std::cout << "Position: (" << myPos.x << ", " << myPos.y << ", " << myPos.z << ")" << std::endl;
+
+	// ============================================
+	// AUTO SEARCH: Find LocalPlayerPawn pointer in entity_list region
+	// ============================================
+	std::cout << "\n=== AUTO SEARCH: Finding LocalPlayerPawn in entity_list ===" << std::endl;
+	std::cout << "Searching for pointer value 0x" << std::hex << localPlayerPawn << std::dec << "..." << std::endl;
+
+	int foundLocations = 0;
+
+	// Search in entity_list structure (first 0x100 bytes)
+	std::cout << "\n[1] Searching entity_list + 0x00 to 0x100:" << std::endl;
+	for (int offset = 0; offset < 0x100; offset += 8) {
+		uintptr_t value = memory::Read<uintptr_t>(entity_list + offset);
+		if (value == localPlayerPawn) {
+			std::cout << "  FOUND at entity_list + 0x" << std::hex << offset << std::dec << std::endl;
+			foundLocations++;
+		}
+	}
+
+	// Get chunk pointers and search inside them
+	std::cout << "\n[2] Searching inside chunk arrays:" << std::endl;
+	for (int chunkOffset = 0; chunkOffset <= 0x40; chunkOffset += 8) {
+		uintptr_t chunkPtr = memory::Read<uintptr_t>(entity_list + chunkOffset);
+		if (chunkPtr && chunkPtr > 0x10000) {
+			// Search in this chunk (check first 0x8000 bytes = 512 entries * 0x10 or more)
+			for (int entryOffset = 0; entryOffset < 0x8000; entryOffset += 8) {
+				uintptr_t value = memory::Read<uintptr_t>(chunkPtr + entryOffset);
+				if (value == localPlayerPawn) {
+					std::cout << "  FOUND at [entity_list+0x" << std::hex << chunkOffset
+					          << "] + 0x" << entryOffset << std::dec << std::endl;
+					std::cout << "    -> chunk addr: 0x" << std::hex << chunkPtr << std::dec << std::endl;
+					std::cout << "    -> entry stride might be: 0x" << std::hex << entryOffset << std::dec << std::endl;
+					foundLocations++;
+				}
+			}
+		}
+	}
+
+	// Search with double dereference (entity_list -> chunk array -> chunk -> entry)
+	std::cout << "\n[3] Searching with double dereference:" << std::endl;
+	for (int firstOffset = 0; firstOffset <= 0x20; firstOffset += 8) {
+		uintptr_t firstPtr = memory::Read<uintptr_t>(entity_list + firstOffset);
+		if (!firstPtr || firstPtr < 0x10000) continue;
+
+		// Check if this is an array of chunk pointers
+		for (int chunkIdx = 0; chunkIdx < 8; chunkIdx++) {
+			uintptr_t chunkPtr = memory::Read<uintptr_t>(firstPtr + chunkIdx * 8);
+			if (!chunkPtr || chunkPtr < 0x10000) continue;
+
+			// Search in this chunk
+			for (int entryOffset = 0; entryOffset < 0x8000; entryOffset += 8) {
+				uintptr_t value = memory::Read<uintptr_t>(chunkPtr + entryOffset);
+				if (value == localPlayerPawn) {
+					std::cout << "  FOUND at [[entity_list+0x" << std::hex << firstOffset
+					          << "]+0x" << (chunkIdx * 8) << "]+0x" << entryOffset << std::dec << std::endl;
+					std::cout << "    -> chunkIdx=" << chunkIdx << ", entryOffset=0x" << std::hex << entryOffset << std::dec << std::endl;
+
+					// Calculate possible entry index
+					for (int stride = 0x10; stride <= 0x120; stride += 0x8) {
+						if (entryOffset % stride == 0) {
+							int entryIdx = entryOffset / stride;
+							std::cout << "    -> if stride=0x" << std::hex << stride
+							          << ", entryIndex=" << std::dec << entryIdx << std::endl;
+						}
+					}
+					foundLocations++;
+				}
+			}
+		}
+	}
+
+	std::cout << "\n=== Total locations found: " << foundLocations << " ===" << std::endl;
+
+	// ============================================
+	// TEST NEW FORMULA: stride = 0x70, base = 0x08
+	// ============================================
+	std::cout << "\n=== Testing corrected formula ===" << std::endl;
+
+	if (localController) {
+		uint32_t pawnHandle = memory::Read<uint32_t>(localController + cs2_dumper::schemas::client_dll::CBasePlayerController::m_hPawn);
+		uint32_t index = pawnHandle & 0x7FFF;
+		uint32_t chunkIndex = index >> 9;  // /512
+		uint32_t indexInChunk = index & 0x1FF;  // %512
+
+		std::cout << "Handle: 0x" << std::hex << pawnHandle << std::dec << std::endl;
+		std::cout << "index=" << index << ", chunk=" << chunkIndex << ", indexInChunk=" << indexInChunk << std::endl;
+
+		// Try different base offsets with stride 0x70
+		for (int baseOffset = 0x08; baseOffset <= 0x20; baseOffset += 0x08) {
+			uintptr_t chunkPtr = memory::Read<uintptr_t>(entity_list + baseOffset + 0x8 * chunkIndex);
+			if (chunkPtr) {
+				uintptr_t resolved = memory::Read<uintptr_t>(chunkPtr + 0x70 * indexInChunk);
+				bool match = (resolved == localPlayerPawn);
+				std::cout << "  base=0x" << std::hex << baseOffset << ": chunk=0x" << chunkPtr
+				          << " -> resolved=0x" << resolved << (match ? " MATCH!" : "") << std::dec << std::endl;
+			}
+		}
+	}
+
+	// ============================================
+	// SCAN ALL ENTITIES WITH CORRECT FORMULA
+	// base=0x10, stride=0x70
+	// ============================================
+	std::cout << "\n=== Scanning entities with stride=0x70, base=0x10 ===" << std::endl;
+
+	int entityCount = 0;
+
+	for (uint32_t i = 1; i < 64; i++) {
+		// Get controller: entity_list + 0x10 + 0x8 * chunkIndex, then + 0x70 * indexInChunk
+		uintptr_t listEntry = memory::Read<uintptr_t>(entity_list + 0x10 + 0x8 * (i >> 9));
+		if (!listEntry) continue;
+
+		uintptr_t entityController = memory::Read<uintptr_t>(listEntry + 0x70 * (i & 0x1FF));
+		if (!entityController) continue;
+
+		// Get pawn handle
+		uint32_t pawnHandle = memory::Read<uint32_t>(entityController + cs2_dumper::schemas::client_dll::CBasePlayerController::m_hPawn);
+		if (!pawnHandle || pawnHandle == 0xFFFFFFFF) continue;
+
+		uint32_t pawnIndex = pawnHandle & 0x7FFF;
+		uint32_t pawnChunk = pawnIndex >> 9;
+		uint32_t pawnInChunk = pawnIndex & 0x1FF;
+
+		// Get pawn: same formula
+		uintptr_t pawnListEntry = memory::Read<uintptr_t>(entity_list + 0x10 + 0x8 * pawnChunk);
+		if (!pawnListEntry) continue;
+
+		uintptr_t entity = memory::Read<uintptr_t>(pawnListEntry + 0x70 * pawnInChunk);
+		if (!entity) continue;
+
+		uint8_t team = memory::Read<uint8_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
+		int32_t health = memory::Read<int32_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth);
+		vec3 pos = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
+
+		std::cout << "[" << std::setw(2) << i << "] Pawn: 0x" << std::hex << entity << std::dec;
+		std::cout << " | Team: " << (int)team << " | HP: " << health;
+		std::cout << " | Pos: (" << std::fixed << std::setprecision(1) << pos.x << ", " << pos.y << ", " << pos.z << ")";
+		if (entity == localPlayerPawn) std::cout << " <-- YOU";
+		else if (team != myTeam && health > 0) std::cout << " <-- ENEMY";
+		std::cout << std::endl;
+
+		if (health > 0) entityCount++;
+	}
+
+	std::cout << "\n=== Total alive: " << entityCount << " ===" << std::endl;
+}
 
 void esp::loop() {
 
@@ -11,16 +188,15 @@ void esp::loop() {
 			Sleep(100);
 			continue;
 		}
-		// 修复: 直接读取正确的类型 uint8_t
 		uint8_t team = memory::Read<uint8_t>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
 		player_position = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin) +
 			memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
 
 		std::vector<uintptr_t> buffer = {};
 
-		for (uint32_t i = 0; i < 64; i++)
+		// Expand to 1024
+		for (uint32_t i = 0; i < 1024; i++)
 		{
-			// 修复: 统一使用正确的 EntityList 遍历公式
 			uintptr_t listEntry = memory::Read<uintptr_t>(entity_list + 0x8 * ((i & 0x7FFF) >> 9) + 0x10);
 
 			if (!listEntry) continue;
@@ -33,17 +209,14 @@ void esp::loop() {
 
 			if (!entityControllerPawn) continue;
 
-			// 修复: 使用 entityControllerPawn 的索引获取正确的 listEntry_2
 			uintptr_t listEntry_2 = memory::Read<uintptr_t>(entity_list + 0x8 * ((entityControllerPawn & 0x7FFF) >> 9) + 0x10);
 
 			if (!listEntry_2) continue;
 
-			// 修复: entity 应该使用 listEntry_2 而不是 listEntry
 			uintptr_t entity = memory::Read<uintptr_t>(listEntry_2 + 0x78 * (entityControllerPawn & 0x1FF));
 
 			if (!entity) continue;
 
-			// 修复: 直接读取正确的类型
 			uint8_t current_flag = memory::Read<uint8_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
 			int32_t health = memory::Read<int32_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth);
 			bool is_diff_team = team != current_flag;
@@ -74,16 +247,14 @@ void esp::auto_aim_bot()
 		uintptr_t localPlayerPawn = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
 		if (!localPlayerPawn) {
 			Sleep(100);
-			continue;  // 修复: 使用 continue 而不是 return，避免线程退出
+			continue;
 		}
-		// 修复: 直接读取正确的类型 uint8_t
 		uint8_t team = memory::Read<uint8_t>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
 		vec3 localPlayerEyePos = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin) +
 			memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
 
 		for (uint32_t i = 0; i < 64; i++)
 		{
-			// 修复: 统一使用正确的 EntityList 遍历公式
 			uintptr_t listEntry = memory::Read<uintptr_t>(entity_list + 0x8 * ((i & 0x7FFF) >> 9) + 0x10);
 			if (!listEntry) continue;
 
@@ -95,14 +266,12 @@ void esp::auto_aim_bot()
 
 			if (!entityControllerPawn) continue;
 
-			// 修复: 使用 listEntry_2 获取正确的 entity
 			uintptr_t listEntry_2 = memory::Read<uintptr_t>(entity_list + 0x8 * ((entityControllerPawn & 0x7FFF) >> 9) + 0x10);
 			if (!listEntry_2) continue;
 
 			uintptr_t entity = memory::Read<uintptr_t>(listEntry_2 + 0x78 * (entityControllerPawn & 0x1FF));
 			if (!entity) continue;
 
-			// 修复: 直接读取正确的类型
 			uint8_t current_flag = memory::Read<uint8_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
 			int32_t health = memory::Read<int32_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth);
 
@@ -111,7 +280,6 @@ void esp::auto_aim_bot()
 				continue;
 			if (health <= 0)
 				continue;
-			// 修复: 使用 entity 的 m_vecViewOffset 而不是 localPlayerPawn 的
 			vec3 entityEyePos = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin)
 				+ memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
 			vec3 relativeAngle = (entityEyePos - localPlayerEyePos).RelativeAngle();
@@ -133,7 +301,6 @@ void esp::aim_bot()
 	if (!localPlayerPawn) {
 		return;
 	}
-	// 修复: 直接读取正确的类型 uint8_t
 	uint8_t team = memory::Read<uint8_t>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
 	vec3 localPlayerEyePos = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin) +
 		memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
@@ -142,9 +309,8 @@ void esp::aim_bot()
 	enemyPos.y = -1;
 	enemyPos.z = -1;
 	vec2 headScreen;
-	for (uint32_t i = 1; i < 64; i++)  // 修复: 遍历64个玩家而不是32个
+	for (uint32_t i = 1; i < 64; i++)
 	{
-		// 修复: 统一使用正确的 EntityList 遍历公式
 		uintptr_t listEntry = memory::Read<uintptr_t>(entity_list + 0x8 * ((i & 0x7FFF) >> 9) + 0x10);
 		if (!listEntry) continue;
 
@@ -156,14 +322,12 @@ void esp::aim_bot()
 
 		if (!entityControllerPawn) continue;
 
-		// 修复: 使用 listEntry_2 获取正确的 entity
 		uintptr_t listEntry_2 = memory::Read<uintptr_t>(entity_list + 0x8 * ((entityControllerPawn & 0x7FFF) >> 9) + 0x10);
 		if (!listEntry_2) continue;
 
 		uintptr_t entity = memory::Read<uintptr_t>(listEntry_2 + 0x78 * (entityControllerPawn & 0x1FF));
 		if (!entity) continue;
 
-		// 修复: 直接读取正确的类型
 		uint8_t current_flag = memory::Read<uint8_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
 		int32_t health = memory::Read<int32_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth);
 
@@ -197,10 +361,8 @@ void esp::auto_trigger()
 	uintptr_t localPlayerPawn = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
 	if (!localPlayerPawn) return;
 
-	// 修复: 直接读取正确的类型 uint8_t
 	uint8_t team = memory::Read<uint8_t>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
 
-	// 修复: m_iIDEntIndex 是 CEntityIndex 类型，应该读取 int32_t
 	int32_t crosshair_entity_index = memory::Read<int32_t>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_iIDEntIndex);
 	if (crosshair_entity_index < 0)
 	{
@@ -213,7 +375,6 @@ void esp::auto_trigger()
 	if (!entity) {
 		return;
 	}
-	// 修复: 直接读取正确的类型
 	if (team == memory::Read<uint8_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum))
 		return;
 	if (memory::Read<int32_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth) <= 0)
@@ -227,80 +388,15 @@ void esp::auto_trigger()
 	Sleep(20);
 }
 
+// D3D rendering disabled - using console debug mode
 void esp::frame(bool isDrawAim)
 {
-	renderer::pDevice->Clear(0, 0, D3DCLEAR_TARGET, NULL, 1.f, 0);
-	renderer::pDevice->BeginScene();
-
-	render(isDrawAim);
-
-	renderer::pDevice->EndScene();
-	renderer::pDevice->Present(0, 0, 0, 0);
-
+	// Not used in debug mode
 }
 
-void  esp::render(bool isDrawAim)
+void esp::render(bool isDrawAim)
 {
-	vm = memory::Read<viewMatrix>(modBase + cs2_dumper::offsets::client_dll::dwViewMatrix);
-
-	squareSize = WIDTH / 13; // 正方形的边长
-	int centerX = WIDTH / 2;
-	int centerY = HEIGHT / 2;
-	squareX = centerX - (squareSize / 2);
-	squareY = centerY - (squareSize / 2);
-
-	// 绘制蓝色正方形
-	if (isDrawAim) {
-		renderer::draw::box(D3DXVECTOR2{ static_cast<float>(squareX), static_cast<float>(squareY) },
-			D3DXVECTOR2{ static_cast<float>(squareX + squareSize), static_cast<float>(squareY + squareSize) },
-			D3DCOLOR_XRGB(0, 0, 255));
-	}
-
-	for (uintptr_t entity : entities)
-	{
-		// absOrigin 是脚的位置 (玩家原点)
-		vec3 feetPos = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
-		// eyePos 是头/眼睛的位置 (原点 + 视角偏移)
-		vec3 headPos = feetPos + memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
-		// 修复: 直接读取正确的类型 int32_t
-		int32_t current_health = memory::Read<int32_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth);
-		int32_t max_health = 100;
-		// 修复: 变量命名与实际含义一致
-		vec2 feetScreen, headScreen;
-		double distance = player_distance(feetPos, player_position);
-		// 修复: feetPos -> feetScreen, headPos -> headScreen
-		if (w2s(feetPos, feetScreen, vm.m))
-		{
-			if (w2s(headPos, headScreen, vm.m))
-			{
-				// 在屏幕上，脚的Y坐标比头的Y坐标大（屏幕Y轴向下）
-				float boxHeight = feetScreen.y - headScreen.y;
-				float boxWidth = boxHeight / 3.0f;
-
-				// 计算方框的左上角和右下角
-				float left = headScreen.x - boxWidth;
-				float right = headScreen.x + boxWidth;
-				float top = headScreen.y;
-				float bottom = feetScreen.y;
-
-				// 绘制ESP方框
-				renderer::draw::box(D3DXVECTOR2{ left, top }, D3DXVECTOR2{ right, bottom },
-					distance < 1500.0f ? D3DCOLOR_XRGB(255, 0, 0) : D3DCOLOR_XRGB(0, 255, 0));
-
-				// 绘制血量矩形
-				float health_percentage = static_cast<float>(current_health) / static_cast<float>(max_health);
-				float health_bar_height = boxHeight * health_percentage;
-				float health_bar_x = left - 5.0f; // 血量矩形的X坐标，位于方框左侧
-				float health_bar_top = bottom - health_bar_height; // 血量矩形的顶部Y坐标
-
-				// 绘制背景矩形
-				renderer::draw::box(D3DXVECTOR2{ health_bar_x - 1, top - 1 }, D3DXVECTOR2{ health_bar_x + 3, bottom + 1 }, D3DCOLOR_XRGB(0, 0, 0));
-
-				// 绘制血量矩形 (从底部向上填充)
-				renderer::draw::box(D3DXVECTOR2{ health_bar_x, health_bar_top }, D3DXVECTOR2{ health_bar_x + 2, bottom }, D3DCOLOR_XRGB(0, 255, 0));
-			}
-		}
-	}
+	// Not used in debug mode
 }
 
 bool esp::w2s(const vec3& world, vec2& screen, float m[16]) {

@@ -1,4 +1,3 @@
-#include "renderer/renderer.h"
 #include "esp.hpp"
 #include <thread>
 #include <iostream>
@@ -11,27 +10,37 @@ uint32_t HEIGHT;
 uint32_t WINDOW_W;
 uint32_t WINDOW_H;
 
-std::atomic<bool> aimBotEnabled(false);
-
-void autoTriggerThread() {
-    while (true) {
-        if (aimBotEnabled) {
-            esp::auto_trigger();
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1)); 
-    }
-}
-
 int main()
 {
-    // 设置控制台输出编码为 UTF-8
+    // Set console output encoding to UTF-8
     SetConsoleOutputCP(CP_UTF8);
 
-    // 设置区域设置为用户默认区域设置
+    // Set locale to user default
     std::locale::global(std::locale(""));
 
+    std::cout << "======================================" << std::endl;
+    std::cout << "    CS2 Entity Debug Tool" << std::endl;
+    std::cout << "======================================" << std::endl;
+    std::cout << std::endl;
+
     esp::pID = memory::GetProcID(L"cs2.exe");
+    if (!esp::pID) {
+        std::cout << "ERROR: Cannot find cs2.exe process!" << std::endl;
+        std::cout << "Make sure CS2 is running." << std::endl;
+        system("pause");
+        return -1;
+    }
+    std::cout << "Found cs2.exe, PID: " << esp::pID << std::endl;
+
     esp::modBase = memory::GetModuleBaseAddress(esp::pID, L"client.dll");
+    if (!esp::modBase) {
+        std::cout << "ERROR: Cannot find client.dll!" << std::endl;
+        system("pause");
+        return -1;
+    }
+    std::cout << "client.dll base: 0x" << std::hex << esp::modBase << std::dec << std::endl;
+    std::cout << std::endl;
+
     int width = GetSystemMetrics(SM_CXSCREEN);
     int height = GetSystemMetrics(SM_CYSCREEN);
 
@@ -39,54 +48,23 @@ int main()
     HEIGHT = height;
     WINDOW_W = width;
     WINDOW_H = height;
-    HWND hwnd = window::InitWindow(NULL);
-    if (!hwnd) return -1;
-    
-    LONG_PTR style = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
-    SetWindowLongPtr(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED | WS_EX_TRANSPARENT);
 
-    if (!renderer::init(hwnd))
+    std::cout << "Press ENTER to scan entities (must be in a game with bots)..." << std::endl;
+    std::cout << "Press F9 to exit." << std::endl;
+    std::cout << std::endl;
+
+    while (!GetAsyncKeyState(VK_F9))
     {
-        renderer::destroy();
-        return -1;
-    }
-
-    std::thread read(esp::loop);
-    if (renderer::running)
-    {
-        std::cout << "start " << std::endl;
-    }
-    else {
-        std::cout << "failed " << std::endl;
-    }
-    std::thread triggerThread(autoTriggerThread);
-
-    triggerThread.detach();
-
-
-    while (!GetAsyncKeyState(VK_F9) && renderer::running)
-    {
-        esp::frame(aimBotEnabled);
-
-        if (GetAsyncKeyState(VK_RSHIFT) & 0x8000)
+        if (GetAsyncKeyState(VK_RETURN) & 0x8000)
         {
-                aimBotEnabled = !aimBotEnabled;
-                if (aimBotEnabled)
-                {
-                    MessageBox(NULL, L"Aim Bot Enabled", L"Info", MB_OK | MB_TOPMOST);
-                }
-                else
-                {
-                    MessageBox(NULL, L"Aim Bot Disabled", L"Info",MB_OK | MB_TOPMOST);
-                }
-            
+            std::cout << "\n--- Scanning... ---\n" << std::endl;
+            esp::debug_loop();
+            std::cout << "\nPress ENTER to scan again, F9 to exit.\n" << std::endl;
+            Sleep(500); // Prevent continuous trigger
         }
-        if (aimBotEnabled && (GetAsyncKeyState(VK_LSHIFT) & 0x8000))
-        {
-            esp::aim_bot();
-        }
+        Sleep(50);
     }
-    renderer::destroy();
 
+    std::cout << "Exiting..." << std::endl;
     return 0;
 }
