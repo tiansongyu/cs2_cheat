@@ -20,6 +20,7 @@ namespace sdl_renderer
     inline bool menuVisible = true;
 
     bool init(const wchar_t* targetWindowName);
+    bool initWaiting();  // Initialize waiting screen (no game window)
     void destroy();
     void beginFrame();
     void endFrame();

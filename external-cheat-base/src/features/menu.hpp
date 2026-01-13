@@ -9,7 +9,7 @@ namespace menu
     inline bool espEnabled = true;
     inline bool espBox = true;
     inline bool espHealth = true;
-    inline bool espDistance = false;
+    inline bool espDistance = true;  // Default ON
     inline bool espSnaplines = false;
 
     // Colors
@@ -24,13 +24,23 @@ namespace menu
     {
         if (!sdl_renderer::menuVisible) return;
 
-        ImGui::SetNextWindowSize(ImVec2(350, 350), ImGuiCond_FirstUseEver);
+        // Set window transparency
+        ImGui::SetNextWindowBgAlpha(0.85f);
+        ImGui::SetNextWindowSize(ImVec2(350, 400), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowPos(ImVec2(100, 100), ImGuiCond_FirstUseEver);
 
         ImGui::Begin("CS2 ESP Menu", nullptr, ImGuiWindowFlags_NoCollapse);
 
+        // Big red warning text
+        ImGui::PushFont(nullptr);
+        ImGui::SetWindowFontScale(1.8f);
+        ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), ">> Press F4 to START! <<");
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::PopFont();
+
+        ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Controls:");
-        ImGui::BulletText("F4 - Toggle menu");
+        ImGui::BulletText("F4 - Hide menu & Play");
         ImGui::BulletText("F9 - Exit program");
         ImGui::Separator();
 
