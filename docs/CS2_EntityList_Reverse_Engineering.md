@@ -213,3 +213,6 @@ for (int offset = 0; offset < 0x10000; offset += 8) {
 3. 通过计算反推出 stride 和 base offset
 4. 用多个已知值验证公式的正确性
 
+## 致谢
+
+- 偏移量来源：[a]2-dumper](https://github.com/a]2x/a]2-dumper)
