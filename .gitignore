@@ -15,7 +15,7 @@ build*
 ~external-cheat-base\SDL2\lib
 # Mono auto generated files
 mono_crash.*
-
+imgui.ini
 # Build results
 [Dd]ebug/
 [Dd]ebugPublic/

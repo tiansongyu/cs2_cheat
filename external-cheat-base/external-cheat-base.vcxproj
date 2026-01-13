@@ -71,12 +71,12 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)external-cheat-base\SDL2\include;$(SolutionDir)external-cheat-base\imgui</IncludePath>
-    <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(SolutionDir)external-cheat-base\SDL2\lib\x64</LibraryPath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)external-cheat-base\vendor\SDL2\include;$(SolutionDir)external-cheat-base\vendor\imgui;$(SolutionDir)external-cheat-base\src;$(SolutionDir)external-cheat-base\src\core;$(SolutionDir)external-cheat-base\src\features;$(SolutionDir)external-cheat-base\src\utils;$(SolutionDir)external-cheat-base\generated</IncludePath>
+    <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)external-cheat-base\SDL2\include;$(SolutionDir)external-cheat-base\imgui</IncludePath>
-    <LibraryPath>$(WindowsSDK_LibraryPath_x64);$(VC_LibraryPath_x64);$(SolutionDir)external-cheat-base\SDL2\lib\x64</LibraryPath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)external-cheat-base\vendor\SDL2\include;$(SolutionDir)external-cheat-base\vendor\imgui;$(SolutionDir)external-cheat-base\src;$(SolutionDir)external-cheat-base\src\core;$(SolutionDir)external-cheat-base\src\features;$(SolutionDir)external-cheat-base\src\utils;$(SolutionDir)external-cheat-base\generated</IncludePath>
+    <LibraryPath>$(WindowsSDK_LibraryPath_x64);$(VC_LibraryPath_x64);$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64</LibraryPath>
     <ExecutablePath>$(VC_ExecutablePath_x64);$(CommonExecutablePath)</ExecutablePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -121,7 +121,7 @@
       <AdditionalDependencies>SDL2.lib;SDL2main.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy /Y "$(SolutionDir)external-cheat-base\SDL2\lib\x64\SDL2.dll" "$(OutDir)"</Command>
+      <Command>xcopy /Y "$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64\SDL2.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -142,39 +142,39 @@
       <AdditionalDependencies>SDL2.lib;SDL2main.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy /Y "$(SolutionDir)external-cheat-base\SDL2\lib\x64\SDL2.dll" "$(OutDir)"</Command>
+      <Command>xcopy /Y "$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64\SDL2.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="buttons.hpp" />
-    <ClInclude Include="client_dll.hpp" />
-    <ClInclude Include="esp.hpp" />
-    <ClInclude Include="math\vector.h" />
-    <ClInclude Include="memory\memory.h" />
-    <ClInclude Include="offsets.hpp" />
-    <ClInclude Include="renderer\sdl_renderer.h" />
-    <ClInclude Include="imgui\imconfig.h" />
-    <ClInclude Include="imgui\imgui.h" />
-    <ClInclude Include="imgui\imgui_internal.h" />
-    <ClInclude Include="imgui\imstb_rectpack.h" />
-    <ClInclude Include="imgui\imstb_textedit.h" />
-    <ClInclude Include="imgui\imstb_truetype.h" />
-    <ClInclude Include="imgui\imgui_impl_sdl2.h" />
-    <ClInclude Include="imgui\imgui_impl_sdlrenderer2.h" />
-    <ClInclude Include="menu.hpp" />
+    <ClInclude Include="generated\buttons.hpp" />
+    <ClInclude Include="generated\client_dll.hpp" />
+    <ClInclude Include="generated\offsets.hpp" />
+    <ClInclude Include="src\features\esp.hpp" />
+    <ClInclude Include="src\features\menu.hpp" />
+    <ClInclude Include="src\utils\math\vector.h" />
+    <ClInclude Include="src\core\memory\memory.h" />
+    <ClInclude Include="src\core\renderer\sdl_renderer.h" />
+    <ClInclude Include="vendor\imgui\imconfig.h" />
+    <ClInclude Include="vendor\imgui\imgui.h" />
+    <ClInclude Include="vendor\imgui\imgui_internal.h" />
+    <ClInclude Include="vendor\imgui\imstb_rectpack.h" />
+    <ClInclude Include="vendor\imgui\imstb_textedit.h" />
+    <ClInclude Include="vendor\imgui\imstb_truetype.h" />
+    <ClInclude Include="vendor\imgui\imgui_impl_sdl2.h" />
+    <ClInclude Include="vendor\imgui\imgui_impl_sdlrenderer2.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="esp.cpp" />
-    <ClCompile Include="main.cpp" />
-    <ClCompile Include="memory\memory.cpp" />
-    <ClCompile Include="renderer\sdl_renderer.cpp" />
-    <ClCompile Include="imgui\imgui.cpp" />
-    <ClCompile Include="imgui\imgui_demo.cpp" />
-    <ClCompile Include="imgui\imgui_draw.cpp" />
-    <ClCompile Include="imgui\imgui_tables.cpp" />
-    <ClCompile Include="imgui\imgui_widgets.cpp" />
-    <ClCompile Include="imgui\imgui_impl_sdl2.cpp" />
-    <ClCompile Include="imgui\imgui_impl_sdlrenderer2.cpp" />
+    <ClCompile Include="src\features\esp.cpp" />
+    <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\core\memory\memory.cpp" />
+    <ClCompile Include="src\core\renderer\sdl_renderer.cpp" />
+    <ClCompile Include="vendor\imgui\imgui.cpp" />
+    <ClCompile Include="vendor\imgui\imgui_demo.cpp" />
+    <ClCompile Include="vendor\imgui\imgui_draw.cpp" />
+    <ClCompile Include="vendor\imgui\imgui_tables.cpp" />
+    <ClCompile Include="vendor\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="vendor\imgui\imgui_impl_sdl2.cpp" />
+    <ClCompile Include="vendor\imgui\imgui_impl_sdlrenderer2.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

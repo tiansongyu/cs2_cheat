@@ -39,7 +39,7 @@ setup_sdl2.bat
 确保 `SDL2.dll` 在可执行文件同目录下（编译时会自动复制）
 
 ## 偏移更新
-
+dw
 CS2 更新后可能需要更新内存偏移，运行：
 ```batch
 update_offset.bat

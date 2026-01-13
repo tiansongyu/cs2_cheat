@@ -1,6 +1,7 @@
 #include "esp.hpp"
-#include "renderer/sdl_renderer.h"
+#include "core/renderer/sdl_renderer.h"
 #include "menu.hpp"
+#include "imgui.h"
 #include <iostream>
 #include <cmath>
 
@@ -127,6 +128,57 @@ void esp::render()
             uint8_t healthR = static_cast<uint8_t>(255 * (1.0f - enemy.health / 100.0f));
             uint8_t healthG = static_cast<uint8_t>(255 * (enemy.health / 100.0f));
             sdl_renderer::draw::filledBox(healthBarX, healthBarY, healthWidth, healthBarHeight, healthR, healthG, 0, 255);
+        }
+
+        // Draw distance text using ImGui
+        if (menu::espDistance) {
+            char distText[32];
+            snprintf(distText, sizeof(distText), "%.0fm", enemy.distance / 100.0f);
+
+            uint8_t dr = static_cast<uint8_t>(menu::espDistanceColor[0] * 255);
+            uint8_t dg = static_cast<uint8_t>(menu::espDistanceColor[1] * 255);
+            uint8_t db = static_cast<uint8_t>(menu::espDistanceColor[2] * 255);
+            uint8_t da = static_cast<uint8_t>(menu::espDistanceColor[3] * 255);
+
+            ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+            drawList->AddText(
+                ImVec2(static_cast<float>(x + w / 2 - 10), static_cast<float>(y + h + 2)),
+                IM_COL32(dr, dg, db, da),
+                distText
+            );
+        }
+
+        // Draw snaplines
+        if (menu::espSnaplines) {
+            int startX, startY;
+            switch (menu::snaplinesOrigin) {
+                case 0: // Bottom
+                    startX = WINDOW_W / 2;
+                    startY = WINDOW_H;
+                    break;
+                case 1: // Center
+                    startX = WINDOW_W / 2;
+                    startY = WINDOW_H / 2;
+                    break;
+                case 2: // Top
+                    startX = WINDOW_W / 2;
+                    startY = 0;
+                    break;
+                default:
+                    startX = WINDOW_W / 2;
+                    startY = WINDOW_H;
+            }
+
+            uint8_t sr = static_cast<uint8_t>(menu::espSnaplinesColor[0] * 255);
+            uint8_t sg = static_cast<uint8_t>(menu::espSnaplinesColor[1] * 255);
+            uint8_t sb = static_cast<uint8_t>(menu::espSnaplinesColor[2] * 255);
+            uint8_t sa = static_cast<uint8_t>(menu::espSnaplinesColor[3] * 255);
+
+            sdl_renderer::draw::line(
+                startX, startY,
+                static_cast<int>(screenFeet.x), static_cast<int>(screenFeet.y),
+                sr, sg, sb, sa
+            );
         }
     }
 }

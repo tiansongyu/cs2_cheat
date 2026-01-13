@@ -2,10 +2,10 @@
 
 #include <vector>
 
-#include "memory/memory.h"
+#include "core/memory/memory.h"
 #include "client_dll.hpp"
 #include "offsets.hpp"
-#include "math/vector.h"
+#include "utils/math/vector.h"
 
 extern uint32_t WIDTH;
 extern uint32_t HEIGHT;
