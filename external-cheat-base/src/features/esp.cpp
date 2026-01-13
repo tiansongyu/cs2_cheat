@@ -115,19 +115,22 @@ void esp::render()
             sdl_renderer::draw::box(x, y, w, h, r, g, b, a);
         }
 
-        // Draw health bar
+        // Draw health bar (vertical bar on left side)
         if (menu::espHealth) {
-            int healthBarWidth = w;
-            int healthBarHeight = 4;
-            int healthBarX = x;
-            int healthBarY = y - 8;
+            int healthBarWidth = 4;
+            int healthBarHeight = h;
+            int healthBarX = x - 8;
+            int healthBarY = y;
 
+            // Background bar
             sdl_renderer::draw::filledBox(healthBarX, healthBarY, healthBarWidth, healthBarHeight, 50, 50, 50, 200);
 
-            int healthWidth = static_cast<int>((enemy.health / 100.0f) * healthBarWidth);
+            // Health bar (fills from bottom to top)
+            int healthHeight = static_cast<int>((enemy.health / 100.0f) * healthBarHeight);
+            int healthY = healthBarY + (healthBarHeight - healthHeight);
             uint8_t healthR = static_cast<uint8_t>(255 * (1.0f - enemy.health / 100.0f));
             uint8_t healthG = static_cast<uint8_t>(255 * (enemy.health / 100.0f));
-            sdl_renderer::draw::filledBox(healthBarX, healthBarY, healthWidth, healthBarHeight, healthR, healthG, 0, 255);
+            sdl_renderer::draw::filledBox(healthBarX, healthY, healthBarWidth, healthHeight, healthR, healthG, 0, 255);
         }
 
         // Draw distance text using ImGui
