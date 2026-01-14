@@ -25,7 +25,7 @@ namespace menu
         if (!sdl_renderer::menuVisible) return;
 
         // Set window transparency
-        ImGui::SetNextWindowBgAlpha(0.85f);
+        ImGui::SetNextWindowBgAlpha(0.45f);
         ImGui::SetNextWindowSize(ImVec2(350, 400), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowPos(ImVec2(100, 100), ImGuiCond_FirstUseEver);
 
