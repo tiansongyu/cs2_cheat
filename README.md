@@ -2,6 +2,8 @@
 
 基于 SDL2 + ImGui 的 CS2 外部 ESP 透视工具。
 
+**中文** | [English](README_EN.md)
+
 ## 📥 下载
 
 **[⬇️ 点击下载最新版本](https://github.com/tiansongyu/cs2_cheat/releases/latest)**
