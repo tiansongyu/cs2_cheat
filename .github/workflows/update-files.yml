@@ -36,9 +36,9 @@ jobs:
     - name: Update offset header files
       if: env.UPDATE_AVAILABLE == 'true'
       run: |
-        curl -o external-cheat-base/client_dll.hpp https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/client_dll.hpp
-        curl -o external-cheat-base/offsets.hpp https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.hpp
-        curl -o external-cheat-base/buttons.hpp https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/buttons.hpp
+        curl -o external-cheat-base/generated/client_dll.hpp https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/client_dll.hpp
+        curl -o external-cheat-base/generated/offsets.hpp https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.hpp
+        curl -o external-cheat-base/generated/buttons.hpp https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/buttons.hpp
 
     - name: Commit and push changes
       if: env.UPDATE_AVAILABLE == 'true'
