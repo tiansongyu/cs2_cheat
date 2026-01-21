@@ -29,11 +29,13 @@ An external ESP overlay tool for CS2 based on SDL2 + ImGui.
 | Feature | Description |
 |---------|-------------|
 | 🎯 **Auto Lock** | Hold Shift to automatically aim at the closest enemy within FOV |
+| 🧠 **Smart Aim** | Smart Aim mode: Ignore FOV, auto-lock best visible target (distance/health priority) |
 | 📐 **FOV Range** | Adjustable field of view (1-30 degrees), FOV circle displayed on screen |
 | 🔄 **Smoothness** | Adjustable aiming smoothness (1-20), prevents instant lock |
 | 🦴 **Target Bone** | Select head/neck/chest |
 | 🧱 **Visible Only** | Only aim at enemies not behind walls |
 | 🎯 **RCS** | Automatic recoil compensation with adjustable strength and sensitivity |
+| 🎭 **Head Offset** | Auto-compensate head position when enemy is side-facing |
 
 ### 📡 Radar Overlay
 
@@ -51,12 +53,13 @@ An external ESP overlay tool for CS2 based on SDL2 + ImGui.
 | Feature | Description |
 |---------|-------------|
 | 🎚️ **Target FPS** | Adjustable render rate (30-240 FPS) |
+| ⚡ **High Precision Timer** | Microsecond-level frame control using QueryPerformanceCounter |
 
 ### 🔫 Triggerbot
 
 | Feature | Description |
 |---------|-------------|
-| 🔫 **Auto Fire** | Hold Alt to automatically aim at visible enemy heads and fire |
+| 🔫 **Auto Fire** | Hold F key to automatically aim at visible enemy heads and fire |
 | ⏱️ **Delay Setting** | Adjustable fire delay (0-500 ms), simulates human reaction |
 
 ### 🚧 TODO (Planned Features)
@@ -115,7 +118,7 @@ An external ESP overlay tool for CS2 based on SDL2 + ImGui.
 | **F4** | Show/Hide settings menu |
 | **F9** | Exit program |
 | **Shift** | Hold to activate Aimbot (when enabled) |
-| **Alt** | Hold to activate Triggerbot (when enabled) |
+| **F** | Hold to activate Triggerbot (when enabled) |
 
 ### Quick Start
 1. Launch CS2 and enter the game
@@ -161,19 +164,22 @@ cs2_cheat/
 ├── external-cheat-base/
 │   ├── src/
 │   │   ├── core/
-│   │   │   ├── memory/      # Memory reading module
-│   │   │   └── renderer/    # SDL2 renderer
+│   │   │   ├── memory/          # Memory reading module
+│   │   │   └── renderer/        # SDL2 renderer
 │   │   ├── features/
-│   │   │   ├── esp.cpp/hpp  # ESP feature implementation
-│   │   │   └── menu.hpp     # ImGui menu
-│   │   ├── utils/math/      # Math utilities
-│   │   └── main.cpp         # Program entry point
-│   ├── generated/           # Auto-generated offset headers
+│   │   │   ├── esp.cpp/hpp      # ESP feature implementation
+│   │   │   ├── aimbot.cpp/hpp   # Aimbot/RCS/Triggerbot implementation
+│   │   │   └── menu.hpp         # ImGui menu
+│   │   ├── utils/
+│   │   │   ├── math/            # Math utilities (vectors, matrices)
+│   │   │   └── weapon_names.hpp # Weapon name mappings
+│   │   └── main.cpp             # Program entry point (high-precision timer)
+│   ├── generated/               # Auto-generated offset headers
 │   └── vendor/
-│       ├── SDL2/            # SDL2 library
-│       └── imgui/           # ImGui library
-├── update_offset.bat        # Offset update script
-└── docs/                    # Documentation
+│       ├── SDL2/                # SDL2 library
+│       └── imgui/               # ImGui library
+├── update_offset.bat            # Offset update script
+└── docs/                        # Documentation
 ```
 
 ## 🛠️ Technical Details

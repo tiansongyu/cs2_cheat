@@ -98,6 +98,19 @@ namespace menu
         ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Controls:");
         ImGui::BulletText("F4 - Hide menu & Play");
         ImGui::BulletText("F9 - Exit program");
+
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Hotkeys:");
+        ImGui::Indent();
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Shift");
+        ImGui::SameLine(80);
+        ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "- Aimbot (Auto Aim)");
+
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "F");
+        ImGui::SameLine(80);
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.6f, 1.0f), "- Triggerbot (Auto Fire)");
+        ImGui::Unindent();
+
         ImGui::Separator();
 
         // Aimbot Tab
