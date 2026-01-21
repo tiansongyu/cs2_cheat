@@ -31,7 +31,7 @@ namespace menu
     inline int snaplinesOrigin = 0; // 0=Bottom, 1=Center, 2=Top
 
     // System Settings
-    inline int targetFPS = 60;           // Target render FPS (30-240)
+    inline int targetFPS = 30;           // Target render FPS (30-240)
 
     // Aimbot Settings
     inline bool aimbotEnabled = false;     // Aimbot enabled
