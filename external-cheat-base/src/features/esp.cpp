@@ -5,6 +5,7 @@
 #include "imgui.h"
 #include <iostream>
 #include <cmath>
+#include <algorithm>  // For std::min
 
 bool esp::init()
 {
@@ -114,16 +115,36 @@ void esp::updateEntities()
         const float FLASH_ALPHA_THRESHOLD = 0.5f;
         bool isFlashed = (flashDuration > 0.0f) && (flashMaxAlpha >= FLASH_ALPHA_THRESHOLD);
 
+        // Calculate distance first (needed for hybrid detection)
+        float distance = static_cast<float>(player_distance(player_position, feetPos));
+
+        // Hybrid visibility detection system
+        // m_bSpotted is reliable only within a certain distance (default ~2000 units)
+        // Beyond that distance, we use fallback logic
+        uintptr_t entitySpottedState = entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_entitySpottedState;
+        bool rawSpotted = memory::Read<bool>(entitySpottedState + 0x8);  // m_bSpotted
+
+        bool isSpotted;
+        if (distance < menu::espWallCheckDistance) {
+            // Close range: Use m_bSpotted (accurate)
+            isSpotted = rawSpotted;
+        } else {
+            // Long range: m_bSpotted is unreliable
+            // Fallback: Assume visible (red) since wall occlusion matters less at long range
+            isSpotted = true;  // Default to "visible" at long range
+        }
+
         EnemyInfo enemy;
         enemy.position = feetPos;
         enemy.headPosition = headPos;
         enemy.health = health;
-        enemy.distance = static_cast<float>(player_distance(player_position, feetPos));
+        enemy.distance = distance;
         enemy.weaponName = weaponName;
         enemy.viewYaw = enemyYaw;
         enemy.angleToPlayer = angleToPlayer;
         enemy.flashDuration = flashDuration;
         enemy.isFlashed = isFlashed;
+        enemy.isSpotted = isSpotted;
 
         buffer.push_back(enemy);
     }
@@ -148,13 +169,34 @@ void esp::render()
         int w = static_cast<int>(width);
         int h = static_cast<int>(height);
 
-        // Use normal box color (not affected by flash status)
-        uint8_t r = static_cast<uint8_t>(menu::espBoxColor[0] * 255);
-        uint8_t g = static_cast<uint8_t>(menu::espBoxColor[1] * 255);
-        uint8_t b = static_cast<uint8_t>(menu::espBoxColor[2] * 255);
-        uint8_t a = static_cast<uint8_t>(menu::espBoxColor[3] * 255);
+        // Determine box color based on ANGLE (threat level)
+        // Red = enemy facing you (danger), Green = enemy facing away (safe)
+        uint8_t r, g, b, a;
 
-        // Draw box
+        if (menu::espViewAngle) {
+            // Use angle-based color for box
+            if (enemy.angleToPlayer < 45.0f) {
+                // Facing player (RED - DANGER!)
+                r = 255; g = 0; b = 0; a = 255;
+            } else if (enemy.angleToPlayer < 90.0f) {
+                // Partially facing (ORANGE)
+                r = 255; g = 165; b = 0; a = 255;
+            } else if (enemy.angleToPlayer < 135.0f) {
+                // Side view (YELLOW)
+                r = 255; g = 255; b = 0; a = 255;
+            } else {
+                // Back to player (GREEN - SAFE)
+                r = 0; g = 255; b = 0; a = 255;
+            }
+        } else {
+            // View angle disabled, use default box color
+            r = static_cast<uint8_t>(menu::espBoxColor[0] * 255);
+            g = static_cast<uint8_t>(menu::espBoxColor[1] * 255);
+            b = static_cast<uint8_t>(menu::espBoxColor[2] * 255);
+            a = static_cast<uint8_t>(menu::espBoxColor[3] * 255);
+        }
+
+        // Draw box (color indicates threat level based on angle)
         if (menu::espBox) {
             sdl_renderer::draw::box(x, y, w, h, r, g, b, a);
         }
@@ -242,24 +284,25 @@ void esp::render()
             );
         }
 
-        // Draw view direction indicator
-        if (menu::espViewAngle) {
+        // Draw wall occlusion indicator (triangle arrow)
+        // Triangle color indicates visibility: RED = visible, GREEN = behind wall
+        if (menu::espWallCheck) {
             ImDrawList* drawList = ImGui::GetBackgroundDrawList();
 
-            // Determine color based on angle
+            // Determine triangle color based on WALL OCCLUSION
             uint8_t vr, vg, vb, va;
-            if (enemy.angleToPlayer < 45.0f) {
-                // Facing player (RED - DANGER!)
-                vr = 255; vg = 0; vb = 0; va = 255;
-            } else if (enemy.angleToPlayer < 90.0f) {
-                // Partially facing (ORANGE)
-                vr = 255; vg = 165; vb = 0; va = 255;
-            } else if (enemy.angleToPlayer < 135.0f) {
-                // Side view (YELLOW)
-                vr = 255; vg = 255; vb = 0; va = 255;
+            if (enemy.isSpotted) {
+                // Enemy is visible (no wall) - RED
+                vr = static_cast<uint8_t>(menu::espBoxColor[0] * 255);
+                vg = static_cast<uint8_t>(menu::espBoxColor[1] * 255);
+                vb = static_cast<uint8_t>(menu::espBoxColor[2] * 255);
+                va = static_cast<uint8_t>(menu::espBoxColor[3] * 255);
             } else {
-                // Back to player (GREEN - SAFE)
-                vr = 0; vg = 255; vb = 0; va = 255;
+                // Enemy is behind wall - GREEN
+                vr = static_cast<uint8_t>(menu::espWallColor[0] * 255);
+                vg = static_cast<uint8_t>(menu::espWallColor[1] * 255);
+                vb = static_cast<uint8_t>(menu::espWallColor[2] * 255);
+                va = static_cast<uint8_t>(menu::espWallColor[3] * 255);
             }
 
             // Draw arrow indicator at top of box
@@ -268,8 +311,8 @@ void esp::render()
             float arrowSize = 8.0f;
 
             // Draw filled triangle pointing in enemy's view direction relative to player
-            // If enemy is facing player, arrow points down (at player)
-            // If enemy is facing away, arrow points up (away from player)
+            // Triangle direction still shows where enemy is facing
+            // But COLOR now shows wall occlusion status
             if (enemy.angleToPlayer < 90.0f) {
                 // Enemy is facing towards player - arrow points down
                 ImVec2 p1(centerX, topY + arrowSize);           // Bottom point
@@ -284,7 +327,7 @@ void esp::render()
                 drawList->AddTriangleFilled(p1, p2, p3, IM_COL32(vr, vg, vb, va));
             }
 
-            // Draw angle text
+            // Draw angle text (still shows angle degree)
             if (menu::espViewAngleText) {
                 char angleText[16];
                 snprintf(angleText, sizeof(angleText), "%.0f°", enemy.angleToPlayer);

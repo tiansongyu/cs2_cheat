@@ -30,6 +30,7 @@ struct EnemyInfo
     float angleToPlayer;     // Angle difference between enemy view and player direction
     float flashDuration;     // Flashbang blind duration (> 0 means flashed)
     bool isFlashed;          // Is enemy currently flashed
+    bool isSpotted;          // Is enemy spotted by local player (visible, not behind wall)
 };
 
 namespace esp

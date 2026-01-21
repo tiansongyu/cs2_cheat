@@ -14,12 +14,15 @@ namespace menu
     inline bool espViewAngle = true; // View angle indicator - Default ON
     inline bool espViewAngleText = false; // Show angle degree text
     inline bool espFlashIndicator = true; // Flashbang eye indicator - Default ON
+    inline bool espWallCheck = true; // Wall occlusion check - Default ON
+    inline float espWallCheckDistance = 2000.0f; // Max distance for reliable wall check (game units)
     inline bool espSnaplines = false;
 
     // Colors
-    inline float espBoxColor[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
+    inline float espBoxColor[4] = { 1.0f, 0.0f, 0.0f, 1.0f };          // Red - visible enemies (in direct line of sight)
+    inline float espWallColor[4] = { 0.0f, 1.0f, 0.0f, 1.0f };         // Green - enemies behind wall
     inline float espDistanceColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-    inline float espWeaponColor[4] = { 0.0f, 1.0f, 1.0f, 1.0f };  // Cyan color for weapon
+    inline float espWeaponColor[4] = { 0.0f, 1.0f, 1.0f, 1.0f };       // Cyan color for weapon
     inline float espFlashNormalColor[4] = { 1.0f, 0.0f, 0.0f, 1.0f };  // Red - normal eye state
     inline float espFlashColor[4] = { 1.0f, 1.0f, 0.0f, 1.0f };        // Yellow - flashed eye state
     inline float espSnaplinesColor[4] = { 1.0f, 1.0f, 0.0f, 1.0f };
@@ -61,11 +64,12 @@ namespace menu
                 ImGui::Separator();
                 ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Features:");
 
-                // Box ESP
+                // Box ESP (color = angle/threat level)
                 ImGui::Checkbox("Box ESP", &espBox);
                 if (espBox) {
                     ImGui::SameLine();
                     ImGui::ColorEdit4("##BoxColor", espBoxColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Default color when View Direction disabled)");
                 }
 
                 // Health Bar
@@ -78,11 +82,34 @@ namespace menu
                     ImGui::ColorEdit4("##WeaponColor", espWeaponColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
                 }
 
-                // View Angle Indicator
-                ImGui::Checkbox("View Direction", &espViewAngle);
+                // View Direction (controls BOX color based on angle)
+                ImGui::Checkbox("View Direction (Box Color)", &espViewAngle);
                 if (espViewAngle) {
                     ImGui::Indent();
+                    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Facing You: RED");
+                    ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.0f, 1.0f), "Partial: ORANGE");
+                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Side: YELLOW");
+                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Back: GREEN");
                     ImGui::Checkbox("Show Angle Degrees", &espViewAngleText);
+                    ImGui::Unindent();
+                }
+
+                // Wall Occlusion Check (controls TRIANGLE color)
+                ImGui::Checkbox("Wall Check (Triangle)", &espWallCheck);
+                if (espWallCheck) {
+                    ImGui::Indent();
+                    ImGui::Text("Visible Color:");
+                    ImGui::SameLine();
+                    ImGui::ColorEdit4("##BoxColor2", espBoxColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                    ImGui::Text("Behind Wall Color:");
+                    ImGui::SameLine();
+                    ImGui::ColorEdit4("##WallColor", espWallColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Triangle: RED=Visible, GREEN=Behind Wall");
+
+                    // Distance threshold slider
+                    ImGui::Text("Max Detection Distance:");
+                    ImGui::SliderFloat("##WallCheckDistance", &espWallCheckDistance, 500.0f, 5000.0f, "%.0f units");
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Beyond this: assume visible)");
                     ImGui::Unindent();
                 }
 
