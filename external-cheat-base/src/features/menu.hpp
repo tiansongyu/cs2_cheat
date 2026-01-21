@@ -49,6 +49,10 @@ namespace menu
     inline float headOffsetAngleMin = 45.0f;   // Minimum angle for offset (degrees)
     inline float headOffsetAngleMax = 135.0f;  // Maximum angle for offset (degrees)
 
+    // Smart Aim Settings (auto-lock visible enemies by priority)
+    inline bool smartAimEnabled = false;      // Smart aim mode (ignores FOV, auto-selects best target)
+    inline int smartAimPriority = 0;          // 0=Distance first, 1=Health first
+
     // Triggerbot Settings
     inline bool triggerbotEnabled = false; // Triggerbot enabled
     inline int triggerbotDelay = 50;       // Delay before shooting (milliseconds)
@@ -106,9 +110,25 @@ namespace menu
                 ImGui::Separator();
                 ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Aimbot Settings:");
 
-                ImGui::SliderFloat("FOV", &aimbotFOV, 1.0f, 30.0f, "%.1f deg");
+                // Smart Aim - auto-lock visible enemies
+                ImGui::Checkbox("Smart Aim (Auto-Lock)", &smartAimEnabled);
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Field of view - only aim at enemies within this angle");
+                    ImGui::SetTooltip("Ignore FOV, auto-aim at best visible target\nPriority: Visible > Distance/Health");
+
+                if (smartAimEnabled) {
+                    ImGui::Indent();
+                    const char* priorityItems[] = { "Distance First", "Health First" };
+                    ImGui::Combo("Priority", &smartAimPriority, priorityItems, IM_ARRAYSIZE(priorityItems));
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Distance: Aim at closest enemy\nHealth: Aim at lowest HP enemy");
+                    ImGui::Unindent();
+                }
+
+                if (!smartAimEnabled) {
+                    ImGui::SliderFloat("FOV", &aimbotFOV, 1.0f, 30.0f, "%.1f deg");
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Field of view - only aim at enemies within this angle");
+                }
 
                 ImGui::SliderFloat("Aim Smoothing", &aimbotSmoothing, 1.0f, 20.0f, "%.1f");
                 if (ImGui::IsItemHovered())
@@ -117,9 +137,11 @@ namespace menu
                 const char* boneItems[] = { "Head", "Neck", "Chest" };
                 ImGui::Combo("Target Bone", &aimbotBone, boneItems, IM_ARRAYSIZE(boneItems));
 
-                ImGui::Checkbox("Visible Only", &aimbotVisibleOnly);
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Only aim at enemies not behind walls");
+                if (!smartAimEnabled) {
+                    ImGui::Checkbox("Visible Only", &aimbotVisibleOnly);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Only aim at enemies not behind walls");
+                }
 
                 ImGui::Checkbox("Show FOV Circle", &aimbotShowFOV);
                 if (aimbotShowFOV) {

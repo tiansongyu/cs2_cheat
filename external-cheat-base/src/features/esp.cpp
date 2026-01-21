@@ -28,6 +28,9 @@ bool esp::init()
 
 void esp::updateEntities()
 {
+    // Reset local player cache validity
+    localPlayer.isValid = false;
+
     uintptr_t entity_list = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwEntityList);
     if (!entity_list) return;
 
@@ -37,16 +40,28 @@ void esp::updateEntities()
     // Read view matrix
     vm = memory::Read<viewMatrix>(modBase + cs2_dumper::offsets::client_dll::dwViewMatrix);
 
-    // Get local player info
-    uint8_t myTeam = memory::Read<uint8_t>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
-    player_position = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin) +
-        memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
-
-    // Get local player view angle for radar rotation
+    // Get local player info and cache it for aimbot/triggerbot/RCS
+    vec3 localPos = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
+    vec3 viewOffset = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
     vec3 localEyeAngles = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
-    player_yaw = localEyeAngles.y;  // Yaw is the Y component
+
+    // Update cached local player data
+    localPlayer.pawn = localPlayerPawn;
+    localPlayer.position = localPos;
+    localPlayer.eyePosition = { localPos.x + viewOffset.x, localPos.y + viewOffset.y, localPos.z + viewOffset.z };
+    localPlayer.viewAngle = { localEyeAngles.x, localEyeAngles.y };
+    localPlayer.shotsFired = memory::Read<int>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_iShotsFired);
+    localPlayer.punchAngle = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_aimPunchAngle);
+    localPlayer.isValid = true;
+
+    // Update legacy variables for compatibility
+    player_position = localPlayer.eyePosition;
+    player_yaw = localEyeAngles.y;
+
+    uint8_t myTeam = memory::Read<uint8_t>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
 
     std::vector<EnemyInfo> buffer;
+    buffer.reserve(16);  // Pre-allocate for typical max players
 
     // Iterate entity list
     for (uint32_t i = 1; i < 64; i++)

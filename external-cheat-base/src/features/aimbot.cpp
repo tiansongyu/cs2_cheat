@@ -94,14 +94,7 @@ vec2 aimbot::calcAngle(const vec3& src, const vec3& dst)
     return angle;
 }
 
-// Debug function to print angles
-void debugPrintAngles(const char* label, float pitch, float yaw)
-{
-    static int frameCount = 0;
-    if (++frameCount % 60 == 0) {  // Print every 60 frames
-        std::cout << label << " Pitch: " << pitch << " Yaw: " << yaw << std::endl;
-    }
-}
+
 
 float aimbot::getFOV(const vec2& viewAngle, const vec2& aimAngle)
 {
@@ -119,122 +112,130 @@ void aimbot::resetRCS()
 
 void aimbot::update()
 {
-    // Debug: check if function is called
-    static int callCount = 0;
-
     // Check if aimbot is enabled
     if (!menu::aimbotEnabled) return;
 
     // Check if aimbot key is held (Shift)
     if (!(GetAsyncKeyState(menu::aimbotKey) & 0x8000)) return;
 
-    // Debug: key is pressed
-    if (++callCount % 30 == 0) {
-        std::cout << "[Aimbot] Key pressed, enemies count: " << esp::enemies.size() << std::endl;
-    }
+    // Use cached local player data (updated once per frame in esp::updateEntities)
+    if (!esp::localPlayer.isValid) return;
 
-    // Get local player pawn
-    uintptr_t localPlayerPawn = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
-    if (!localPlayerPawn) {
-        if (callCount % 30 == 0) std::cout << "[Aimbot] No local player pawn!" << std::endl;
-        return;
-    }
+    const vec2& currentViewAngle = esp::localPlayer.viewAngle;
+    const vec3& eyePos = esp::localPlayer.eyePosition;
 
-    // Get local player view angles
-    vec3 viewAngles = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
-    vec2 currentViewAngle = { viewAngles.x, viewAngles.y };
-
-    // Get local player eye position
-    vec3 localPos = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
-    vec3 viewOffset = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
-    vec3 eyePos = { localPos.x + viewOffset.x, localPos.y + viewOffset.y, localPos.z + viewOffset.z };
-
-    // Find best target
-    float bestFOV = menu::aimbotFOV;
     vec2 bestAngle = { 0.0f, 0.0f };
     bool foundTarget = false;
 
-    for (const auto& enemy : esp::enemies)
-    {
-        // Skip if visible only mode and enemy is behind wall
-        if (menu::aimbotVisibleOnly && !enemy.isSpotted) continue;
+    if (menu::smartAimEnabled) {
+        // Smart Aim Mode: Ignore FOV, select best visible target by priority
+        float bestScore = 999999.0f;  // Lower is better
 
-        // Get target position based on selected bone
-        vec3 targetPos;
-        switch (menu::aimbotBone)
+        for (const auto& enemy : esp::enemies)
         {
-            case 0: // Head - apply head offset for side-facing enemies
-                targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
-                break;
-            case 1: // Neck (slightly below head) - also apply offset
-                targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
-                targetPos.z -= 5.0f;
-                break;
-            case 2: // Chest (between head and feet) - no offset needed
-                targetPos.x = (enemy.headPosition.x + enemy.position.x) / 2.0f;
-                targetPos.y = (enemy.headPosition.y + enemy.position.y) / 2.0f;
-                targetPos.z = (enemy.headPosition.z + enemy.position.z) / 2.0f;
-                break;
-            default:
-                targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
-                break;
+            // Smart Aim ONLY targets visible enemies (not behind walls)
+            if (!enemy.isSpotted) continue;
+
+            // Calculate priority score based on selected mode
+            float score;
+            if (menu::smartAimPriority == 0) {
+                // Distance first: closer enemies have lower score
+                score = enemy.distance;
+            } else {
+                // Health first: lower HP enemies have lower score
+                // Use distance as tiebreaker (add small distance factor)
+                score = static_cast<float>(enemy.health) + enemy.distance * 0.001f;
+            }
+
+            if (score < bestScore)
+            {
+                bestScore = score;
+
+                // Get target position based on selected bone
+                vec3 targetPos;
+                switch (menu::aimbotBone)
+                {
+                    case 0: // Head
+                        targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
+                        break;
+                    case 1: // Neck
+                        targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
+                        targetPos.z -= 5.0f;
+                        break;
+                    case 2: // Chest
+                        targetPos.x = (enemy.headPosition.x + enemy.position.x) / 2.0f;
+                        targetPos.y = (enemy.headPosition.y + enemy.position.y) / 2.0f;
+                        targetPos.z = (enemy.headPosition.z + enemy.position.z) / 2.0f;
+                        break;
+                    default:
+                        targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
+                        break;
+                }
+
+                bestAngle = calcAngle(eyePos, targetPos);
+                foundTarget = true;
+            }
         }
+    }
+    else {
+        // Normal Mode: Use FOV to find closest target to crosshair
+        float bestFOV = menu::aimbotFOV;
 
-        // Calculate angle to target
-        vec2 aimAngle = calcAngle(eyePos, targetPos);
-
-        // Get FOV distance
-        float fov = getFOV(currentViewAngle, aimAngle);
-
-        // Check if this target is closer to crosshair
-        if (fov < bestFOV)
+        for (const auto& enemy : esp::enemies)
         {
-            bestFOV = fov;
-            bestAngle = aimAngle;
-            foundTarget = true;
+            // Skip if visible only mode and enemy is behind wall
+            if (menu::aimbotVisibleOnly && !enemy.isSpotted) continue;
+
+            // Get target position based on selected bone
+            vec3 targetPos;
+            switch (menu::aimbotBone)
+            {
+                case 0: // Head
+                    targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
+                    break;
+                case 1: // Neck
+                    targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
+                    targetPos.z -= 5.0f;
+                    break;
+                case 2: // Chest
+                    targetPos.x = (enemy.headPosition.x + enemy.position.x) / 2.0f;
+                    targetPos.y = (enemy.headPosition.y + enemy.position.y) / 2.0f;
+                    targetPos.z = (enemy.headPosition.z + enemy.position.z) / 2.0f;
+                    break;
+                default:
+                    targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
+                    break;
+            }
+
+            // Calculate angle to target
+            vec2 aimAngle = calcAngle(eyePos, targetPos);
+
+            // Get FOV distance
+            float fov = getFOV(currentViewAngle, aimAngle);
+
+            // Check if this target is closer to crosshair
+            if (fov < bestFOV)
+            {
+                bestFOV = fov;
+                bestAngle = aimAngle;
+                foundTarget = true;
+            }
         }
     }
 
-    if (!foundTarget) {
-        if (callCount % 30 == 0) std::cout << "[Aimbot] No target in FOV" << std::endl;
-        return;
-    }
-
-    // Debug: print angles
-    static int debugFrame = 0;
-    if (++debugFrame % 30 == 0) {
-        std::cout << "[Aimbot] ViewAngle: (" << currentViewAngle.x << ", " << currentViewAngle.y
-                  << ") TargetAngle: (" << bestAngle.x << ", " << bestAngle.y << ")" << std::endl;
-    }
+    if (!foundTarget) return;
 
     // Apply smoothing using linear interpolation (Lerp)
-    // WriteAngle = CurrentAngle + (FinalAngle - CurrentAngle) / SmoothFactor
     float smoothing = menu::aimbotSmoothing;
-    float smoothPitch = currentViewAngle.x + (bestAngle.x - currentViewAngle.x) / smoothing;
-    float smoothYaw = currentViewAngle.y + normalizeAngle(bestAngle.y - currentViewAngle.y) / smoothing;
-
-    // Calculate delta from current view to smoothed target
-    float deltaPitch = smoothPitch - currentViewAngle.x;
-    float deltaYaw = normalizeAngle(smoothYaw - currentViewAngle.y);
+    float deltaPitch = (bestAngle.x - currentViewAngle.x) / smoothing;
+    float deltaYaw = normalizeAngle(bestAngle.y - currentViewAngle.y) / smoothing;
 
     // Convert angle delta to mouse movement
-    // Formula: mouse_pixels = angle_degrees / (sensitivity * 0.022)
-    // 0.022 is CS2's mouse sensitivity coefficient
-    float sensitivity = menu::rcsSensitivity;
-    float mouseSensitivityFactor = sensitivity * 0.022f;
+    float mouseSensitivityFactor = menu::rcsSensitivity * 0.022f;
 
-    // In CS2/Source engine:
-    // - Moving mouse RIGHT decreases Yaw (turns right)
-    // - Moving mouse DOWN increases Pitch (looks down)
-    // So we need to NEGATE deltaYaw for correct horizontal movement
-    float moveX = -deltaYaw / mouseSensitivityFactor;  // Negated!
+    // In CS2: Moving mouse RIGHT decreases Yaw, DOWN increases Pitch
+    float moveX = -deltaYaw / mouseSensitivityFactor;
     float moveY = deltaPitch / mouseSensitivityFactor;
-
-    // Debug
-    if (debugFrame % 30 == 0) {
-        std::cout << "[Aimbot] Delta: (" << deltaPitch << ", " << deltaYaw
-                  << ") Move: (" << moveX << ", " << moveY << ")" << std::endl;
-    }
 
     // Move mouse if delta is significant
     if (std::abs(moveX) > 0.1f || std::abs(moveY) > 0.1f)
@@ -256,48 +257,39 @@ void aimbot::updateRCS()
         return;
     }
 
-    // Get local player pawn
-    uintptr_t localPlayerPawn = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
-    if (!localPlayerPawn) {
+    // Use cached local player data
+    if (!esp::localPlayer.isValid) {
         resetRCS();
         return;
     }
 
-    // Read shots fired count
-    int shotsFired = memory::Read<int>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_iShotsFired);
-    
+    // Use cached shots fired count
+    int shotsFired = esp::localPlayer.shotsFired;
+
     // If not shooting or just started, reset
     if (shotsFired <= 0) {
         resetRCS();
         return;
     }
 
-    // Read current punch angle (recoil)
-    vec3 punchAngle = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_aimPunchAngle);
+    // Use cached punch angle
+    const vec3& punchAngle = esp::localPlayer.punchAngle;
 
     // Only apply RCS after first shot (shotsFired > 1 means we're in a spray)
     if (shotsFired > 1) {
         // Calculate delta between current and old punch angle
-        vec3 deltaPunch;
-        deltaPunch.x = punchAngle.x - oldPunchAngle.x;
-        deltaPunch.y = punchAngle.y - oldPunchAngle.y;
-        deltaPunch.z = 0.0f;
+        float deltaPunchX = punchAngle.x - oldPunchAngle.x;
+        float deltaPunchY = punchAngle.y - oldPunchAngle.y;
 
         // Apply sensitivity and strength multipliers
-        // The punch angle is multiplied by 2 in-game, so we need to account for that
         float sensitivity = menu::rcsSensitivity;
         float strength = menu::rcsStrength / 100.0f;
-        
-        // Calculate mouse movement needed to compensate
-        // Negative because we need to move opposite to recoil
-        // 0.022f is roughly the CS2 mouse sensitivity factor
-        float moveX = -deltaPunch.y * (sensitivity / 0.022f) * 2.0f * strength;
-        float moveY = -deltaPunch.x * (sensitivity / 0.022f) * 2.0f * strength;
-
-        // Apply smoothing
         float smoothing = menu::rcsSmoothing;
-        moveX /= smoothing;
-        moveY /= smoothing;
+
+        // Calculate mouse movement (negative = opposite to recoil)
+        float factor = (sensitivity / 0.022f) * 2.0f * strength / smoothing;
+        float moveX = -deltaPunchY * factor;
+        float moveY = -deltaPunchX * factor;
 
         // Move mouse if delta is significant
         if (std::abs(moveX) > 0.1f || std::abs(moveY) > 0.1f) {
@@ -329,21 +321,14 @@ void aimbot::updateTriggerbot()
         return;
     }
 
-    // Get local player pawn
-    uintptr_t localPlayerPawn = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
-    if (!localPlayerPawn) {
+    // Use cached local player data
+    if (!esp::localPlayer.isValid) {
         triggerbotHasTarget = false;
         return;
     }
 
-    // Get local player view angles
-    vec3 viewAngles = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
-    vec2 currentViewAngle = { viewAngles.x, viewAngles.y };
-
-    // Get local player eye position
-    vec3 localPos = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
-    vec3 viewOffset = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
-    vec3 eyePos = { localPos.x + viewOffset.x, localPos.y + viewOffset.y, localPos.z + viewOffset.z };
+    const vec2& currentViewAngle = esp::localPlayer.viewAngle;
+    const vec3& eyePos = esp::localPlayer.eyePosition;
 
     // Find any visible enemy that is very close to crosshair (within small FOV)
     const float triggerbotFOV = 1.5f;  // Very small FOV - only trigger when almost on target
@@ -379,14 +364,10 @@ void aimbot::updateTriggerbot()
             if (currentTime - triggerbotTargetTime >= static_cast<DWORD>(menu::triggerbotDelay))
             {
                 // Aim at head first (snap to target)
-                float smoothPitch = currentViewAngle.x + (aimAngle.x - currentViewAngle.x) / 2.0f;
-                float smoothYaw = currentViewAngle.y + normalizeAngle(aimAngle.y - currentViewAngle.y) / 2.0f;
+                float deltaPitch = (aimAngle.x - currentViewAngle.x) / 2.0f;
+                float deltaYaw = normalizeAngle(aimAngle.y - currentViewAngle.y) / 2.0f;
 
-                float deltaPitch = smoothPitch - currentViewAngle.x;
-                float deltaYaw = normalizeAngle(smoothYaw - currentViewAngle.y);
-
-                float sensitivity = menu::rcsSensitivity;
-                float mouseSensitivityFactor = sensitivity * 0.022f;
+                float mouseSensitivityFactor = menu::rcsSensitivity * 0.022f;
 
                 float moveX = -deltaYaw / mouseSensitivityFactor;
                 float moveY = deltaPitch / mouseSensitivityFactor;
