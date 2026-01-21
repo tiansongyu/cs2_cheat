@@ -11,6 +11,8 @@ namespace menu
     inline bool espHealth = true;
     inline bool espDistance = true;  // Default ON
     inline bool espWeapon = true;    // Weapon display - Default ON
+    inline bool espViewAngle = true; // View angle indicator - Default ON
+    inline bool espViewAngleText = false; // Show angle degree text
     inline bool espSnaplines = false;
 
     // Colors
@@ -71,6 +73,14 @@ namespace menu
                 if (espWeapon) {
                     ImGui::SameLine();
                     ImGui::ColorEdit4("##WeaponColor", espWeaponColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                }
+
+                // View Angle Indicator
+                ImGui::Checkbox("View Direction", &espViewAngle);
+                if (espViewAngle) {
+                    ImGui::Indent();
+                    ImGui::Checkbox("Show Angle Degrees", &espViewAngleText);
+                    ImGui::Unindent();
                 }
 
                 // Distance

@@ -99,12 +99,21 @@ void esp::updateEntities()
             }
         }
 
+        // Read enemy view angles
+        vec3 eyeAngles = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
+        float enemyYaw = eyeAngles.y;  // Yaw is the Y component of QAngle
+
+        // Calculate angle to player
+        float angleToPlayer = calculateAngleToPlayer(enemyYaw, feetPos, player_position);
+
         EnemyInfo enemy;
         enemy.position = feetPos;
         enemy.headPosition = headPos;
         enemy.health = health;
         enemy.distance = static_cast<float>(player_distance(player_position, feetPos));
         enemy.weaponName = weaponName;
+        enemy.viewYaw = enemyYaw;
+        enemy.angleToPlayer = angleToPlayer;
 
         buffer.push_back(enemy);
     }
@@ -172,6 +181,61 @@ void esp::render()
                 IM_COL32(wr, wg, wb, wa),
                 enemy.weaponName.c_str()
             );
+        }
+
+        // Draw view direction indicator
+        if (menu::espViewAngle) {
+            ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+
+            // Determine color based on angle
+            uint8_t vr, vg, vb, va;
+            if (enemy.angleToPlayer < 45.0f) {
+                // Facing player (RED - DANGER!)
+                vr = 255; vg = 0; vb = 0; va = 255;
+            } else if (enemy.angleToPlayer < 90.0f) {
+                // Partially facing (ORANGE)
+                vr = 255; vg = 165; vb = 0; va = 255;
+            } else if (enemy.angleToPlayer < 135.0f) {
+                // Side view (YELLOW)
+                vr = 255; vg = 255; vb = 0; va = 255;
+            } else {
+                // Back to player (GREEN - SAFE)
+                vr = 0; vg = 255; vb = 0; va = 255;
+            }
+
+            // Draw arrow indicator at top of box
+            float centerX = static_cast<float>(x + w / 2);
+            float topY = static_cast<float>(y - 35);
+            float arrowSize = 8.0f;
+
+            // Draw filled triangle pointing in enemy's view direction relative to player
+            // If enemy is facing player, arrow points down (at player)
+            // If enemy is facing away, arrow points up (away from player)
+            if (enemy.angleToPlayer < 90.0f) {
+                // Enemy is facing towards player - arrow points down
+                ImVec2 p1(centerX, topY + arrowSize);           // Bottom point
+                ImVec2 p2(centerX - arrowSize, topY);           // Top left
+                ImVec2 p3(centerX + arrowSize, topY);           // Top right
+                drawList->AddTriangleFilled(p1, p2, p3, IM_COL32(vr, vg, vb, va));
+            } else {
+                // Enemy is facing away from player - arrow points up
+                ImVec2 p1(centerX, topY);                       // Top point
+                ImVec2 p2(centerX - arrowSize, topY + arrowSize); // Bottom left
+                ImVec2 p3(centerX + arrowSize, topY + arrowSize); // Bottom right
+                drawList->AddTriangleFilled(p1, p2, p3, IM_COL32(vr, vg, vb, va));
+            }
+
+            // Draw angle text
+            if (menu::espViewAngleText) {
+                char angleText[16];
+                snprintf(angleText, sizeof(angleText), "%.0f°", enemy.angleToPlayer);
+                ImVec2 angleTextSize = ImGui::CalcTextSize(angleText);
+                drawList->AddText(
+                    ImVec2(centerX - angleTextSize.x / 2, topY + arrowSize + 2),
+                    IM_COL32(vr, vg, vb, va),
+                    angleText
+                );
+            }
         }
 
         // Draw distance text using ImGui
@@ -254,4 +318,29 @@ double esp::player_distance(const vec3& a, const vec3& b)
         std::pow(a.y - b.y, 2) +
         std::pow(a.z - b.z, 2)
     );
+}
+
+// Normalize angle to -180 to 180 range
+float esp::normalizeAngle(float angle)
+{
+    while (angle > 180.0f) angle -= 360.0f;
+    while (angle < -180.0f) angle += 360.0f;
+    return angle;
+}
+
+// Calculate yaw angle from position A to position B
+float esp::calculateYawToTarget(const vec3& from, const vec3& to)
+{
+    float deltaX = to.x - from.x;
+    float deltaY = to.y - from.y;
+    float yaw = std::atan2(deltaY, deltaX) * (180.0f / 3.14159265f);
+    return normalizeAngle(yaw);
+}
+
+// Calculate angle difference between enemy view and player direction
+float esp::calculateAngleToPlayer(float enemyYaw, const vec3& enemyPos, const vec3& playerPos)
+{
+    float yawToPlayer = calculateYawToTarget(enemyPos, playerPos);
+    float angleDiff = std::abs(normalizeAngle(enemyYaw - yawToPlayer));
+    return angleDiff;
 }

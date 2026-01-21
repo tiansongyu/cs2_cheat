@@ -26,6 +26,8 @@ struct EnemyInfo
     int32_t health;
     float distance;
     std::string weaponName;  // Current weapon name
+    float viewYaw;           // Enemy's view yaw angle
+    float angleToPlayer;     // Angle difference between enemy view and player direction
 };
 
 namespace esp
@@ -41,4 +43,7 @@ namespace esp
     void render();
     bool w2s(const vec3& world, vec2& screen, float m[16]);
     double player_distance(const vec3& a, const vec3& b);
+    float normalizeAngle(float angle);
+    float calculateYawToTarget(const vec3& from, const vec3& to);
+    float calculateAngleToPlayer(float enemyYaw, const vec3& enemyPos, const vec3& playerPos);
 }
