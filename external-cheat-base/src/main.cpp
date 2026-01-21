@@ -6,9 +6,51 @@
 #include <iostream>
 #include <locale>
 #include <codecvt>
+#include <chrono>
+#include <intrin.h>  // For _mm_pause()
 #include <Windows.h>
 #include <TlHelp32.h>
 #include "imgui.h"
+
+// High precision timer for frame limiting
+class HighPrecisionTimer {
+public:
+    HighPrecisionTimer() {
+        QueryPerformanceFrequency(&frequency);
+        QueryPerformanceCounter(&lastTime);
+    }
+
+    // Returns elapsed time in microseconds since last call to reset()
+    double getElapsedMicroseconds() const {
+        LARGE_INTEGER currentTime;
+        QueryPerformanceCounter(&currentTime);
+        return static_cast<double>(currentTime.QuadPart - lastTime.QuadPart) * 1000000.0 / frequency.QuadPart;
+    }
+
+    void reset() {
+        QueryPerformanceCounter(&lastTime);
+    }
+
+    // Precise wait using spin-lock (more accurate than Sleep)
+    void waitUntilMicroseconds(double targetMicroseconds) {
+        // Use Sleep for the bulk of waiting (saves CPU), then spin for precision
+        double remaining = targetMicroseconds - getElapsedMicroseconds();
+
+        // Sleep for most of the time (leave 1.5ms margin for spin)
+        if (remaining > 2000.0) {
+            Sleep(static_cast<DWORD>((remaining - 1500.0) / 1000.0));
+        }
+
+        // Spin-wait for the remaining time (high precision)
+        while (getElapsedMicroseconds() < targetMicroseconds) {
+            _mm_pause();  // CPU hint for spin-wait, reduces power consumption
+        }
+    }
+
+private:
+    LARGE_INTEGER frequency;
+    LARGE_INTEGER lastTime;
+};
 
 // #define SHOW_CONSOLE
 
@@ -141,10 +183,13 @@ int main(int argc, char* argv[])
     }
     sdl_renderer::initImGui();
 
+    // High precision timer for frame limiting
+    HighPrecisionTimer frameTimer;
+
     // Main loop
     while (sdl_renderer::running)
     {
-        DWORD frameStart = GetTickCount();
+        frameTimer.reset();
 
         sdl_renderer::pollEvents();
         sdl_renderer::updateWindowPosition();
@@ -164,12 +209,9 @@ int main(int argc, char* argv[])
         sdl_renderer::renderImGui();
         sdl_renderer::endFrame();
 
-        // Frame rate limiting based on target FPS
-        DWORD frameTime = GetTickCount() - frameStart;
-        DWORD targetFrameTime = 1000 / menu::targetFPS;
-        if (frameTime < targetFrameTime) {
-            Sleep(targetFrameTime - frameTime);
-        }
+        // High precision frame rate limiting
+        double targetFrameTimeMicros = 1000000.0 / menu::targetFPS;
+        frameTimer.waitUntilMicroseconds(targetFrameTimeMicros);
     }
 
     sdl_renderer::shutdownImGui();

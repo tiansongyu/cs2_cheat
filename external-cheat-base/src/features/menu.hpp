@@ -56,7 +56,7 @@ namespace menu
     // Triggerbot Settings
     inline bool triggerbotEnabled = false; // Triggerbot enabled
     inline int triggerbotDelay = 50;       // Delay before shooting (milliseconds)
-    inline int triggerbotKey = VK_MENU;    // Triggerbot activation key (default: Alt key)
+    inline int triggerbotKey = 0x46;       // Triggerbot activation key (default: F key, 0x46 = 'F')
 
     // RCS Settings
     inline bool rcsEnabled = false;        // RCS (Recoil Control System) enabled
