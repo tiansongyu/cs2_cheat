@@ -158,6 +158,33 @@ void esp::updateEntities()
 
 void esp::render()
 {
+    // Draw FOV circle in the center of the screen
+    if (menu::aimbotEnabled && menu::aimbotShowFOV)
+    {
+        ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+
+        // Screen center
+        float centerX = static_cast<float>(WIDTH) / 2.0f;
+        float centerY = static_cast<float>(HEIGHT) / 2.0f;
+
+        // Convert FOV degrees to screen pixels
+        // Using approximate conversion: radius = tan(fov_degrees * pi/180) * screen_height / 2
+        // This is a simplified approximation that works reasonably well
+        float fovRadians = menu::aimbotFOV * (3.14159265f / 180.0f);
+        float radius = std::tan(fovRadians) * static_cast<float>(HEIGHT) / 2.0f;
+
+        // Get color
+        ImU32 fovColor = IM_COL32(
+            static_cast<int>(menu::aimbotFOVColor[0] * 255),
+            static_cast<int>(menu::aimbotFOVColor[1] * 255),
+            static_cast<int>(menu::aimbotFOVColor[2] * 255),
+            static_cast<int>(menu::aimbotFOVColor[3] * 255)
+        );
+
+        // Draw circle outline
+        drawList->AddCircle(ImVec2(centerX, centerY), radius, fovColor, 64, 1.5f);
+    }
+
     for (const auto& enemy : enemies)
     {
         vec2 screenFeet, screenHead;

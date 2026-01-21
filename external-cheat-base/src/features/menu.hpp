@@ -13,7 +13,7 @@ namespace menu
     inline bool espWeapon = true;    // Weapon display - Default ON
     inline bool espViewAngle = true; // View angle indicator - Default ON
     inline bool espViewAngleText = false; // Show angle degree text
-    inline bool espFlashIndicator = true; // Flashbang eye indicator - Default ON
+    inline bool espFlashIndicator = false; // Flashbang eye indicator - Default OFF
     inline bool espWallCheck = true; // Wall occlusion check - Default ON
     inline float espWallCheckDistance = 2000.0f; // Max distance for reliable wall check (game units)
     inline bool espSnaplines = false;
@@ -34,6 +34,16 @@ namespace menu
     inline int targetFPS = 60;           // Target render FPS (30-240)
 
     // Aimbot Settings
+    inline bool aimbotEnabled = false;     // Aimbot enabled
+    inline float aimbotFOV = 10.0f;        // Field of view for aimbot (degrees)
+    inline float aimbotSmoothing = 5.0f;   // Smoothing factor (1.0 = instant, higher = smoother)
+    inline int aimbotBone = 0;             // 0=Head, 1=Neck, 2=Chest
+    inline bool aimbotVisibleOnly = true;  // Only aim at visible enemies (not behind walls)
+    inline int aimbotKey = VK_SHIFT;       // Aimbot activation key (default: Shift key)
+    inline bool aimbotShowFOV = true;      // Show FOV circle on screen
+    inline float aimbotFOVColor[4] = { 1.0f, 1.0f, 0.0f, 0.5f };  // FOV circle color (yellow, 50% opacity)
+
+    // RCS Settings
     inline bool rcsEnabled = false;        // RCS (Recoil Control System) enabled
     inline float rcsStrength = 100.0f;     // RCS strength (0-100%)
     inline float rcsSensitivity = 1.0f;    // In-game mouse sensitivity (for accurate compensation)
@@ -78,6 +88,38 @@ namespace menu
         // Aimbot Tab
         if (ImGui::CollapsingHeader("Aimbot", ImGuiTreeNodeFlags_DefaultOpen))
         {
+            ImGui::Checkbox("Enable Aimbot", &aimbotEnabled);
+
+            if (aimbotEnabled)
+            {
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Aimbot Settings:");
+
+                ImGui::SliderFloat("FOV", &aimbotFOV, 1.0f, 30.0f, "%.1f deg");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Field of view - only aim at enemies within this angle");
+
+                ImGui::SliderFloat("Aim Smoothing", &aimbotSmoothing, 1.0f, 20.0f, "%.1f");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("1.0 = instant lock, higher = smoother/slower");
+
+                const char* boneItems[] = { "Head", "Neck", "Chest" };
+                ImGui::Combo("Target Bone", &aimbotBone, boneItems, IM_ARRAYSIZE(boneItems));
+
+                ImGui::Checkbox("Visible Only", &aimbotVisibleOnly);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Only aim at enemies not behind walls");
+
+                ImGui::Checkbox("Show FOV Circle", &aimbotShowFOV);
+                if (aimbotShowFOV) {
+                    ImGui::SameLine();
+                    ImGui::ColorEdit4("##FOVColor", aimbotFOVColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                }
+
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Hold Shift to aim");
+            }
+
+            ImGui::Separator();
             ImGui::Checkbox("Enable RCS (Recoil Control)", &rcsEnabled);
 
             if (rcsEnabled)
@@ -93,7 +135,7 @@ namespace menu
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Match your in-game mouse sensitivity");
 
-                ImGui::SliderFloat("Smoothing", &rcsSmoothing, 1.0f, 5.0f, "%.1f");
+                ImGui::SliderFloat("RCS Smoothing", &rcsSmoothing, 1.0f, 5.0f, "%.1f");
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Higher = smoother but slower compensation");
 
@@ -164,7 +206,14 @@ namespace menu
                     ImGui::Unindent();
                 }
 
-                // Flashbang Eye Indicator
+                // Distance
+                ImGui::Checkbox("Distance", &espDistance);
+                if (espDistance) {
+                    ImGui::SameLine();
+                    ImGui::ColorEdit4("##DistanceColor", espDistanceColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                }
+
+                // Flashbang Eye Indicator (moved below Distance)
                 ImGui::Checkbox("Flashbang Eye Indicator", &espFlashIndicator);
                 if (espFlashIndicator) {
                     ImGui::Indent();
@@ -175,13 +224,6 @@ namespace menu
                     ImGui::SameLine();
                     ImGui::ColorEdit4("##FlashColor", espFlashColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
                     ImGui::Unindent();
-                }
-
-                // Distance
-                ImGui::Checkbox("Distance", &espDistance);
-                if (espDistance) {
-                    ImGui::SameLine();
-                    ImGui::ColorEdit4("##DistanceColor", espDistanceColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
                 }
 
                 // Snaplines

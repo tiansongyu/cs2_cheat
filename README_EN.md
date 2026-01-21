@@ -24,6 +24,17 @@ An external ESP overlay tool for CS2 based on SDL2 + ImGui.
 | 📍 **Snaplines** | Lines from screen to enemies with customizable colors and origin position |
 | ⚙️ **ImGui Menu** | Graphical interface for real-time settings adjustment |
 
+### 🎯 Aimbot
+
+| Feature | Description |
+|---------|-------------|
+| 🎯 **Auto Lock** | Hold Shift to automatically aim at the closest enemy within FOV |
+| 📐 **FOV Range** | Adjustable field of view (1-30 degrees), FOV circle displayed on screen |
+| 🔄 **Smoothness** | Adjustable aiming smoothness (1-20), prevents instant lock |
+| 🦴 **Target Bone** | Select head/neck/chest |
+| 🧱 **Visible Only** | Only aim at enemies not behind walls |
+| 🎯 **RCS** | Automatic recoil compensation with adjustable strength and sensitivity |
+
 ### 📡 Radar Overlay
 
 | Feature | Description |
@@ -42,18 +53,6 @@ An external ESP overlay tool for CS2 based on SDL2 + ImGui.
 | 🎚️ **Target FPS** | Adjustable render rate (30-240 FPS) |
 
 ### 🚧 TODO (Planned Features)
-
-#### 🎯 Aimbot
-| Feature | Description |
-|---------|-------------|
-| 🎯 **Auto Lock** | Automatically aim at nearest/lowest HP/closest to crosshair |
-| 🎚️ **Aim Speed** | Adjustable mouse movement speed (1-100%) |
-| 🔄 **Smoothness** | Adjustable aiming smoothness |
-| 📐 **FOV Range** | Adjustable auto-aim field of view |
-| 🦴 **Target Part** | Select head/chest/stomach/auto-switch |
-| ⌨️ **Trigger Key** | Set activation key (e.g., right mouse button) |
-| 🧱 **Wall Check** | Only aim at visible enemies |
-| 🎯 **RCS** | Automatic recoil compensation |
 
 #### 🔫 Triggerbot
 | Feature | Description |
@@ -115,6 +114,7 @@ An external ESP overlay tool for CS2 based on SDL2 + ImGui.
 |-----|----------|
 | **F4** | Show/Hide settings menu |
 | **F9** | Exit program |
+| **Shift** | Hold to activate Aimbot (when enabled) |
 
 ### Quick Start
 1. Launch CS2 and enter the game
