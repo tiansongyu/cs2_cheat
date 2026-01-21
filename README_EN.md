@@ -52,14 +52,14 @@ An external ESP overlay tool for CS2 based on SDL2 + ImGui.
 |---------|-------------|
 | 🎚️ **Target FPS** | Adjustable render rate (30-240 FPS) |
 
-### 🚧 TODO (Planned Features)
+### 🔫 Triggerbot
 
-#### 🔫 Triggerbot
 | Feature | Description |
 |---------|-------------|
-| 🔫 **Auto Fire** | Automatically shoot when crosshair on enemy |
-| ⏱️ **Delay Setting** | Adjustable fire delay (simulate human reaction) |
-| 🎯 **Part Filter** | Only fire when aiming at head (optional) |
+| 🔫 **Auto Fire** | Hold Alt to automatically aim at visible enemy heads and fire |
+| ⏱️ **Delay Setting** | Adjustable fire delay (0-500 ms), simulates human reaction |
+
+### 🚧 TODO (Planned Features)
 
 #### 🦴 Visual Enhancements
 | Feature | Description |
@@ -115,6 +115,7 @@ An external ESP overlay tool for CS2 based on SDL2 + ImGui.
 | **F4** | Show/Hide settings menu |
 | **F9** | Exit program |
 | **Shift** | Hold to activate Aimbot (when enabled) |
+| **Alt** | Hold to activate Triggerbot (when enabled) |
 
 ### Quick Start
 1. Launch CS2 and enter the game

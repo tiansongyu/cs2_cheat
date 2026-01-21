@@ -43,6 +43,11 @@ namespace menu
     inline bool aimbotShowFOV = true;      // Show FOV circle on screen
     inline float aimbotFOVColor[4] = { 1.0f, 1.0f, 0.0f, 0.5f };  // FOV circle color (yellow, 50% opacity)
 
+    // Triggerbot Settings
+    inline bool triggerbotEnabled = false; // Triggerbot enabled
+    inline int triggerbotDelay = 50;       // Delay before shooting (milliseconds)
+    inline int triggerbotKey = VK_MENU;    // Triggerbot activation key (default: Alt key)
+
     // RCS Settings
     inline bool rcsEnabled = false;        // RCS (Recoil Control System) enabled
     inline float rcsStrength = 100.0f;     // RCS strength (0-100%)
@@ -142,6 +147,22 @@ namespace menu
                 ImGui::Separator();
                 ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Tip: Set sensitivity to match");
                 ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "your CS2 mouse sensitivity.");
+            }
+
+            ImGui::Separator();
+            ImGui::Checkbox("Enable Triggerbot", &triggerbotEnabled);
+
+            if (triggerbotEnabled)
+            {
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Triggerbot Settings:");
+
+                ImGui::SliderInt("Delay (ms)", &triggerbotDelay, 0, 500, "%d ms");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Delay before shooting (milliseconds)");
+
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Hold Alt to activate");
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Auto-aims at head and fires!");
             }
         }
 

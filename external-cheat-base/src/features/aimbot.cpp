@@ -274,3 +274,112 @@ void aimbot::updateRCS()
     oldShotsFired = shotsFired;
 }
 
+void aimbot::updateTriggerbot()
+{
+    // Check if triggerbot is enabled
+    if (!menu::triggerbotEnabled) {
+        triggerbotHasTarget = false;
+        return;
+    }
+
+    // Check if triggerbot key is held (Alt by default)
+    if (!(GetAsyncKeyState(menu::triggerbotKey) & 0x8000)) {
+        triggerbotHasTarget = false;
+        return;
+    }
+
+    // Get local player pawn
+    uintptr_t localPlayerPawn = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
+    if (!localPlayerPawn) {
+        triggerbotHasTarget = false;
+        return;
+    }
+
+    // Get local player view angles
+    vec3 viewAngles = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
+    vec2 currentViewAngle = { viewAngles.x, viewAngles.y };
+
+    // Get local player eye position
+    vec3 localPos = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
+    vec3 viewOffset = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
+    vec3 eyePos = { localPos.x + viewOffset.x, localPos.y + viewOffset.y, localPos.z + viewOffset.z };
+
+    // Find any visible enemy that is very close to crosshair (within small FOV)
+    const float triggerbotFOV = 1.5f;  // Very small FOV - only trigger when almost on target
+    bool foundTarget = false;
+
+    for (const auto& enemy : esp::enemies)
+    {
+        // Skip enemies behind walls (only target visible enemies)
+        if (!enemy.isSpotted) continue;
+
+        // Target head position
+        vec3 targetPos = enemy.headPosition;
+
+        // Calculate angle to target
+        vec2 aimAngle = calcAngle(eyePos, targetPos);
+
+        // Get FOV distance
+        float fov = getFOV(currentViewAngle, aimAngle);
+
+        // Check if crosshair is on enemy head
+        if (fov < triggerbotFOV)
+        {
+            foundTarget = true;
+
+            // If this is a new target, record the time
+            if (!triggerbotHasTarget) {
+                triggerbotTargetTime = GetTickCount();
+                triggerbotHasTarget = true;
+            }
+
+            // Check if delay has passed
+            DWORD currentTime = GetTickCount();
+            if (currentTime - triggerbotTargetTime >= static_cast<DWORD>(menu::triggerbotDelay))
+            {
+                // Aim at head first (snap to target)
+                float smoothPitch = currentViewAngle.x + (aimAngle.x - currentViewAngle.x) / 2.0f;
+                float smoothYaw = currentViewAngle.y + normalizeAngle(aimAngle.y - currentViewAngle.y) / 2.0f;
+
+                float deltaPitch = smoothPitch - currentViewAngle.x;
+                float deltaYaw = normalizeAngle(smoothYaw - currentViewAngle.y);
+
+                float sensitivity = menu::rcsSensitivity;
+                float mouseSensitivityFactor = sensitivity * 0.022f;
+
+                float moveX = -deltaYaw / mouseSensitivityFactor;
+                float moveY = deltaPitch / mouseSensitivityFactor;
+
+                // Move mouse to aim at head
+                if (std::abs(moveX) > 0.1f || std::abs(moveY) > 0.1f)
+                {
+                    INPUT moveInput = {};
+                    moveInput.type = INPUT_MOUSE;
+                    moveInput.mi.dwFlags = MOUSEEVENTF_MOVE;
+                    moveInput.mi.dx = static_cast<LONG>(moveX);
+                    moveInput.mi.dy = static_cast<LONG>(moveY);
+                    SendInput(1, &moveInput, sizeof(INPUT));
+                }
+
+                // Fire! (left mouse click)
+                INPUT clickInput = {};
+                clickInput.type = INPUT_MOUSE;
+                clickInput.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+                SendInput(1, &clickInput, sizeof(INPUT));
+
+                // Release click
+                clickInput.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+                SendInput(1, &clickInput, sizeof(INPUT));
+
+                // Reset to allow next shot with delay
+                triggerbotTargetTime = currentTime;
+            }
+            break;  // Only process first found target
+        }
+    }
+
+    if (!foundTarget) {
+        triggerbotHasTarget = false;
+    }
+}
+

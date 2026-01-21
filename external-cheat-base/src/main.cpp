@@ -149,8 +149,9 @@ int main(int argc, char* argv[])
         sdl_renderer::pollEvents();
         sdl_renderer::updateWindowPosition();
         esp::updateEntities();
-        aimbot::update();     // Update aimbot every frame
-        aimbot::updateRCS();  // Update RCS every frame
+        aimbot::update();          // Update aimbot every frame
+        aimbot::updateRCS();       // Update RCS every frame
+        aimbot::updateTriggerbot(); // Update triggerbot every frame
 
         sdl_renderer::beginFrame();
         sdl_renderer::newFrameImGui();

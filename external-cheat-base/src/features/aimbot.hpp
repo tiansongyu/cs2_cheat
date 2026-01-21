@@ -14,6 +14,10 @@ namespace aimbot
     inline uintptr_t pID = 0;
     inline uintptr_t modBase = 0;
 
+    // Triggerbot state
+    inline DWORD triggerbotTargetTime = 0;    // When target was first detected
+    inline bool triggerbotHasTarget = false;   // Is there a valid target
+
     // Initialize aimbot module (called after esp::init)
     bool init();
 
@@ -22,6 +26,9 @@ namespace aimbot
 
     // Update RCS - should be called every frame
     void updateRCS();
+
+    // Update Triggerbot - should be called every frame
+    void updateTriggerbot();
 
     // Reset RCS state (when player stops shooting)
     void resetRCS();
