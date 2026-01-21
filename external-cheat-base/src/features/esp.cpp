@@ -106,6 +106,14 @@ void esp::updateEntities()
         // Calculate angle to player
         float angleToPlayer = calculateAngleToPlayer(enemyYaw, feetPos, player_position);
 
+        // Read flashbang status with alpha threshold
+        float flashDuration = memory::Read<float>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawnBase::m_flFlashDuration);
+        float flashMaxAlpha = memory::Read<float>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawnBase::m_flFlashMaxAlpha);
+
+        // Only consider flashed if alpha is above threshold (e.g., 0.5 = 50% flash intensity)
+        const float FLASH_ALPHA_THRESHOLD = 0.5f;
+        bool isFlashed = (flashDuration > 0.0f) && (flashMaxAlpha >= FLASH_ALPHA_THRESHOLD);
+
         EnemyInfo enemy;
         enemy.position = feetPos;
         enemy.headPosition = headPos;
@@ -114,6 +122,8 @@ void esp::updateEntities()
         enemy.weaponName = weaponName;
         enemy.viewYaw = enemyYaw;
         enemy.angleToPlayer = angleToPlayer;
+        enemy.flashDuration = flashDuration;
+        enemy.isFlashed = isFlashed;
 
         buffer.push_back(enemy);
     }
@@ -138,7 +148,7 @@ void esp::render()
         int w = static_cast<int>(width);
         int h = static_cast<int>(height);
 
-        // Use menu color settings
+        // Use normal box color (not affected by flash status)
         uint8_t r = static_cast<uint8_t>(menu::espBoxColor[0] * 255);
         uint8_t g = static_cast<uint8_t>(menu::espBoxColor[1] * 255);
         uint8_t b = static_cast<uint8_t>(menu::espBoxColor[2] * 255);
@@ -147,6 +157,55 @@ void esp::render()
         // Draw box
         if (menu::espBox) {
             sdl_renderer::draw::box(x, y, w, h, r, g, b, a);
+        }
+
+        // Draw ellipse "eye" indicator below weapon name
+        if (menu::espFlashIndicator) {
+            ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+
+            // Calculate ellipse position (below weapon name, above the box)
+            float ellipseCenterX = static_cast<float>(x + w / 2);
+
+            // If weapon is shown, place ellipse below it; otherwise place above box
+            float ellipseCenterY;
+            if (menu::espWeapon) {
+                // Weapon is at y-18, text height is ~13px, so ellipse at y-18+13+3 = y-2
+                ellipseCenterY = static_cast<float>(y - 2);
+            } else {
+                // No weapon, place ellipse above box
+                ellipseCenterY = static_cast<float>(y - 10);
+            }
+
+            float ellipseRadiusX = w * 0.25f;  // 25% of box width
+            float ellipseRadiusY = 6.0f;       // Fixed height
+
+            // Determine eye color: Red (normal) or Yellow (flashed)
+            ImU32 eyeColor;
+            if (enemy.isFlashed) {
+                // Yellow - enemy is flashed
+                uint8_t fr = static_cast<uint8_t>(menu::espFlashColor[0] * 255);
+                uint8_t fg = static_cast<uint8_t>(menu::espFlashColor[1] * 255);
+                uint8_t fb = static_cast<uint8_t>(menu::espFlashColor[2] * 255);
+                uint8_t fa = static_cast<uint8_t>(menu::espFlashColor[3] * 255);
+                eyeColor = IM_COL32(fr, fg, fb, fa);
+            } else {
+                // Red - normal state
+                uint8_t nr = static_cast<uint8_t>(menu::espFlashNormalColor[0] * 255);
+                uint8_t ng = static_cast<uint8_t>(menu::espFlashNormalColor[1] * 255);
+                uint8_t nb = static_cast<uint8_t>(menu::espFlashNormalColor[2] * 255);
+                uint8_t na = static_cast<uint8_t>(menu::espFlashNormalColor[3] * 255);
+                eyeColor = IM_COL32(nr, ng, nb, na);
+            }
+
+            // Draw filled ellipse
+            const int segments = 32;
+            drawList->AddEllipseFilled(
+                ImVec2(ellipseCenterX, ellipseCenterY),  // center
+                ImVec2(ellipseRadiusX, ellipseRadiusY),  // radius (x, y)
+                eyeColor,                                 // color
+                0.0f,                                     // rotation
+                segments                                  // num_segments
+            );
         }
 
         // Draw health bar (vertical bar on left side)
@@ -237,6 +296,8 @@ void esp::render()
                 );
             }
         }
+
+        // Flashbang text indicator removed - now using ellipse eye indicator above
 
         // Draw distance text using ImGui
         if (menu::espDistance) {

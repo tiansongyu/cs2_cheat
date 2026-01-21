@@ -13,12 +13,15 @@ namespace menu
     inline bool espWeapon = true;    // Weapon display - Default ON
     inline bool espViewAngle = true; // View angle indicator - Default ON
     inline bool espViewAngleText = false; // Show angle degree text
+    inline bool espFlashIndicator = true; // Flashbang eye indicator - Default ON
     inline bool espSnaplines = false;
 
     // Colors
     inline float espBoxColor[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
     inline float espDistanceColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
     inline float espWeaponColor[4] = { 0.0f, 1.0f, 1.0f, 1.0f };  // Cyan color for weapon
+    inline float espFlashNormalColor[4] = { 1.0f, 0.0f, 0.0f, 1.0f };  // Red - normal eye state
+    inline float espFlashColor[4] = { 1.0f, 1.0f, 0.0f, 1.0f };        // Yellow - flashed eye state
     inline float espSnaplinesColor[4] = { 1.0f, 1.0f, 0.0f, 1.0f };
 
     // Visual Settings
@@ -80,6 +83,19 @@ namespace menu
                 if (espViewAngle) {
                     ImGui::Indent();
                     ImGui::Checkbox("Show Angle Degrees", &espViewAngleText);
+                    ImGui::Unindent();
+                }
+
+                // Flashbang Eye Indicator
+                ImGui::Checkbox("Flashbang Eye Indicator", &espFlashIndicator);
+                if (espFlashIndicator) {
+                    ImGui::Indent();
+                    ImGui::Text("Normal Eye Color:");
+                    ImGui::SameLine();
+                    ImGui::ColorEdit4("##FlashNormalColor", espFlashNormalColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                    ImGui::Text("Flashed Eye Color:");
+                    ImGui::SameLine();
+                    ImGui::ColorEdit4("##FlashColor", espFlashColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
                     ImGui::Unindent();
                 }
 

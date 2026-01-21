@@ -28,6 +28,8 @@ struct EnemyInfo
     std::string weaponName;  // Current weapon name
     float viewYaw;           // Enemy's view yaw angle
     float angleToPlayer;     // Angle difference between enemy view and player direction
+    float flashDuration;     // Flashbang blind duration (> 0 means flashed)
+    bool isFlashed;          // Is enemy currently flashed
 };
 
 namespace esp
