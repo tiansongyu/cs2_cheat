@@ -33,6 +33,12 @@ namespace menu
     // System Settings
     inline int targetFPS = 60;           // Target render FPS (30-240)
 
+    // Aimbot Settings
+    inline bool rcsEnabled = false;        // RCS (Recoil Control System) enabled
+    inline float rcsStrength = 100.0f;     // RCS strength (0-100%)
+    inline float rcsSensitivity = 1.0f;    // In-game mouse sensitivity (for accurate compensation)
+    inline float rcsSmoothing = 1.0f;      // Smoothing factor (1.0 = instant, higher = smoother)
+
     // Radar Settings
     inline bool radarEnabled = true;         // Enable radar overlay
     inline bool radarShowCenter = true;      // Show radar center marker (for debugging)
@@ -67,6 +73,36 @@ namespace menu
         ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Controls:");
         ImGui::BulletText("F4 - Hide menu & Play");
         ImGui::BulletText("F9 - Exit program");
+        ImGui::Separator();
+
+        // Aimbot Tab
+        if (ImGui::CollapsingHeader("Aimbot", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            ImGui::Checkbox("Enable RCS (Recoil Control)", &rcsEnabled);
+
+            if (rcsEnabled)
+            {
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "RCS Settings:");
+
+                ImGui::SliderFloat("Strength", &rcsStrength, 0.0f, 100.0f, "%.0f%%");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("How much recoil to compensate (100%% = full)");
+
+                ImGui::SliderFloat("Sensitivity", &rcsSensitivity, 0.1f, 10.0f, "%.2f");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Match your in-game mouse sensitivity");
+
+                ImGui::SliderFloat("Smoothing", &rcsSmoothing, 1.0f, 5.0f, "%.1f");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Higher = smoother but slower compensation");
+
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Tip: Set sensitivity to match");
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "your CS2 mouse sensitivity.");
+            }
+        }
+
         ImGui::Separator();
 
         // ESP Tab

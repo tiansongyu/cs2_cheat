@@ -1,4 +1,5 @@
 #include "features/esp.hpp"
+#include "features/aimbot.hpp"
 #include "core/renderer/sdl_renderer.h"
 #include "features/menu.hpp"
 #include <thread>
@@ -110,6 +111,7 @@ int main(int argc, char* argv[])
             dotCount = (dotCount % 3) + 1;
 
             if (esp::init()) {
+                aimbot::init();  // Initialize aimbot module
                 gameFound = true;
                 break;
             }
@@ -147,6 +149,7 @@ int main(int argc, char* argv[])
         sdl_renderer::pollEvents();
         sdl_renderer::updateWindowPosition();
         esp::updateEntities();
+        aimbot::updateRCS();  // Update RCS every frame
 
         sdl_renderer::beginFrame();
         sdl_renderer::newFrameImGui();

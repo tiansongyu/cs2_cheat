@@ -1,4 +1,4 @@
-#include "memory.h"
+#include "memory.hpp"
 
 uintptr_t memory::GetProcID(const wchar_t* process)
 {

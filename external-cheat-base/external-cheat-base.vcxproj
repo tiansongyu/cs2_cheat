@@ -154,9 +154,10 @@
     <ClInclude Include="generated\client_dll.hpp" />
     <ClInclude Include="generated\offsets.hpp" />
     <ClInclude Include="src\features\esp.hpp" />
+    <ClInclude Include="src\features\aimbot.hpp" />
     <ClInclude Include="src\features\menu.hpp" />
-    <ClInclude Include="src\utils\math\vector.h" />
-    <ClInclude Include="src\core\memory\memory.h" />
+    <ClInclude Include="src\utils\math\vector.hpp" />
+    <ClInclude Include="src\core\memory\memory.hpp" />
     <ClInclude Include="src\core\renderer\sdl_renderer.h" />
     <ClInclude Include="vendor\imgui\imconfig.h" />
     <ClInclude Include="vendor\imgui\imgui.h" />
@@ -169,6 +170,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\features\esp.cpp" />
+    <ClCompile Include="src\features\aimbot.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\core\memory\memory.cpp" />
     <ClCompile Include="src\core\renderer\sdl_renderer.cpp" />
