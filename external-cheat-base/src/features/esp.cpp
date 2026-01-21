@@ -42,6 +42,10 @@ void esp::updateEntities()
     player_position = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin) +
         memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
 
+    // Get local player view angle for radar rotation
+    vec3 localEyeAngles = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
+    player_yaw = localEyeAngles.y;  // Yaw is the Y component
+
     std::vector<EnemyInfo> buffer;
 
     // Iterate entity list
@@ -391,6 +395,144 @@ void esp::render()
                 static_cast<int>(screenFeet.x), static_cast<int>(screenFeet.y),
                 sr, sg, sb, sa
             );
+        }
+    }
+
+    // ==================== RADAR OVERLAY ====================
+    if (menu::radarEnabled) {
+        ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+
+        // Calculate radar center position based on screen size
+        float radarCenterXPx = WINDOW_W * menu::radarCenterX;
+        float radarCenterYPx = WINDOW_H * menu::radarCenterY;
+        float radarRadiusPx = WINDOW_H * menu::radarRadius;
+
+        // Draw radar background (semi-transparent circle)
+        uint8_t bgR = static_cast<uint8_t>(menu::radarBgColor[0] * 255);
+        uint8_t bgG = static_cast<uint8_t>(menu::radarBgColor[1] * 255);
+        uint8_t bgB = static_cast<uint8_t>(menu::radarBgColor[2] * 255);
+        uint8_t bgA = static_cast<uint8_t>(menu::radarBgColor[3] * 255);
+        drawList->AddCircleFilled(
+            ImVec2(radarCenterXPx, radarCenterYPx),
+            radarRadiusPx,
+            IM_COL32(bgR, bgG, bgB, bgA), 64
+        );
+        // Draw radar border
+        drawList->AddCircle(
+            ImVec2(radarCenterXPx, radarCenterYPx),
+            radarRadiusPx,
+            IM_COL32(100, 100, 100, 200), 64, 2.0f
+        );
+
+        // Draw player marker at center (you)
+        if (menu::radarShowCenter) {
+            uint8_t cr = static_cast<uint8_t>(menu::radarCenterColor[0] * 255);
+            uint8_t cg = static_cast<uint8_t>(menu::radarCenterColor[1] * 255);
+            uint8_t cb = static_cast<uint8_t>(menu::radarCenterColor[2] * 255);
+            uint8_t ca = static_cast<uint8_t>(menu::radarCenterColor[3] * 255);
+
+            // Draw player dot at center (1.5x size: 5 * 1.5 = 7.5)
+            float playerDotRadius = 7.5f;
+            drawList->AddCircleFilled(
+                ImVec2(radarCenterXPx, radarCenterYPx),
+                playerDotRadius,
+                IM_COL32(cr, cg, cb, ca)
+            );
+
+            // Draw player direction arrow (pointing up = forward)
+            float arrowLen = 14.0f;
+            float arrowOffset = playerDotRadius + 2.0f;  // Start from circle edge
+            drawList->AddTriangleFilled(
+                ImVec2(radarCenterXPx, radarCenterYPx - arrowOffset - arrowLen),  // Top point
+                ImVec2(radarCenterXPx - 6.0f, radarCenterYPx - arrowOffset),      // Bottom left
+                ImVec2(radarCenterXPx + 6.0f, radarCenterYPx - arrowOffset),      // Bottom right
+                IM_COL32(cr, cg, cb, ca)
+            );
+        }
+
+        // Draw enemy dots on radar
+        uint8_t er = static_cast<uint8_t>(menu::radarEnemyColor[0] * 255);
+        uint8_t eg = static_cast<uint8_t>(menu::radarEnemyColor[1] * 255);
+        uint8_t eb = static_cast<uint8_t>(menu::radarEnemyColor[2] * 255);
+        uint8_t ea = static_cast<uint8_t>(menu::radarEnemyColor[3] * 255);
+
+        // Convert player yaw to radians for rotation
+        // CS2 yaw: 0 = East, 90 = North, 180/-180 = West, -90 = South
+        // We need to rotate so that "up" on radar = player's forward direction
+        float rotationRad = (90.0f - player_yaw) * (3.14159265f / 180.0f);
+        float cosRot = std::cos(rotationRad);
+        float sinRot = std::sin(rotationRad);
+
+        for (const auto& enemy : enemies) {
+            // Calculate relative position from player to enemy (world coords)
+            float deltaX = enemy.position.x - player_position.x;
+            float deltaY = enemy.position.y - player_position.y;
+
+            // Rotate based on player's view direction
+            // After rotation: +Y = forward (up on radar), +X = right
+            float rotatedX = deltaX * cosRot - deltaY * sinRot;
+            float rotatedY = deltaX * sinRot + deltaY * cosRot;
+
+            // Scale the position to fit radar
+            float scaleFactor = radarRadiusPx / (2000.0f * menu::radarScale);
+
+            // Map to screen: +X = right, -rotatedY = up (since screen Y increases downward)
+            float radarX = radarCenterXPx + rotatedX * scaleFactor;
+            float radarY = radarCenterYPx - rotatedY * scaleFactor;
+
+            // Calculate distance from radar center
+            float distFromCenter = std::sqrt(
+                (radarX - radarCenterXPx) * (radarX - radarCenterXPx) +
+                (radarY - radarCenterYPx) * (radarY - radarCenterYPx)
+            );
+
+            // Only draw if within radar radius
+            if (distFromCenter <= radarRadiusPx) {
+                // Draw enemy dot (red by default) - 1.5x size (6 * 1.5 = 9)
+                float dotRadius = 9.0f;
+                drawList->AddCircleFilled(
+                    ImVec2(radarX, radarY),
+                    dotRadius,
+                    IM_COL32(er, eg, eb, ea)
+                );
+
+                // Get arrow color (white by default, separate from dot)
+                uint8_t ar = static_cast<uint8_t>(menu::radarEnemyArrowColor[0] * 255);
+                uint8_t ag = static_cast<uint8_t>(menu::radarEnemyArrowColor[1] * 255);
+                uint8_t ab = static_cast<uint8_t>(menu::radarEnemyArrowColor[2] * 255);
+                uint8_t aa = static_cast<uint8_t>(menu::radarEnemyArrowColor[3] * 255);
+
+                // Draw enemy direction arrow
+                // Calculate enemy's view direction relative to player's view
+                float enemyDirRad = (enemy.viewYaw - player_yaw) * (3.14159265f / 180.0f);
+
+                // Arrow starts from edge of circle, not center (to avoid overlap)
+                float arrowLen = 12.0f;
+                float arrowWidth = 6.0f;
+                float arrowOffset = dotRadius + 2.0f;  // Start from circle edge + small gap
+
+                // Calculate arrow base center (at edge of circle)
+                float baseCenterX = radarX + arrowOffset * std::sin(enemyDirRad);
+                float baseCenterY = radarY - arrowOffset * std::cos(enemyDirRad);
+
+                // Calculate arrow tip position (extends from base)
+                float tipX = baseCenterX + arrowLen * std::sin(enemyDirRad);
+                float tipY = baseCenterY - arrowLen * std::cos(enemyDirRad);
+
+                // Calculate arrow base corners (perpendicular to direction)
+                float baseX1 = baseCenterX + arrowWidth * std::cos(enemyDirRad);
+                float baseY1 = baseCenterY + arrowWidth * std::sin(enemyDirRad);
+                float baseX2 = baseCenterX - arrowWidth * std::cos(enemyDirRad);
+                float baseY2 = baseCenterY - arrowWidth * std::sin(enemyDirRad);
+
+                // Draw filled triangle arrow (white by default)
+                drawList->AddTriangleFilled(
+                    ImVec2(tipX, tipY),
+                    ImVec2(baseX1, baseY1),
+                    ImVec2(baseX2, baseY2),
+                    IM_COL32(ar, ag, ab, aa)
+                );
+            }
         }
     }
 }

@@ -38,6 +38,7 @@ namespace esp
     inline std::vector<EnemyInfo> enemies;
     inline viewMatrix vm = {};
     inline vec3 player_position{};
+    inline float player_yaw = 0.0f;  // Local player view yaw for radar rotation
     inline uintptr_t pID;
     inline uintptr_t modBase;
 

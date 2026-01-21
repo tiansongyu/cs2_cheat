@@ -30,6 +30,18 @@ namespace menu
     // Visual Settings
     inline int snaplinesOrigin = 0; // 0=Bottom, 1=Center, 2=Top
 
+    // Radar Settings
+    inline bool radarEnabled = true;         // Enable radar overlay
+    inline bool radarShowCenter = true;      // Show radar center marker (for debugging)
+    inline float radarCenterX = 0.227f;      // Radar center X - right side of game radar
+    inline float radarCenterY = 0.142f;      // Radar center Y as percentage of screen height (top area)
+    inline float radarRadius = 0.117f;       // Radar radius as percentage of screen height
+    inline float radarScale = 1.0f;          // Scale for enemy positions (adjust based on map size)
+    inline float radarBgColor[4] = { 1.0f, 1.0f, 1.0f, 0.6f };           // #FFFFFF99 - white with 60% opacity
+    inline float radarEnemyColor[4] = { 1.0f, 0.0f, 0.0f, 1.0f };        // Red - enemy dots on radar
+    inline float radarEnemyArrowColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };   // White - enemy direction arrow
+    inline float radarCenterColor[4] = { 0.0f, 1.0f, 0.0f, 1.0f };       // Green - radar center marker (you)
+
     inline void render()
     {
         if (!sdl_renderer::menuVisible) return;
@@ -141,6 +153,47 @@ namespace menu
                     ImGui::Indent();
                     const char* origins[] = { "Bottom", "Center", "Top" };
                     ImGui::Combo("Origin", &snaplinesOrigin, origins, IM_ARRAYSIZE(origins));
+                    ImGui::Unindent();
+                }
+
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Radar:");
+
+                // Radar
+                ImGui::Checkbox("Radar Overlay", &radarEnabled);
+                if (radarEnabled) {
+                    ImGui::Indent();
+
+                    // Debug: Show center marker
+                    ImGui::Checkbox("Show Center Marker", &radarShowCenter);
+                    if (radarShowCenter) {
+                        ImGui::SameLine();
+                        ImGui::ColorEdit4("##RadarCenterColor", radarCenterColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Green dot = you, arrow = your direction)");
+                    }
+
+                    // Colors
+                    ImGui::Text("Background:");
+                    ImGui::SameLine();
+                    ImGui::ColorEdit4("##RadarBgColor", radarBgColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+
+                    ImGui::Text("Enemy Dot:");
+                    ImGui::SameLine();
+                    ImGui::ColorEdit4("##RadarEnemyColor", radarEnemyColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+
+                    ImGui::Text("Enemy Arrow:");
+                    ImGui::SameLine();
+                    ImGui::ColorEdit4("##RadarEnemyArrowColor", radarEnemyArrowColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+
+                    // Position adjustments
+                    ImGui::Separator();
+                    ImGui::Text("Position & Size:");
+                    ImGui::SliderFloat("Center X", &radarCenterX, 0.1f, 0.9f, "%.3f");
+                    ImGui::SliderFloat("Center Y", &radarCenterY, 0.1f, 0.9f, "%.3f");
+                    ImGui::SliderFloat("Radius", &radarRadius, 0.05f, 0.25f, "%.3f");
+                    ImGui::SliderFloat("Scale", &radarScale, 0.1f, 5.0f, "%.1f");
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Scale: smaller = see farther)");
+
                     ImGui::Unindent();
                 }
             }
