@@ -6,6 +6,7 @@
 #include "client_dll.hpp"
 #include "offsets.hpp"
 #include "utils/math/vector.h"
+#include <string>
 
 extern uint32_t WIDTH;
 extern uint32_t HEIGHT;
@@ -24,6 +25,7 @@ struct EnemyInfo
     vec3 headPosition;
     int32_t health;
     float distance;
+    std::string weaponName;  // Current weapon name
 };
 
 namespace esp

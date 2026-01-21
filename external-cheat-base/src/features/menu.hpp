@@ -10,11 +10,13 @@ namespace menu
     inline bool espBox = true;
     inline bool espHealth = true;
     inline bool espDistance = true;  // Default ON
+    inline bool espWeapon = true;    // Weapon display - Default ON
     inline bool espSnaplines = false;
 
     // Colors
     inline float espBoxColor[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
     inline float espDistanceColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    inline float espWeaponColor[4] = { 0.0f, 1.0f, 1.0f, 1.0f };  // Cyan color for weapon
     inline float espSnaplinesColor[4] = { 1.0f, 1.0f, 0.0f, 1.0f };
 
     // Visual Settings
@@ -63,6 +65,13 @@ namespace menu
 
                 // Health Bar
                 ImGui::Checkbox("Health Bar", &espHealth);
+
+                // Weapon Display
+                ImGui::Checkbox("Weapon", &espWeapon);
+                if (espWeapon) {
+                    ImGui::SameLine();
+                    ImGui::ColorEdit4("##WeaponColor", espWeaponColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                }
 
                 // Distance
                 ImGui::Checkbox("Distance", &espDistance);

@@ -1,6 +1,7 @@
 #include "esp.hpp"
 #include "core/renderer/sdl_renderer.h"
 #include "menu.hpp"
+#include "utils/weapon_names.hpp"
 #include "imgui.h"
 #include <iostream>
 #include <cmath>
@@ -75,11 +76,35 @@ void esp::updateEntities()
         vec3 viewOffset = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
         vec3 headPos = feetPos + viewOffset;
 
+        // Read weapon information
+        std::string weaponName = "Unknown";
+        uintptr_t weaponServices = memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_pWeaponServices);
+        if (weaponServices) {
+            uint32_t activeWeaponHandle = memory::Read<uint32_t>(weaponServices + cs2_dumper::schemas::client_dll::CPlayer_WeaponServices::m_hActiveWeapon);
+            if (activeWeaponHandle && activeWeaponHandle != 0xFFFFFFFF) {
+                uint32_t weaponIndex = activeWeaponHandle & 0x7FFF;
+                uint32_t weaponChunk = weaponIndex >> 9;
+                uint32_t weaponInChunk = weaponIndex & 0x1FF;
+
+                uintptr_t weaponListEntry = memory::Read<uintptr_t>(entity_list + 0x10 + 0x8 * weaponChunk);
+                if (weaponListEntry) {
+                    uintptr_t weaponEntity = memory::Read<uintptr_t>(weaponListEntry + 0x70 * weaponInChunk);
+                    if (weaponEntity) {
+                        // Read AttributeManager -> Item -> ItemDefinitionIndex
+                        uintptr_t attributeManager = weaponEntity + cs2_dumper::schemas::client_dll::C_EconEntity::m_AttributeManager;
+                        uint16_t itemDefIndex = memory::Read<uint16_t>(attributeManager + cs2_dumper::schemas::client_dll::C_AttributeContainer::m_Item + cs2_dumper::schemas::client_dll::C_EconItemView::m_iItemDefinitionIndex);
+                        weaponName = weapon_names::getWeaponName(itemDefIndex);
+                    }
+                }
+            }
+        }
+
         EnemyInfo enemy;
         enemy.position = feetPos;
         enemy.headPosition = headPos;
         enemy.health = health;
         enemy.distance = static_cast<float>(player_distance(player_position, feetPos));
+        enemy.weaponName = weaponName;
 
         buffer.push_back(enemy);
     }
@@ -131,6 +156,22 @@ void esp::render()
             uint8_t healthR = static_cast<uint8_t>(255 * (1.0f - enemy.health / 100.0f));
             uint8_t healthG = static_cast<uint8_t>(255 * (enemy.health / 100.0f));
             sdl_renderer::draw::filledBox(healthBarX, healthY, healthBarWidth, healthHeight, healthR, healthG, 0, 255);
+        }
+
+        // Draw weapon name above the box
+        if (menu::espWeapon) {
+            uint8_t wr = static_cast<uint8_t>(menu::espWeaponColor[0] * 255);
+            uint8_t wg = static_cast<uint8_t>(menu::espWeaponColor[1] * 255);
+            uint8_t wb = static_cast<uint8_t>(menu::espWeaponColor[2] * 255);
+            uint8_t wa = static_cast<uint8_t>(menu::espWeaponColor[3] * 255);
+
+            ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+            ImVec2 textSize = ImGui::CalcTextSize(enemy.weaponName.c_str());
+            drawList->AddText(
+                ImVec2(static_cast<float>(x + w / 2 - textSize.x / 2), static_cast<float>(y - 18)),
+                IM_COL32(wr, wg, wb, wa),
+                enemy.weaponName.c_str()
+            );
         }
 
         // Draw distance text using ImGui
