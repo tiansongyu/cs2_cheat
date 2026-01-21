@@ -43,6 +43,12 @@ namespace menu
     inline bool aimbotShowFOV = true;      // Show FOV circle on screen
     inline float aimbotFOVColor[4] = { 1.0f, 1.0f, 0.0f, 0.5f };  // FOV circle color (yellow, 50% opacity)
 
+    // Head Offset Settings (for side-facing enemies)
+    inline bool headOffsetEnabled = true;      // Enable head offset compensation
+    inline float headOffsetAmount = 5.0f;      // Offset amount in game units (0-15)
+    inline float headOffsetAngleMin = 45.0f;   // Minimum angle for offset (degrees)
+    inline float headOffsetAngleMax = 135.0f;  // Maximum angle for offset (degrees)
+
     // Triggerbot Settings
     inline bool triggerbotEnabled = false; // Triggerbot enabled
     inline int triggerbotDelay = 50;       // Delay before shooting (milliseconds)
@@ -119,6 +125,27 @@ namespace menu
                 if (aimbotShowFOV) {
                     ImGui::SameLine();
                     ImGui::ColorEdit4("##FOVColor", aimbotFOVColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                }
+
+                // Head Offset Settings
+                ImGui::Separator();
+                ImGui::Checkbox("Head Offset (Side-facing)", &headOffsetEnabled);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Compensate for head position when enemy is facing sideways");
+
+                if (headOffsetEnabled) {
+                    ImGui::Indent();
+                    ImGui::SliderFloat("Offset Amount", &headOffsetAmount, 0.0f, 15.0f, "%.1f units");
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("How much to offset the head position (5-8 recommended)");
+
+                    ImGui::SliderFloat("Min Angle", &headOffsetAngleMin, 0.0f, 90.0f, "%.0f deg");
+                    ImGui::SliderFloat("Max Angle", &headOffsetAngleMax, 90.0f, 180.0f, "%.0f deg");
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Angle range for offset (45-135 = side-facing)");
+
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "0=facing you, 90=side, 180=back");
+                    ImGui::Unindent();
                 }
 
                 ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Hold Shift to aim");

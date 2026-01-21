@@ -1,3 +1,5 @@
+#define NOMINMAX  // Prevent Windows.h from defining min/max macros
+
 #include "aimbot.hpp"
 #include "esp.hpp"
 #include "menu.hpp"
@@ -5,10 +7,49 @@
 #include <iostream>
 #include <cmath>
 #include <limits>
+#include <algorithm>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+// Calculate head offset for side-facing enemies
+// When enemy is facing sideways (angle 45-135 degrees to player),
+// the head extends forward in the direction they are facing
+vec3 calculateHeadOffset(const vec3& headPos, float enemyViewYaw, float angleToPlayer)
+{
+    // Check if head offset is enabled
+    if (!menu::headOffsetEnabled) {
+        return headPos;
+    }
+
+    // Check if enemy is within the angle range for offset
+    if (angleToPlayer < menu::headOffsetAngleMin || angleToPlayer > menu::headOffsetAngleMax) {
+        return headPos;
+    }
+
+    // Calculate offset strength based on angle
+    // Maximum offset at 90 degrees (perfectly sideways), less at edges
+    float centerAngle = (menu::headOffsetAngleMin + menu::headOffsetAngleMax) / 2.0f;
+    float angleRange = (menu::headOffsetAngleMax - menu::headOffsetAngleMin) / 2.0f;
+    float angleFactor = 1.0f - std::abs(angleToPlayer - centerAngle) / angleRange;
+    angleFactor = std::max(0.0f, std::min(1.0f, angleFactor));  // Clamp to 0-1
+
+    // Calculate offset direction (perpendicular to enemy's facing direction)
+    // Enemy viewYaw: 0 = facing +X, 90 = facing +Y, etc.
+    float yawRadians = enemyViewYaw * static_cast<float>(M_PI) / 180.0f;
+
+    // Head extends in the direction enemy is facing
+    float offsetX = std::cos(yawRadians) * menu::headOffsetAmount * angleFactor;
+    float offsetY = std::sin(yawRadians) * menu::headOffsetAmount * angleFactor;
+
+    vec3 adjustedHead = headPos;
+    adjustedHead.x += offsetX;
+    adjustedHead.y += offsetY;
+    // Z offset is typically not needed as head height stays same
+
+    return adjustedHead;
+}
 
 bool aimbot::init()
 {
@@ -122,20 +163,20 @@ void aimbot::update()
         vec3 targetPos;
         switch (menu::aimbotBone)
         {
-            case 0: // Head
-                targetPos = enemy.headPosition;
+            case 0: // Head - apply head offset for side-facing enemies
+                targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
                 break;
-            case 1: // Neck (slightly below head)
-                targetPos = enemy.headPosition;
+            case 1: // Neck (slightly below head) - also apply offset
+                targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
                 targetPos.z -= 5.0f;
                 break;
-            case 2: // Chest (between head and feet)
+            case 2: // Chest (between head and feet) - no offset needed
                 targetPos.x = (enemy.headPosition.x + enemy.position.x) / 2.0f;
                 targetPos.y = (enemy.headPosition.y + enemy.position.y) / 2.0f;
                 targetPos.z = (enemy.headPosition.z + enemy.position.z) / 2.0f;
                 break;
             default:
-                targetPos = enemy.headPosition;
+                targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
                 break;
         }
 
@@ -313,8 +354,8 @@ void aimbot::updateTriggerbot()
         // Skip enemies behind walls (only target visible enemies)
         if (!enemy.isSpotted) continue;
 
-        // Target head position
-        vec3 targetPos = enemy.headPosition;
+        // Target head position with offset compensation for side-facing enemies
+        vec3 targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
 
         // Calculate angle to target
         vec2 aimAngle = calcAngle(eyePos, targetPos);
