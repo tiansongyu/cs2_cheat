@@ -142,6 +142,8 @@ int main(int argc, char* argv[])
     // Main loop
     while (sdl_renderer::running)
     {
+        DWORD frameStart = GetTickCount();
+
         sdl_renderer::pollEvents();
         sdl_renderer::updateWindowPosition();
         esp::updateEntities();
@@ -157,7 +159,12 @@ int main(int argc, char* argv[])
         sdl_renderer::renderImGui();
         sdl_renderer::endFrame();
 
-        Sleep(1);
+        // Frame rate limiting based on target FPS
+        DWORD frameTime = GetTickCount() - frameStart;
+        DWORD targetFrameTime = 1000 / menu::targetFPS;
+        if (frameTime < targetFrameTime) {
+            Sleep(targetFrameTime - frameTime);
+        }
     }
 
     sdl_renderer::shutdownImGui();

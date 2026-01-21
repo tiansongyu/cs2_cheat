@@ -15,39 +15,87 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="math\vector.h">
+    <ClInclude Include="generated\buttons.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="renderer\renderer.h">
+    <ClInclude Include="generated\client_dll.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="memory\memory.h">
+    <ClInclude Include="generated\offsets.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="client_dll.hpp">
+    <ClInclude Include="src\features\esp.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="esp.hpp">
+    <ClInclude Include="src\features\menu.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="offsets.hpp">
+    <ClInclude Include="src\utils\math\vector.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="buttons.hpp">
+    <ClInclude Include="src\core\memory\memory.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\renderer\sdl_renderer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vendor\imgui\imconfig.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vendor\imgui\imgui.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vendor\imgui\imgui_internal.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vendor\imgui\imstb_rectpack.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vendor\imgui\imstb_textedit.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vendor\imgui\imstb_truetype.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vendor\imgui\imgui_impl_sdl2.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vendor\imgui\imgui_impl_sdlrenderer2.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="renderer\renderer.cpp">
+    <ClCompile Include="src\features\esp.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="main.cpp">
+    <ClCompile Include="src\main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="memory\memory.cpp">
+    <ClCompile Include="src\core\memory\memory.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="esp.cpp">
+    <ClCompile Include="src\core\renderer\sdl_renderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\imgui\imgui.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\imgui\imgui_demo.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\imgui\imgui_draw.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\imgui\imgui_tables.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\imgui\imgui_widgets.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\imgui\imgui_impl_sdl2.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\imgui\imgui_impl_sdlrenderer2.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

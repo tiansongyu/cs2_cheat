@@ -30,6 +30,9 @@ namespace menu
     // Visual Settings
     inline int snaplinesOrigin = 0; // 0=Bottom, 1=Center, 2=Top
 
+    // System Settings
+    inline int targetFPS = 60;           // Target render FPS (30-240)
+
     // Radar Settings
     inline bool radarEnabled = true;         // Enable radar overlay
     inline bool radarShowCenter = true;      // Show radar center marker (for debugging)
@@ -201,12 +204,21 @@ namespace menu
 
         ImGui::Separator();
 
+        // Settings section
+        if (ImGui::CollapsingHeader("Settings"))
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Performance:");
+            ImGui::SliderInt("Target FPS", &targetFPS, 30, 240);
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Lower = less CPU, Higher = smoother)");
+        }
+
         // Info section
         if (ImGui::CollapsingHeader("Info"))
         {
             ImGui::Text("Resolution: %dx%d", WIDTH, HEIGHT);
             ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
             ImGui::Text("Frame Time: %.3f ms", 1000.0f / ImGui::GetIO().Framerate);
+            ImGui::Text("Target FPS: %d", targetFPS);
         }
 
         // About section

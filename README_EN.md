@@ -16,19 +16,88 @@ An external ESP overlay tool for CS2 based on SDL2 + ImGui.
 |---------|-------------|
 | 🔲 **Box ESP** | Display enemy positions with customizable colors |
 | ❤️ **Health Bar** | Real-time enemy health display (left side of box) |
+| 🎒 **Weapon Display** | Show enemy's current weapon/equipment with customizable color |
+| 🧭 **View Direction** | Display enemy facing angle (detect if spotted), color changes based on threat |
+| 💥 **Flash Indicator** | Eye indicator changes to yellow when enemy is flashed |
+| 🧱 **Wall Check** | Dashed box when enemy behind wall, solid when visible |
 | 📏 **Distance Display** | Show distance to enemies in meters with customizable colors |
 | 📍 **Snaplines** | Lines from screen to enemies with customizable colors and origin position |
 | ⚙️ **ImGui Menu** | Graphical interface for real-time settings adjustment |
 
-### 🚧 TODO (Planned Features)
+### 📡 Radar Overlay
 
 | Feature | Description |
 |---------|-------------|
-| 🎒 **Item Display** | Show enemy's current weapon/equipment |
-| 🧭 **Enemy Direction** | Display enemy facing angle (detect if spotted) |
-| 💥 **Flash Status** | Box color changes when enemy is flashed |
-| 🧱 **Occlusion Indicator** | Visual hint when enemy is behind walls/obstacles |
-| 📡 **Radar Display** | Mini-map radar showing all character positions in real-time |
+| 🗺️ **Standalone Radar** | Positioned next to game radar, non-overlapping |
+| 🔴 **Enemy Position** | Red dots showing enemy relative positions |
+| ➡️ **Enemy Direction** | White arrows showing enemy facing direction |
+| 🟢 **Player Marker** | Green dot + arrow, always at radar center |
+| 🔄 **View Sync** | Radar rotates with player view, up = forward |
+| ⚙️ **Adjustable** | Position, size, scale, colors all customizable |
+
+### ⚙️ System Features
+
+| Feature | Description |
+|---------|-------------|
+| 🎚️ **Target FPS** | Adjustable render rate (30-240 FPS) |
+
+### 🚧 TODO (Planned Features)
+
+#### 🎯 Aimbot
+| Feature | Description |
+|---------|-------------|
+| 🎯 **Auto Lock** | Automatically aim at nearest/lowest HP/closest to crosshair |
+| 🎚️ **Aim Speed** | Adjustable mouse movement speed (1-100%) |
+| 🔄 **Smoothness** | Adjustable aiming smoothness |
+| 📐 **FOV Range** | Adjustable auto-aim field of view |
+| 🦴 **Target Part** | Select head/chest/stomach/auto-switch |
+| ⌨️ **Trigger Key** | Set activation key (e.g., right mouse button) |
+| 🧱 **Wall Check** | Only aim at visible enemies |
+| 🎯 **RCS** | Automatic recoil compensation |
+
+#### 🔫 Triggerbot
+| Feature | Description |
+|---------|-------------|
+| 🔫 **Auto Fire** | Automatically shoot when crosshair on enemy |
+| ⏱️ **Delay Setting** | Adjustable fire delay (simulate human reaction) |
+| 🎯 **Part Filter** | Only fire when aiming at head (optional) |
+
+#### 🦴 Visual Enhancements
+| Feature | Description |
+|---------|-------------|
+| 🦴 **Skeleton ESP** | Display enemy skeleton lines |
+| ✨ **Glow Effect** | Enemy body glow (like teammate outlines) |
+| 📦 **3D Box** | 3D box display for enemy positions |
+| 🎯 **Head Marker** | Draw dot/cross on enemy heads |
+| 👁️ **Line of Sight** | Show enemy view direction ray |
+| 💀 **Kill Confirm** | Visual effect on kills |
+
+#### 💣 Game Info
+| Feature | Description |
+|---------|-------------|
+| 💣 **C4 Timer** | Show bomb remaining time and location |
+| 🧨 **Projectile Prediction** | Show grenade/smoke/flash trajectories |
+| 🎵 **Sound ESP** | Show enemy footstep/gunshot direction |
+| 📊 **Damage Indicator** | Show damage source direction |
+| 🏃 **Speed Display** | Show your movement speed |
+
+#### 🎮 Assistance Features
+| Feature | Description |
+|---------|-------------|
+| 🐰 **Bhop** | Auto bunny hop script |
+| 🔇 **No Recoil** | Reduce/eliminate weapon recoil |
+| 🌀 **Auto Flash Dodge** | Auto turn away from flashbangs |
+| 🎥 **Spectator Detection** | Detect if being spectated |
+| 📋 **Player List** | Show all player info (rank, K/D, etc.) |
+| 🎨 **Custom Crosshair** | Customizable crosshair style and color |
+| 📸 **Screenshot Protection** | Auto-hide ESP during screenshots |
+
+#### ⚙️ System Features (Planned)
+| Feature | Description |
+|---------|-------------|
+| 💾 **Config Save/Load** | Save/load settings configuration files |
+| 🎨 **Theme Switch** | Multiple UI themes available |
+| 📊 **Performance Stats** | Show FPS, latency, CPU usage, etc. |
 
 ## 🖼️ Screenshot
 
