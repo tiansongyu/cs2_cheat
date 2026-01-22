@@ -45,6 +45,6 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        git add external-cheat-base/client_dll.hpp external-cheat-base/offsets.hpp external-cheat-base/buttons.hpp last_commit.txt
+        git add external-cheat-base/generated/client_dll.hpp external-cheat-base/generated/offsets.hpp external-cheat-base/generated/buttons.hpp last_commit.txt
         git commit -m "Update CS2 offset files from cs2-dumper"
         git push origin HEAD:main
