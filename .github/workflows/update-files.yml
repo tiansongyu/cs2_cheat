@@ -6,6 +6,12 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      force_update:
+        description: 'Force update even if no changes'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   update-files:
@@ -27,14 +33,21 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        latest_commit=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/a2x/cs2-dumper/commits/main | jq -r .sha)
-        last_commit=$(cat last_commit.txt || echo "none")
-
-        if [ "$latest_commit" != "$last_commit" ]; then
+        # Check if manually triggered with force_update
+        if [ "${{ github.event.inputs.force_update }}" = "true" ]; then
+          echo "Manual trigger with force_update enabled, skipping version check"
           echo "UPDATE_AVAILABLE=true" >> $GITHUB_ENV
-          echo $latest_commit > last_commit.txt
         else
-          echo "UPDATE_AVAILABLE=false" >> $GITHUB_ENV
+          # Normal update check
+          latest_commit=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/a2x/cs2-dumper/commits/main | jq -r .sha)
+          last_commit=$(cat last_commit.txt || echo "none")
+
+          if [ "$latest_commit" != "$last_commit" ]; then
+            echo "UPDATE_AVAILABLE=true" >> $GITHUB_ENV
+            echo $latest_commit > last_commit.txt
+          else
+            echo "UPDATE_AVAILABLE=false" >> $GITHUB_ENV
+          fi
         fi
 
     - name: Update offset header files
