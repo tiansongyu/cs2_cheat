@@ -17,8 +17,14 @@ jobs:
     - name: Check cs2-dumper updates
       id: check_updates
       shell: powershell
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        $response = Invoke-RestMethod -Uri "https://api.github.com/repos/a2x/cs2-dumper/commits/main"
+        $headers = @{
+          'Authorization' = "token $env:GITHUB_TOKEN"
+          'User-Agent' = 'CS2-Build-Workflow'
+        }
+        $response = Invoke-RestMethod -Uri "https://api.github.com/repos/a2x/cs2-dumper/commits/main" -Headers $headers
         $latestCommit = $response.sha
         $lastCommit = Get-Content -Path "last_commit.txt" -ErrorAction SilentlyContinue
 
@@ -27,9 +33,9 @@ jobs:
           $latestCommit | Out-File -FilePath "last_commit.txt"
 
           # Download updated header files
-          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/client_dll.hpp" -OutFile "external-cheat-base/client_dll.hpp"
-          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.hpp" -OutFile "external-cheat-base/offsets.hpp"
-          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/buttons.hpp" -OutFile "external-cheat-base/buttons.hpp"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/client_dll.hpp" -OutFile "external-cheat-base/generated/client_dll.hpp"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.hpp" -OutFile "external-cheat-base/generated/offsets.hpp"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/buttons.hpp" -OutFile "external-cheat-base/generated/buttons.hpp"
         } else {
           echo "UPDATE_AVAILABLE=false" >> $env:GITHUB_ENV
         }
