@@ -266,7 +266,7 @@ void aimbot::updateRCS()
     // Use cached shots fired count
     int shotsFired = esp::localPlayer.shotsFired;
 
-    // If not shooting or just started, reset
+    // If not shooting, reset
     if (shotsFired <= 0) {
         resetRCS();
         return;
@@ -275,24 +275,38 @@ void aimbot::updateRCS()
     // Use cached punch angle
     const vec3& punchAngle = esp::localPlayer.punchAngle;
 
-    // Only apply RCS after first shot (shotsFired > 1 means we're in a spray)
-    if (shotsFired > 1) {
+    // Only apply RCS when we have previous data and shots > 1
+    if (oldShotsFired > 0 && shotsFired > oldShotsFired) {
         // Calculate delta between current and old punch angle
         float deltaPunchX = punchAngle.x - oldPunchAngle.x;
         float deltaPunchY = punchAngle.y - oldPunchAngle.y;
 
+        // Skip if punch angle didn't change significantly
+        if (std::abs(deltaPunchX) < 0.001f && std::abs(deltaPunchY) < 0.001f) {
+            oldPunchAngle = punchAngle;
+            oldShotsFired = shotsFired;
+            return;
+        }
+
         // Apply sensitivity and strength multipliers
+        // In CS2, the visual recoil is 2x the punch angle
+        // Mouse sensitivity formula: pixels = angle / (sensitivity * 0.022)
         float sensitivity = menu::rcsSensitivity;
         float strength = menu::rcsStrength / 100.0f;
         float smoothing = menu::rcsSmoothing;
 
-        // Calculate mouse movement (negative = opposite to recoil)
-        float factor = (sensitivity / 0.022f) * 2.0f * strength / smoothing;
-        float moveX = -deltaPunchY * factor;
-        float moveY = -deltaPunchX * factor;
+        // Calculate mouse movement to counteract recoil
+        // In CS2:
+        //   deltaPunchX (pitch): negative = view kicks UP, so we need mouse DOWN (positive dy)
+        //   deltaPunchY (yaw): positive = view kicks LEFT, so we need mouse RIGHT (positive dx)
+        // Factor: 2.0 because visual recoil = 2x punch angle
+        // We NEGATE the delta to move OPPOSITE to the recoil direction
+        float pixelsPerDegree = 1.0f / (sensitivity * 0.022f);
+        float moveY = -deltaPunchX * 2.0f * pixelsPerDegree * strength / smoothing;
+        float moveX = -deltaPunchY * 2.0f * pixelsPerDegree * strength / smoothing;
 
         // Move mouse if delta is significant
-        if (std::abs(moveX) > 0.1f || std::abs(moveY) > 0.1f) {
+        if (std::abs(moveX) > 0.5f || std::abs(moveY) > 0.5f) {
             INPUT input = {};
             input.type = INPUT_MOUSE;
             input.mi.dwFlags = MOUSEEVENTF_MOVE;

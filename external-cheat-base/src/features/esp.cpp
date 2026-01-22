@@ -544,28 +544,59 @@ void esp::render()
                 uint8_t ab = static_cast<uint8_t>(menu::radarEnemyArrowColor[2] * 255);
                 uint8_t aa = static_cast<uint8_t>(menu::radarEnemyArrowColor[3] * 255);
 
-                // Draw enemy direction arrow
-                // Calculate enemy's view direction relative to player's view
-                float enemyDirRad = (enemy.viewYaw - player_yaw) * (3.14159265f / 180.0f);
+                // Draw enemy direction arrow showing where the enemy is FACING
+                // enemy.viewYaw is the enemy's absolute facing direction in world coordinates
+                // We need to transform it to radar coordinates (relative to player's view)
+                //
+                // The radar is already rotated so that "up" = player's forward direction
+                // So we need to subtract player_yaw from enemy.viewYaw to get relative angle
+                //
+                // CS2 coordinate system:
+                //   Yaw 0° = East (+X direction)
+                //   Yaw 90° = North (+Y direction)
+                //   Yaw 180° = West (-X direction)
+                //   Yaw -90° = South (-Y direction)
+                //
+                // Screen coordinate system (after radar rotation):
+                //   0° = Up (player's forward)
+                //   90° = Right
+                //   180° = Down
+                //   -90° = Left
+                //
+                // Relative yaw = enemy.viewYaw - player_yaw
+                // Screen angle = -(relative_yaw - 90°) in radians
+                // This converts from CS2 yaw to screen angle where 0° = up
+
+                float relativeYaw = enemy.viewYaw - player_yaw;
+                // Convert to screen coordinates: screen 0° (up) = CS2 90° (north)
+                // Screen angle = 90° - relativeYaw, then convert to radians
+                // Negate because screen Y increases downward
+                float enemyDirRad = (90.0f - relativeYaw) * (3.14159265f / 180.0f);
 
                 // Arrow starts from edge of circle, not center (to avoid overlap)
                 float arrowLen = 12.0f;
                 float arrowWidth = 6.0f;
                 float arrowOffset = dotRadius + 2.0f;  // Start from circle edge + small gap
 
+                // Calculate arrow direction vector (pointing where enemy is facing)
+                // cos(angle) gives X component, -sin(angle) gives Y component (screen coords)
+                float dirVecX = std::cos(enemyDirRad);
+                float dirVecY = -std::sin(enemyDirRad);
+
                 // Calculate arrow base center (at edge of circle)
-                float baseCenterX = radarX + arrowOffset * std::sin(enemyDirRad);
-                float baseCenterY = radarY - arrowOffset * std::cos(enemyDirRad);
+                float baseCenterX = radarX + arrowOffset * dirVecX;
+                float baseCenterY = radarY + arrowOffset * dirVecY;
 
                 // Calculate arrow tip position (extends from base)
-                float tipX = baseCenterX + arrowLen * std::sin(enemyDirRad);
-                float tipY = baseCenterY - arrowLen * std::cos(enemyDirRad);
+                float tipX = baseCenterX + arrowLen * dirVecX;
+                float tipY = baseCenterY + arrowLen * dirVecY;
 
                 // Calculate arrow base corners (perpendicular to direction)
-                float baseX1 = baseCenterX + arrowWidth * std::cos(enemyDirRad);
-                float baseY1 = baseCenterY + arrowWidth * std::sin(enemyDirRad);
-                float baseX2 = baseCenterX - arrowWidth * std::cos(enemyDirRad);
-                float baseY2 = baseCenterY - arrowWidth * std::sin(enemyDirRad);
+                // Perpendicular vector: (-dirVecY, dirVecX)
+                float baseX1 = baseCenterX - arrowWidth * (-dirVecY);
+                float baseY1 = baseCenterY - arrowWidth * dirVecX;
+                float baseX2 = baseCenterX + arrowWidth * (-dirVecY);
+                float baseY2 = baseCenterY + arrowWidth * dirVecX;
 
                 // Draw filled triangle arrow (white by default)
                 drawList->AddTriangleFilled(
