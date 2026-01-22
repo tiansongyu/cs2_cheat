@@ -22,8 +22,10 @@ jobs:
 
     - name: Check cs2-dumper updates
       id: check_updates
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        latest_commit=$(curl -s https://api.github.com/repos/a2x/cs2-dumper/commits/main | jq -r .sha)
+        latest_commit=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/a2x/cs2-dumper/commits/main | jq -r .sha)
         last_commit=$(cat last_commit.txt || echo "none")
 
         if [ "$latest_commit" != "$last_commit" ]; then
