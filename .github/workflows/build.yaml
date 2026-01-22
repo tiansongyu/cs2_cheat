@@ -6,6 +6,12 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Force build even if no updates'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -20,24 +26,38 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        $headers = @{
-          'Authorization' = "token $env:GITHUB_TOKEN"
-          'User-Agent' = 'CS2-Build-Workflow'
-        }
-        $response = Invoke-RestMethod -Uri "https://api.github.com/repos/a2x/cs2-dumper/commits/main" -Headers $headers
-        $latestCommit = $response.sha
-        $lastCommit = Get-Content -Path "last_commit.txt" -ErrorAction SilentlyContinue
+        # Check if manually triggered with force_build
+        $forceBuild = "${{ github.event.inputs.force_build }}"
 
-        if ($lastCommit -ne $latestCommit) {
+        if ($forceBuild -eq "true") {
+          Write-Host "Manual trigger with force_build enabled, skipping version check"
           echo "UPDATE_AVAILABLE=true" >> $env:GITHUB_ENV
-          $latestCommit | Out-File -FilePath "last_commit.txt"
 
-          # Download updated header files
+          # Download latest header files
           Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/client_dll.hpp" -OutFile "external-cheat-base/generated/client_dll.hpp"
           Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.hpp" -OutFile "external-cheat-base/generated/offsets.hpp"
           Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/buttons.hpp" -OutFile "external-cheat-base/generated/buttons.hpp"
         } else {
-          echo "UPDATE_AVAILABLE=false" >> $env:GITHUB_ENV
+          # Normal update check
+          $headers = @{
+            'Authorization' = "token $env:GITHUB_TOKEN"
+            'User-Agent' = 'CS2-Build-Workflow'
+          }
+          $response = Invoke-RestMethod -Uri "https://api.github.com/repos/a2x/cs2-dumper/commits/main" -Headers $headers
+          $latestCommit = $response.sha
+          $lastCommit = Get-Content -Path "last_commit.txt" -ErrorAction SilentlyContinue
+
+          if ($lastCommit -ne $latestCommit) {
+            echo "UPDATE_AVAILABLE=true" >> $env:GITHUB_ENV
+            $latestCommit | Out-File -FilePath "last_commit.txt"
+
+            # Download updated header files
+            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/client_dll.hpp" -OutFile "external-cheat-base/generated/client_dll.hpp"
+            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.hpp" -OutFile "external-cheat-base/generated/offsets.hpp"
+            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/buttons.hpp" -OutFile "external-cheat-base/generated/buttons.hpp"
+          } else {
+            echo "UPDATE_AVAILABLE=false" >> $env:GITHUB_ENV
+          }
         }
 
     - name: Setup MSBuild
