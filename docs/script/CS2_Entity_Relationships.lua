@@ -17,13 +17,13 @@
 -- ============================================================================
 local offsets = {
     -- client.dll 全局偏移
-    dwEntityList = 0x1A43110,
-    dwLocalPlayerController = 0x1A5E718,
+    dwEntityList = 0x24A7B48,
+    dwLocalPlayerController = 0x22ECA18,
     
     -- EntityList 结构
     CHUNK_BASE = 0x10,        -- chunks 数组在 EntityList 中的偏移
     CHUNK_SIZE = 512,         -- 每个 chunk 的实体数
-    ENTITY_STRIDE = 0x78,     -- 每个实体槽位的步长
+    ENTITY_STRIDE = 0x70,     -- 每个实体槽位的步长
     
     -- Handle 解析
     HANDLE_MASK = 0x7FFF,     -- 提取索引的掩码
