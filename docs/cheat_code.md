@@ -4,3 +4,7 @@
 - mp_buytime 99999; mp_buy_anywhere 1
 - sv_infinite_ammo 1
 - bot_stop 1
+
+关键结构:
+- C_BasePlayerPawn
+- CCSPlayerController
