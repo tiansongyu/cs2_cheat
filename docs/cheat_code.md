@@ -4,7 +4,11 @@
 - mp_buytime 99999; mp_buy_anywhere 1
 - sv_infinite_ammo 1
 - bot_stop 1
-
+- hurtme 10
 关键结构:
 - C_BasePlayerPawn
 - CCSPlayerController
+
+CSGO2
+零基础查找偏移量
+cheatengine
