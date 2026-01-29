@@ -7,6 +7,26 @@
 
 #pragma comment(lib, "dwmapi.lib")
 
+// Helper function to aggressively force window to topmost
+static void ForceWindowTopmost(HWND hwnd)
+{
+    if (!hwnd) return;
+
+    // Method 1: Standard HWND_TOPMOST
+    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
+    // Method 2: Temporarily set to HWND_NOTOPMOST then back to TOPMOST
+    // This can help "refresh" the topmost state
+    SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
+    // Method 3: BringWindowToTop
+    BringWindowToTop(hwnd);
+}
+
 // Initialize waiting screen (centered window, no game attachment)
 bool sdl_renderer::initWaiting()
 {
@@ -60,13 +80,22 @@ bool sdl_renderer::initWaiting()
 
 bool sdl_renderer::init(const wchar_t* targetWindowName)
 {
+    // Try multiple methods to find CS2 window
     gameHwnd = FindWindowW(nullptr, targetWindowName);
     if (!gameHwnd) {
         gameHwnd = FindWindowW(L"SDL_app", nullptr);
     }
+    if (!gameHwnd) {
+        // Try with class name
+        gameHwnd = FindWindowW(L"SDL_app", targetWindowName);
+    }
 
+    // Get game window position and size
+    int winX = 0, winY = 0;
     RECT gameRect;
     if (gameHwnd && GetWindowRect(gameHwnd, &gameRect)) {
+        winX = gameRect.left;
+        winY = gameRect.top;
         WIDTH = gameRect.right - gameRect.left;
         HEIGHT = gameRect.bottom - gameRect.top;
         WINDOW_W = WIDTH;
@@ -77,10 +106,10 @@ bool sdl_renderer::init(const wchar_t* targetWindowName)
         return false;
     }
 
+    // Create window at the EXACT position of the game window
     window = SDL_CreateWindow(
-        "Overlay",
-        SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED,
+        "",  // Empty title - less visible in task manager
+        winX, winY,  // Use game window position, not centered!
         WIDTH, HEIGHT,
         SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALWAYS_ON_TOP | SDL_WINDOW_SHOWN
     );
@@ -97,18 +126,26 @@ bool sdl_renderer::init(const wchar_t* targetWindowName)
     }
 
     if (overlayHwnd) {
+        // Set extended window styles
         LONG_PTR exStyle = GetWindowLongPtr(overlayHwnd, GWL_EXSTYLE);
-        // WS_EX_TRANSPARENT will be set when menu is hidden (F4)
-        SetWindowLongPtr(overlayHwnd, GWL_EXSTYLE,
-            exStyle | WS_EX_LAYERED | WS_EX_TOPMOST);
+        // Add WS_EX_TOOLWINDOW to hide from taskbar, WS_EX_NOACTIVATE to prevent stealing focus
+        exStyle |= WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+        exStyle &= ~WS_EX_APPWINDOW;  // Remove from taskbar
+        SetWindowLongPtr(overlayHwnd, GWL_EXSTYLE, exStyle);
 
+        // Set black as transparent color
         SetLayeredWindowAttributes(overlayHwnd, RGB(0, 0, 0), 0, LWA_COLORKEY);
 
-        MARGINS margins = { -1 };
+        // Extend frame for DWM transparency
+        MARGINS margins = { -1, -1, -1, -1 };
         DwmExtendFrameIntoClientArea(overlayHwnd, &margins);
 
-        SetWindowPos(overlayHwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
-        SetForegroundWindow(overlayHwnd);
+        // Force topmost aggressively
+        ForceWindowTopmost(overlayHwnd);
+
+        // Position window exactly over game
+        SetWindowPos(overlayHwnd, HWND_TOPMOST, winX, winY, WIDTH, HEIGHT,
+                     SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
 
     renderer = SDL_CreateRenderer(window, -1,
@@ -121,6 +158,8 @@ bool sdl_renderer::init(const wchar_t* targetWindowName)
     }
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    // Force update position again after renderer is created
     updateWindowPosition();
 
     return true;
@@ -192,11 +231,22 @@ void sdl_renderer::pollEvents()
 
 void sdl_renderer::updateWindowPosition()
 {
-    if (!gameHwnd || !overlayHwnd) return;
+    static DWORD lastForceTime = 0;
+    static int frameCounter = 0;
 
-    if (!IsWindow(gameHwnd)) {
-        running = false;
-        return;
+    if (!overlayHwnd) return;
+
+    // If game window is lost, try to find it again
+    if (!gameHwnd || !IsWindow(gameHwnd)) {
+        gameHwnd = FindWindowW(nullptr, L"Counter-Strike 2");
+        if (!gameHwnd) {
+            gameHwnd = FindWindowW(L"SDL_app", nullptr);
+        }
+        if (!gameHwnd) {
+            // Game closed, exit
+            running = false;
+            return;
+        }
     }
 
     RECT gameRect;
@@ -211,11 +261,24 @@ void sdl_renderer::updateWindowPosition()
         WINDOW_W = w;
         WINDOW_H = h;
 
-        // Force overlay to stay on top, especially important for fullscreen games
-        SetWindowPos(overlayHwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        
-        // Additional force for fullscreen: bring window to top of Z-order
-        BringWindowToTop(overlayHwnd);
+        // Always update position
+        SetWindowPos(overlayHwnd, HWND_TOPMOST, x, y, w, h,
+                     SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+        // Force topmost more aggressively every 50 frames (~1 second at 60fps)
+        frameCounter++;
+        DWORD now = GetTickCount();
+        if (frameCounter >= 50 || (now - lastForceTime) > 500) {
+            frameCounter = 0;
+            lastForceTime = now;
+
+            // Use aggressive topmost forcing
+            ForceWindowTopmost(overlayHwnd);
+
+            // Re-apply position after forcing topmost
+            SetWindowPos(overlayHwnd, HWND_TOPMOST, x, y, w, h,
+                         SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        }
     }
 }
 
