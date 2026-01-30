@@ -3,8 +3,6 @@ name: Update CS2 Offset Files
 on:
   schedule:
     - cron: '0 * * * *'  # 每小时运行一次
-  push:
-    branches: [ main ]
   workflow_dispatch:
     inputs:
       force_update:
@@ -16,6 +14,8 @@ on:
 jobs:
   update-files:
     runs-on: ubuntu-latest
+    outputs:
+      updated: ${{ steps.check_updates.outputs.updated }}
 
     steps:
     - uses: actions/checkout@v4
@@ -31,22 +31,29 @@ jobs:
     - name: Check cs2-dumper updates
       id: check_updates
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         # Check if manually triggered with force_update
         if [ "${{ github.event.inputs.force_update }}" = "true" ]; then
           echo "Manual trigger with force_update enabled, skipping version check"
           echo "UPDATE_AVAILABLE=true" >> $GITHUB_ENV
+          echo "updated=true" >> $GITHUB_OUTPUT
         else
-          # Normal update check
-          latest_commit=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/a2x/cs2-dumper/commits/main | jq -r .sha)
-          last_commit=$(cat last_commit.txt || echo "none")
+          # Normal update check using GitHub CLI
+          latest_commit=$(gh api repos/a2x/cs2-dumper/commits/main --jq '.sha')
+          last_commit=$(cat last_commit.txt 2>/dev/null || echo "none")
+
+          echo "Latest commit: $latest_commit"
+          echo "Last commit: $last_commit"
 
           if [ "$latest_commit" != "$last_commit" ]; then
             echo "UPDATE_AVAILABLE=true" >> $GITHUB_ENV
-            echo $latest_commit > last_commit.txt
+            echo "updated=true" >> $GITHUB_OUTPUT
+            echo -n "$latest_commit" > last_commit.txt
           else
             echo "UPDATE_AVAILABLE=false" >> $GITHUB_ENV
+            echo "updated=false" >> $GITHUB_OUTPUT
+            echo "No updates available"
           fi
         fi
 
@@ -65,3 +72,15 @@ jobs:
         git add external-cheat-base/generated/client_dll.hpp external-cheat-base/generated/offsets.hpp external-cheat-base/generated/buttons.hpp last_commit.txt
         git commit -m "Update CS2 offset files from cs2-dumper"
         git push origin HEAD:main
+
+  # 触发 build workflow
+  trigger-build:
+    needs: update-files
+    if: needs.update-files.outputs.updated == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Trigger Build Workflow
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh workflow run build.yaml --repo ${{ github.repository }} -f force_build=true

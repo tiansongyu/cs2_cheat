@@ -1,17 +1,20 @@
 name: Build CS2 ESP (SDL2 + ImGui)
 
 on:
-  schedule:
-    - cron: '0 * * * *'  # 每小时运行一次
-  push:
-    branches: [ main ]
+  # 由 update-files.yml 触发，或手动触发
   workflow_dispatch:
     inputs:
       force_build:
-        description: 'Force build even if no updates'
+        description: 'Force build'
         required: false
         type: boolean
         default: true
+  # 当 push 到 main 分支时也触发（用于代码更新后的构建）
+  push:
+    branches: [ main ]
+    paths:
+      - 'external-cheat-base/**'
+      - '!external-cheat-base/generated/**'
 
 jobs:
   build:
@@ -20,70 +23,34 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Check cs2-dumper updates
-      id: check_updates
-      shell: powershell
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Download latest offset files
+      shell: pwsh
       run: |
-        # Check if manually triggered with force_build
-        $forceBuild = "${{ github.event.inputs.force_build }}"
-
-        if ($forceBuild -eq "true") {
-          Write-Host "Manual trigger with force_build enabled, skipping version check"
-          echo "UPDATE_AVAILABLE=true" >> $env:GITHUB_ENV
-
-          # Download latest header files
-          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/client_dll.hpp" -OutFile "external-cheat-base/generated/client_dll.hpp"
-          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.hpp" -OutFile "external-cheat-base/generated/offsets.hpp"
-          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/buttons.hpp" -OutFile "external-cheat-base/generated/buttons.hpp"
-        } else {
-          # Normal update check
-          $headers = @{
-            'Authorization' = "token $env:GITHUB_TOKEN"
-            'User-Agent' = 'CS2-Build-Workflow'
-          }
-          $response = Invoke-RestMethod -Uri "https://api.github.com/repos/a2x/cs2-dumper/commits/main" -Headers $headers
-          $latestCommit = $response.sha
-          $lastCommit = Get-Content -Path "last_commit.txt" -ErrorAction SilentlyContinue
-
-          if ($lastCommit -ne $latestCommit) {
-            echo "UPDATE_AVAILABLE=true" >> $env:GITHUB_ENV
-            $latestCommit | Out-File -FilePath "last_commit.txt"
-
-            # Download updated header files
-            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/client_dll.hpp" -OutFile "external-cheat-base/generated/client_dll.hpp"
-            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.hpp" -OutFile "external-cheat-base/generated/offsets.hpp"
-            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/buttons.hpp" -OutFile "external-cheat-base/generated/buttons.hpp"
-          } else {
-            echo "UPDATE_AVAILABLE=false" >> $env:GITHUB_ENV
-          }
-        }
+        Write-Host "Downloading latest offset files..."
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/client_dll.hpp" -OutFile "external-cheat-base/generated/client_dll.hpp"
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.hpp" -OutFile "external-cheat-base/generated/offsets.hpp"
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/buttons.hpp" -OutFile "external-cheat-base/generated/buttons.hpp"
+        Write-Host "Downloaded latest offset files"
 
     - name: Setup MSBuild
-      if: env.UPDATE_AVAILABLE == 'true'
       uses: microsoft/setup-msbuild@v2
 
     - name: Build Solution
-      if: env.UPDATE_AVAILABLE == 'true'
       shell: cmd
       run: |
         msbuild external-cheat-base.sln /p:Configuration=Release /p:Platform=x64
 
     - name: Compress Release Artifacts
-      if: env.UPDATE_AVAILABLE == 'true'
       run: |
         powershell Compress-Archive -Path x64/Release/* -DestinationPath x64/Release/Release-Binaries.zip
 
     - name: Upload artifacts
-      if: env.UPDATE_AVAILABLE == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: Release-Binaries
         path: x64/Release/Release-Binaries.zip
 
     - name: Create Release
-      if: env.UPDATE_AVAILABLE == 'true'
       id: create_release
       uses: actions/create-release@v1
       env:
@@ -95,7 +62,6 @@ jobs:
         prerelease: false
 
     - name: Upload Release Asset
-      if: env.UPDATE_AVAILABLE == 'true'
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
