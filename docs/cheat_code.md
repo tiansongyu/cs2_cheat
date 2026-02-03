@@ -5,6 +5,7 @@
 - sv_infinite_ammo 1
 - bot_stop 1
 - hurtme 10
+- mp_startmoney 65535
 关键结构:
 - C_BasePlayerPawn
 - CCSPlayerController
