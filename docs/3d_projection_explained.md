@@ -14,7 +14,7 @@
 
 ## 1. 核心概念：dwViewMatrix 的本质
 
-### 1.1 CS2 中的 ViewMatrix 是什么？
+### 1.1 CS2 中的 dwViewMatrix 是什么？
 
 在 CS2 中，`dwViewMatrix` 是一个 **4×4 矩阵（16个float）**，它能将 **世界坐标** 直接转换为 **裁剪空间坐标**。
 
@@ -466,7 +466,7 @@ dwViewMatrix 在内存中的布局（16个float，行主序）：
 
 方式1：分离矩阵（需要两次矩阵乘法）
 ─────────────────────────────────────
-viewPos = worldPos × ViewMatrix      // 第一次乘法 (16次乘法+12次加法)
+viewPos = worldPos × dwViewMatrix      // 第一次乘法 (16次乘法+12次加法)
 clipPos = viewPos × ProjMatrix       // 第二次乘法 (16次乘法+12次加法)
 总计: 32次乘法 + 24次加法
 
@@ -493,7 +493,7 @@ clipPos = worldPos × dwViewMatrix    // 一次乘法 (16次乘法+12次加法)
 
 ┌─────────────────────────────────────────────────────────────────┐
 │  步骤1: 矩阵乘法                                                 │
-│  世界坐标 × ViewMatrix = 裁剪坐标 (clip.x, clip.y, clip.z, clip.w)│
+│  世界坐标 × dwViewMatrix = 裁剪坐标 (clip.x, clip.y, clip.z, clip.w)│
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -590,7 +590,7 @@ NDC 中 Y 向上为正         屏幕中 Y 向下为正
          Z                                                         (1920,1080)
 
                               │
-                              │  × ViewMatrix (矩阵乘法)
+                              │  × dwViewMatrix (矩阵乘法)
                               ▼
 
     裁剪空间 (Clip Space)
