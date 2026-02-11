@@ -1,4 +1,10 @@
-# 使用IDA逆向CS:GO/CS2 Client.dll 技术指南
+# 使用IDA逆向CS:GO/CS2 Client.dll 技术指南 
+# 手动构造属于自己的特征码
+
+## Download
+- https://hex-rays.com/ida-free
+- https://my.hex-rays.com/
+- https://www.cheatengine.org/
 
 ## 目录
 1. [为什么client.dll会提供偏移量](#为什么clientdll会提供偏移量)
