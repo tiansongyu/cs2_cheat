@@ -36,6 +36,7 @@
 | 第三课：零基础查找偏移量 | [BV1Lr6wBeEEF](https://www.bilibili.com/video/BV1Lr6wBeEEF) |
 | 第四课：投影矩阵原理概述 | [BV1goFNzSEP3](https://www.bilibili.com/video/BV1goFNzSEP3) |
 | 第五课：视图矩阵深度解析 | [BV1AtF5zhE5J](https://www.bilibili.com/video/BV1AtF5zhE5J) |
+| 第六课：手动构造特征码及原理讲解IDA逆向使用教程 | [BV1yhcszwEJQ](https://www.bilibili.com/video/BV1yhcszwEJQ) |
 
 ## ✨ 功能特性
 
