@@ -104,11 +104,6 @@ float aimbot::getFOV(const vec2& viewAngle, const vec2& aimAngle)
     return std::sqrt(pitchDiff * pitchDiff + yawDiff * yawDiff);
 }
 
-void aimbot::resetRCS()
-{
-    oldPunchAngle = { 0.0f, 0.0f, 0.0f };
-    oldShotsFired = 0;
-}
 
 void aimbot::update()
 {
@@ -231,7 +226,7 @@ void aimbot::update()
     float deltaYaw = normalizeAngle(bestAngle.y - currentViewAngle.y) / smoothing;
 
     // Convert angle delta to mouse movement
-    float mouseSensitivityFactor = menu::rcsSensitivity * 0.022f;
+    float mouseSensitivityFactor = menu::mouseSensitivity * 0.022f;
 
     // In CS2: Moving mouse RIGHT decreases Yaw, DOWN increases Pitch
     float moveX = -deltaYaw / mouseSensitivityFactor;
@@ -247,78 +242,6 @@ void aimbot::update()
         input.mi.dy = static_cast<LONG>(moveY);
         SendInput(1, &input, sizeof(INPUT));
     }
-}
-
-void aimbot::updateRCS()
-{
-    // Check if RCS is enabled
-    if (!menu::rcsEnabled) {
-        resetRCS();
-        return;
-    }
-
-    // Use cached local player data
-    if (!esp::localPlayer.isValid) {
-        resetRCS();
-        return;
-    }
-
-    // Use cached shots fired count
-    int shotsFired = esp::localPlayer.shotsFired;
-
-    // If not shooting, reset
-    if (shotsFired <= 0) {
-        resetRCS();
-        return;
-    }
-
-    // Use cached punch angle
-    const vec3& punchAngle = esp::localPlayer.punchAngle;
-
-    // Only apply RCS when we have previous data and shots > 1
-    if (oldShotsFired > 0 && shotsFired > oldShotsFired) {
-        // Calculate delta between current and old punch angle
-        float deltaPunchX = punchAngle.x - oldPunchAngle.x;
-        float deltaPunchY = punchAngle.y - oldPunchAngle.y;
-
-        // Skip if punch angle didn't change significantly
-        if (std::abs(deltaPunchX) < 0.001f && std::abs(deltaPunchY) < 0.001f) {
-            oldPunchAngle = punchAngle;
-            oldShotsFired = shotsFired;
-            return;
-        }
-
-        // Apply sensitivity and strength multipliers
-        // In CS2, the visual recoil is 2x the punch angle
-        // Mouse sensitivity formula: pixels = angle / (sensitivity * 0.022)
-        float sensitivity = menu::rcsSensitivity;
-        float strength = menu::rcsStrength / 100.0f;
-        float smoothing = menu::rcsSmoothing;
-
-        // Calculate mouse movement to counteract recoil
-        // In CS2:
-        //   deltaPunchX (pitch): negative = view kicks UP, so we need mouse DOWN (positive dy)
-        //   deltaPunchY (yaw): positive = view kicks LEFT, so we need mouse RIGHT (positive dx)
-        // Factor: 2.0 because visual recoil = 2x punch angle
-        // We NEGATE the delta to move OPPOSITE to the recoil direction
-        float pixelsPerDegree = 1.0f / (sensitivity * 0.022f);
-        float moveY = -deltaPunchX * 2.0f * pixelsPerDegree * strength / smoothing;
-        float moveX = -deltaPunchY * 2.0f * pixelsPerDegree * strength / smoothing;
-
-        // Move mouse if delta is significant
-        if (std::abs(moveX) > 0.5f || std::abs(moveY) > 0.5f) {
-            INPUT input = {};
-            input.type = INPUT_MOUSE;
-            input.mi.dwFlags = MOUSEEVENTF_MOVE;
-            input.mi.dx = static_cast<LONG>(moveX);
-            input.mi.dy = static_cast<LONG>(moveY);
-            SendInput(1, &input, sizeof(INPUT));
-        }
-    }
-
-    // Store current values for next frame
-    oldPunchAngle = punchAngle;
-    oldShotsFired = shotsFired;
 }
 
 void aimbot::updateTriggerbot()
@@ -381,7 +304,7 @@ void aimbot::updateTriggerbot()
                 float deltaPitch = (aimAngle.x - currentViewAngle.x) / 2.0f;
                 float deltaYaw = normalizeAngle(aimAngle.y - currentViewAngle.y) / 2.0f;
 
-                float mouseSensitivityFactor = menu::rcsSensitivity * 0.022f;
+                float mouseSensitivityFactor = menu::mouseSensitivity * 0.022f;
 
                 float moveX = -deltaYaw / mouseSensitivityFactor;
                 float moveY = deltaPitch / mouseSensitivityFactor;

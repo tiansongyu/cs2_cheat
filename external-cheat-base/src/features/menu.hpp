@@ -63,11 +63,8 @@ namespace menu
     inline int triggerbotDelay = 50;       // Delay before shooting (milliseconds)
     inline int triggerbotKey = 0x46;       // Triggerbot activation key (default: F key, 0x46 = 'F')
 
-    // RCS Settings
-    inline bool rcsEnabled = false;        // RCS (Recoil Control System) enabled
-    inline float rcsStrength = 100.0f;     // RCS strength (0-100%)
-    inline float rcsSensitivity = 1.0f;    // In-game mouse sensitivity (for accurate compensation)
-    inline float rcsSmoothing = 1.0f;      // Smoothing factor (1.0 = instant, higher = smoother)
+    // Input Settings
+    inline float mouseSensitivity = 1.0f;  // In-game mouse sensitivity (for aim/trigger mouse conversion)
 
     // Radar Settings
     inline bool radarEnabled = true;         // Enable radar overlay
@@ -360,29 +357,11 @@ namespace menu
         }
 
         ImGui::Separator();
-        ImGui::Checkbox("Enable RCS (Recoil Control)", &rcsEnabled);
-
-        if (rcsEnabled)
-        {
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "RCS Settings:");
-
-            ImGui::SliderFloat("Strength", &rcsStrength, 0.0f, 100.0f, "%.0f%%");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("How much recoil to compensate (100%% = full)");
-
-            ImGui::SliderFloat("Sensitivity", &rcsSensitivity, 0.1f, 10.0f, "%.2f");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Match your in-game mouse sensitivity");
-
-            ImGui::SliderFloat("RCS Smoothing", &rcsSmoothing, 1.0f, 5.0f, "%.1f");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Higher = smoother but slower compensation");
-
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Tip: Set sensitivity to match");
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "your CS2 mouse sensitivity.");
-        }
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Input Settings:");
+        ImGui::SliderFloat("Mouse Sensitivity", &mouseSensitivity, 0.1f, 10.0f, "%.2f");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Match your in-game mouse sensitivity");
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Used for aimbot and triggerbot mouse movement.");
 
         ImGui::Separator();
         ImGui::Checkbox("Enable Triggerbot", &triggerbotEnabled);

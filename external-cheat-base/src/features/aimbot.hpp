@@ -8,9 +8,6 @@
 
 namespace aimbot
 {
-    // RCS state
-    inline vec3 oldPunchAngle = { 0.0f, 0.0f, 0.0f };
-    inline int oldShotsFired = 0;
     inline uintptr_t pID = 0;
     inline uintptr_t modBase = 0;
 
@@ -24,14 +21,8 @@ namespace aimbot
     // Update aimbot - should be called every frame
     void update();
 
-    // Update RCS - should be called every frame
-    void updateRCS();
-
     // Update Triggerbot - should be called every frame
     void updateTriggerbot();
-
-    // Reset RCS state (when player stops shooting)
-    void resetRCS();
 
     // Calculate angle to target
     vec2 calcAngle(const vec3& src, const vec3& dst);

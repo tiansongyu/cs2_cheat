@@ -33,15 +33,13 @@ struct EnemyInfo
     bool isSpotted;          // Is enemy spotted by local player (visible, not behind wall)
 };
 
-// Cached local player info (updated once per frame, shared by aimbot/triggerbot/RCS)
+// Cached local player info (updated once per frame, shared by aimbot/triggerbot)
 struct LocalPlayerCache
 {
     uintptr_t pawn = 0;           // Local player pawn address
     vec3 position{};              // Local player position
     vec3 eyePosition{};           // Local player eye position
     vec2 viewAngle{};             // Current view angles (pitch, yaw)
-    int shotsFired = 0;           // Shots fired count (for RCS)
-    vec3 punchAngle{};            // Recoil punch angle (for RCS)
     bool isValid = false;         // Is cache valid this frame
 };
 

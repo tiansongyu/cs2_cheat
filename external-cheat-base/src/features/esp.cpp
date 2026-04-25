@@ -40,7 +40,7 @@ void esp::updateEntities()
     // Read view matrix
     vm = memory::Read<viewMatrix>(modBase + cs2_dumper::offsets::client_dll::dwViewMatrix);
 
-    // Get local player info and cache it for aimbot/triggerbot/RCS
+    // Get local player info and cache it for aimbot/triggerbot
     vec3 localPos = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
     vec3 viewOffset = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
     vec3 localEyeAngles = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
@@ -50,8 +50,6 @@ void esp::updateEntities()
     localPlayer.position = localPos;
     localPlayer.eyePosition = { localPos.x + viewOffset.x, localPos.y + viewOffset.y, localPos.z + viewOffset.z };
     localPlayer.viewAngle = { localEyeAngles.x, localEyeAngles.y };
-    localPlayer.shotsFired = memory::Read<int>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_iShotsFired);
-    localPlayer.punchAngle = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_aimPunchAngle);
     localPlayer.isValid = true;
 
     // Update legacy variables for compatibility
@@ -376,7 +374,7 @@ void esp::render()
             // Draw angle text (still shows angle degree)
             if (menu::espViewAngleText) {
                 char angleText[16];
-                snprintf(angleText, sizeof(angleText), "%.0f°", enemy.angleToPlayer);
+                snprintf(angleText, sizeof(angleText), "%.0f deg", enemy.angleToPlayer);
                 ImVec2 angleTextSize = ImGui::CalcTextSize(angleText);
                 drawList->AddText(
                     ImVec2(centerX - angleTextSize.x / 2, topY + arrowSize + 2),
@@ -552,24 +550,24 @@ void esp::render()
                 // So we need to subtract player_yaw from enemy.viewYaw to get relative angle
                 //
                 // CS2 coordinate system:
-                //   Yaw 0° = East (+X direction)
-                //   Yaw 90° = North (+Y direction)
-                //   Yaw 180° = West (-X direction)
-                //   Yaw -90° = South (-Y direction)
+                //   Yaw 0 deg = East (+X direction)
+                //   Yaw 90 deg = North (+Y direction)
+                //   Yaw 180 deg = West (-X direction)
+                //   Yaw -90 deg = South (-Y direction)
                 //
                 // Screen coordinate system (after radar rotation):
-                //   0° = Up (player's forward)
-                //   90° = Right
-                //   180° = Down
-                //   -90° = Left
+                //   0 deg = Up (player's forward)
+                //   90 deg = Right
+                //   180 deg = Down
+                //   -90 deg = Left
                 //
                 // Relative yaw = enemy.viewYaw - player_yaw
-                // Screen angle = -(relative_yaw - 90°) in radians
-                // This converts from CS2 yaw to screen angle where 0° = up
+                // Screen angle = -(relative_yaw - 90 deg) in radians
+                // This converts from CS2 yaw to screen angle where 0 deg = up
 
                 float relativeYaw = enemy.viewYaw - player_yaw;
-                // Convert to screen coordinates: screen 0° (up) = CS2 90° (north)
-                // Screen angle = 90° - relativeYaw, then convert to radians
+                // Convert to screen coordinates: screen 0 deg (up) = CS2 90 deg (north)
+                // Screen angle = 90 deg - relativeYaw, then convert to radians
                 // Negate because screen Y increases downward
                 float enemyDirRad = (90.0f - relativeYaw) * (3.14159265f / 180.0f);
 
