@@ -87,9 +87,19 @@ struct BombInfo
     int bombSite = 0; // 0=A, 1=B
 };
 
+// World entity info (grenades, dropped weapons)
+struct WorldEntityInfo
+{
+    vec3 position;
+    int type; // 0=smoke, 1=flash, 2=HE, 3=molotov, 4=decoy, 5=weapon
+    std::string name;
+    float distance;
+};
+
 namespace esp
 {
     inline std::vector<EnemyInfo> enemies;
+    inline std::vector<WorldEntityInfo> worldEntities;
     inline viewMatrix vm = {};
     inline vec3 player_position{};
     inline float player_yaw = 0.0f;  // Local player view yaw for radar rotation

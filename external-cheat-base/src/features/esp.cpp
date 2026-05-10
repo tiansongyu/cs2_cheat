@@ -194,6 +194,93 @@ void esp::updateEntities()
 
     enemies = buffer;
 
+    // Glow ESP: write glow properties to enemy pawns
+    if (menu::glowEnabled) {
+        for (uint32_t i = 1; i < 64; i++) {
+            uintptr_t listEntry = memory::Read<uintptr_t>(entity_list + 0x10 + 0x8 * (i >> 9));
+            if (!listEntry) continue;
+            uintptr_t entityController = memory::Read<uintptr_t>(listEntry + 0x70 * (i & 0x1FF));
+            if (!entityController) continue;
+            uint32_t pawnHandle = memory::Read<uint32_t>(entityController + cs2_dumper::schemas::client_dll::CBasePlayerController::m_hPawn);
+            if (!pawnHandle || pawnHandle == 0xFFFFFFFF) continue;
+            uint32_t pawnIndex = pawnHandle & 0x7FFF;
+            uintptr_t pawnListEntry = memory::Read<uintptr_t>(entity_list + 0x10 + 0x8 * (pawnIndex >> 9));
+            if (!pawnListEntry) continue;
+            uintptr_t pawn = memory::Read<uintptr_t>(pawnListEntry + 0x70 * (pawnIndex & 0x1FF));
+            if (!pawn || pawn == localPlayerPawn) continue;
+            uint8_t team = memory::Read<uint8_t>(pawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
+            if (team == myTeam) continue;
+            int32_t hp = memory::Read<int32_t>(pawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth);
+            if (hp <= 0) continue;
+
+            uintptr_t glowBase = pawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_Glow;
+            vec3 glowColor = { menu::glowColor[0], menu::glowColor[1], menu::glowColor[2] };
+            memory::Write<vec3>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_fGlowColor, glowColor);
+            memory::Write<int>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_iGlowType, 3);
+            memory::Write<int>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_nGlowRange, 99999);
+            memory::Write<bool>(glowBase + 0x51, true); // m_bGlowing
+        }
+    }
+
+    // World entity scanning (grenades, dropped weapons)
+    std::vector<WorldEntityInfo> worldBuffer;
+    if (menu::grenadeESP || menu::droppedWeaponESP) {
+        uintptr_t gameEntitySystem = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwGameEntitySystem);
+        uint32_t highestIndex = 512;
+        if (gameEntitySystem) {
+            highestIndex = memory::Read<uint32_t>(gameEntitySystem + cs2_dumper::offsets::client_dll::dwGameEntitySystem_highestEntityIndex);
+        }
+        if (highestIndex > 1024) highestIndex = 1024;
+
+        for (uint32_t i = 64; i <= highestIndex; i++) {
+            uintptr_t listEntry = memory::Read<uintptr_t>(entity_list + 0x10 + 0x8 * (i >> 9));
+            if (!listEntry) continue;
+            uintptr_t ent = memory::Read<uintptr_t>(listEntry + 0x70 * (i & 0x1FF));
+            if (!ent) continue;
+
+            uintptr_t identity = memory::Read<uintptr_t>(ent + cs2_dumper::schemas::client_dll::CEntityInstance::m_pEntity);
+            if (!identity) continue;
+
+            uintptr_t namePtr = memory::Read<uintptr_t>(identity + cs2_dumper::schemas::client_dll::CEntityIdentity::m_designerName);
+            if (!namePtr) continue;
+
+            char className[64] = {};
+            memory::ReadRaw(namePtr, className, 63);
+            className[63] = '\0';
+
+            std::string name(className);
+            int type = -1;
+            std::string displayName;
+
+            if (menu::grenadeESP) {
+                if (name == "smokegrenade_projectile") { type = 0; displayName = "Smoke"; }
+                else if (name == "flashbang_projectile") { type = 1; displayName = "Flash"; }
+                else if (name == "hegrenade_projectile") { type = 2; displayName = "HE"; }
+                else if (name == "molotov_projectile") { type = 3; displayName = "Molotov"; }
+                else if (name == "decoy_projectile") { type = 4; displayName = "Decoy"; }
+            }
+
+            if (menu::droppedWeaponESP && type == -1) {
+                if (name.find("weapon_") == 0) {
+                    uint32_t ownerHandle = memory::Read<uint32_t>(ent + cs2_dumper::schemas::client_dll::C_BaseEntity::m_hOwnerEntity);
+                    if (ownerHandle == 0xFFFFFFFF || ownerHandle == 0) {
+                        type = 5;
+                        displayName = name.substr(7);
+                    }
+                }
+            }
+
+            if (type >= 0) {
+                uintptr_t gameSceneNode = memory::Read<uintptr_t>(ent + cs2_dumper::schemas::client_dll::C_BaseEntity::m_pGameSceneNode);
+                if (!gameSceneNode) continue;
+                vec3 pos = memory::Read<vec3>(gameSceneNode + cs2_dumper::schemas::client_dll::CGameSceneNode::m_vecAbsOrigin);
+                float dist = static_cast<float>(player_distance(player_position, pos));
+                worldBuffer.push_back({ pos, type, displayName, dist });
+            }
+        }
+    }
+    worldEntities = worldBuffer;
+
     // Update bomb info
     bombInfo.isPlanted = false;
     if (menu::bombTimer) {
@@ -728,6 +815,38 @@ void esp::render()
                     ImVec2(baseX2, baseY2),
                     IM_COL32(ar, ag, ab, aa)
                 );
+            }
+        }
+    }
+
+    // World entity ESP (grenades, dropped weapons)
+    if (menu::grenadeESP || menu::droppedWeaponESP) {
+        ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+        for (const auto& we : worldEntities) {
+            if (we.type <= 4 && !menu::grenadeESP) continue;
+            if (we.type == 5 && !menu::droppedWeaponESP) continue;
+            if (we.distance > 2000.0f) continue;
+
+            vec2 screenPos;
+            if (!w2s(we.position, screenPos, vm.m)) continue;
+
+            ImU32 color;
+            switch (we.type) {
+                case 0: color = IM_COL32(200, 200, 200, 255); break; // Smoke - gray
+                case 1: color = IM_COL32(255, 255, 100, 255); break; // Flash - yellow
+                case 2: color = IM_COL32(255, 80, 80, 255); break;   // HE - red
+                case 3: color = IM_COL32(255, 140, 0, 255); break;   // Molotov - orange
+                case 4: color = IM_COL32(100, 200, 100, 255); break; // Decoy - green
+                case 5: color = IM_COL32(150, 200, 255, 255); break; // Weapon - light blue
+                default: color = IM_COL32(255, 255, 255, 255); break;
+            }
+
+            char label[64];
+            snprintf(label, sizeof(label), "%s [%.0fm]", we.name.c_str(), we.distance / 100.0f);
+            drawList->AddText(ImVec2(screenPos.x - 20.0f, screenPos.y), color, label);
+
+            if (we.type <= 4) {
+                drawList->AddCircle(ImVec2(screenPos.x, screenPos.y + 12.0f), 5.0f, color, 8, 1.5f);
             }
         }
     }

@@ -24,6 +24,11 @@ namespace memory
 		return WriteProcessMemory(gHandle, (LPVOID)address, &value, sizeof(T), nullptr);
 	}
 
+	inline bool ReadRaw(uintptr_t address, void* buffer, size_t size)
+	{
+		return ReadProcessMemory(gHandle, (LPCVOID)address, buffer, size, nullptr);
+	}
+
 
 }
 

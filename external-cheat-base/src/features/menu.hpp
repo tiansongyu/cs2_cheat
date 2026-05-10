@@ -77,6 +77,10 @@ namespace menu
     // Misc Settings
     inline bool antiFlash = false;           // Anti-flash (remove flashbang effect)
     inline bool bombTimer = true;            // Show bomb timer on screen
+    inline bool glowEnabled = false;         // Glow ESP (write glow to enemies)
+    inline float glowColor[3] = { 1.0f, 0.0f, 0.0f }; // Glow color (red)
+    inline bool grenadeESP = false;          // Show grenade positions
+    inline bool droppedWeaponESP = false;    // Show dropped weapon positions
     inline float radarCenterX = 0.227f;      // Radar center X - right side of game radar
     inline float radarCenterY = 0.142f;      // Radar center Y as percentage of screen height (top area)
     inline float radarRadius = 0.117f;       // Radar radius as percentage of screen height
@@ -567,6 +571,22 @@ namespace menu
 
         ImGui::Checkbox("Anti-Flash", &antiFlash);
         ImGui::Checkbox("Bomb Timer", &bombTimer);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Glow ESP");
+        ImGui::Spacing();
+        ImGui::Checkbox("Enemy Glow", &glowEnabled);
+        if (glowEnabled) {
+            ImGui::ColorEdit3("Glow Color", glowColor);
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "World ESP");
+        ImGui::Spacing();
+        ImGui::Checkbox("Grenade ESP", &grenadeESP);
+        ImGui::Checkbox("Dropped Weapon ESP", &droppedWeaponESP);
     }
 
     inline void RenderSettingsTab()
