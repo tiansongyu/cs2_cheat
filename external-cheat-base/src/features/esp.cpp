@@ -168,7 +168,7 @@ void esp::updateEntities()
         if (menu::espSkeleton) {
             uintptr_t gameSceneNode = memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_pGameSceneNode);
             if (gameSceneNode) {
-                uintptr_t boneArray = memory::Read<uintptr_t>(gameSceneNode + 0x150 + 0x80);
+                uintptr_t boneArray = memory::Read<uintptr_t>(gameSceneNode + 0x1E0);
                 if (boneArray) {
                     enemy.hasBones = true;
                     for (int b = 0; b < BoneIndex::BONE_COUNT; b++) {
@@ -456,9 +456,14 @@ void esp::render()
             };
 
             for (const auto& conn : connections) {
+                vec3 from = enemy.bonePositions[conn.from];
+                vec3 to = enemy.bonePositions[conn.to];
+                if (from.x == 0 && from.y == 0 && from.z == 0) continue;
+                if (to.x == 0 && to.y == 0 && to.z == 0) continue;
+
                 vec2 screenFrom, screenTo;
-                if (w2s(enemy.bonePositions[conn.from], screenFrom, vm.m) &&
-                    w2s(enemy.bonePositions[conn.to], screenTo, vm.m)) {
+                if (w2s(from, screenFrom, vm.m) &&
+                    w2s(to, screenTo, vm.m)) {
                     drawList->AddLine(
                         ImVec2(screenFrom.x, screenFrom.y),
                         ImVec2(screenTo.x, screenTo.y),
