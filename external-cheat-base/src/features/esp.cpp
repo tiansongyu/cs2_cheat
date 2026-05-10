@@ -433,24 +433,19 @@ void esp::render()
             ImU32 boneColor = IM_COL32(skR, skG, skB, skA);
 
             static const BoneConnection connections[] = {
-                // Trunk: head -> neck -> spine -> pelvis
+                // Spine: head -> neck -> spine
                 { BoneIndex::HEAD, BoneIndex::NECK },
                 { BoneIndex::NECK, BoneIndex::SPINE_2 },
-                { BoneIndex::SPINE_2, BoneIndex::PELVIS },
-                // Left arm: neck -> shoulder -> elbow -> hand
-                { BoneIndex::NECK, BoneIndex::LEFT_SHOULDER },
+                // Left arm: shoulder -> elbow -> hand
                 { BoneIndex::LEFT_SHOULDER, BoneIndex::LEFT_ELBOW },
                 { BoneIndex::LEFT_ELBOW, BoneIndex::LEFT_HAND },
-                // Right arm: neck -> shoulder -> elbow -> hand
-                { BoneIndex::NECK, BoneIndex::RIGHT_SHOULDER },
+                // Right arm: shoulder -> elbow -> hand
                 { BoneIndex::RIGHT_SHOULDER, BoneIndex::RIGHT_ELBOW },
                 { BoneIndex::RIGHT_ELBOW, BoneIndex::RIGHT_HAND },
-                // Left leg: pelvis -> hip -> knee -> foot
-                { BoneIndex::PELVIS, BoneIndex::LEFT_HIP },
+                // Left leg: hip -> knee -> foot
                 { BoneIndex::LEFT_HIP, BoneIndex::LEFT_KNEE },
                 { BoneIndex::LEFT_KNEE, BoneIndex::LEFT_FOOT },
-                // Right leg: pelvis -> hip -> knee -> foot
-                { BoneIndex::PELVIS, BoneIndex::RIGHT_HIP },
+                // Right leg: hip -> knee -> foot
                 { BoneIndex::RIGHT_HIP, BoneIndex::RIGHT_KNEE },
                 { BoneIndex::RIGHT_KNEE, BoneIndex::RIGHT_FOOT },
             };
@@ -462,9 +457,6 @@ void esp::render()
                 vec2 screenFrom, screenTo;
                 if (w2s(from, screenFrom, vm.m) &&
                     w2s(to, screenTo, vm.m)) {
-                    float dist = std::sqrt((screenFrom.x - screenTo.x) * (screenFrom.x - screenTo.x) +
-                                           (screenFrom.y - screenTo.y) * (screenFrom.y - screenTo.y));
-                    if (dist > 300.0f) continue;
                     drawList->AddLine(
                         ImVec2(screenFrom.x, screenFrom.y),
                         ImVec2(screenTo.x, screenTo.y),
