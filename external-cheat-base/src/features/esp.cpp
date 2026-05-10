@@ -168,7 +168,7 @@ void esp::updateEntities()
         if (menu::espSkeleton) {
             uintptr_t gameSceneNode = memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_pGameSceneNode);
             if (gameSceneNode) {
-                uintptr_t boneArray = memory::Read<uintptr_t>(gameSceneNode + 0x1E0);
+                uintptr_t boneArray = memory::Read<uintptr_t>(gameSceneNode + 0x150 + 0x80);
                 if (boneArray) {
                     enemy.hasBones = true;
                     for (int b = 0; b < BoneIndex::BONE_COUNT; b++) {
