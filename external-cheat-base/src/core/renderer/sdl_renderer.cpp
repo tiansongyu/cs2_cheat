@@ -253,11 +253,22 @@ void sdl_renderer::initImGui()
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
+    io.FontGlobalScale = 1.0f;
+    ImFontConfig fontConfig;
+    fontConfig.SizePixels = 18.0f;
+    fontConfig.OversampleH = 2;
+    fontConfig.OversampleV = 2;
+    io.Fonts->AddFontDefault(&fontConfig);
+
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 5.0f;
-    style.FrameRounding = 3.0f;
+    style.WindowRounding = 8.0f;
+    style.FrameRounding = 4.0f;
+    style.TabRounding = 4.0f;
     style.Alpha = 0.95f;
+    style.FramePadding = ImVec2(6.0f, 4.0f);
+    style.ItemSpacing = ImVec2(8.0f, 6.0f);
+    style.TabBarBorderSize = 1.0f;
 
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);

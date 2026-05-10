@@ -290,10 +290,10 @@ namespace menu
 
         if (aimbotEnabled)
         {
+            ImGui::Spacing();
             ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Aimbot Settings:");
+            ImGui::Spacing();
 
-            // Smart Aim - auto-lock visible enemies
             ImGui::Checkbox("Smart Aim (Auto-Lock)", &smartAimEnabled);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Ignore FOV, auto-aim at best visible target\nPriority: Visible > Distance/Health");
@@ -332,9 +332,12 @@ namespace menu
                 ImGui::ColorEdit4("##FOVColor", aimbotFOVColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
             }
 
-            // Head Offset Settings
+            ImGui::Spacing();
             ImGui::Separator();
-            ImGui::Checkbox("Head Offset (Side-facing)", &headOffsetEnabled);
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Head Offset");
+
+            ImGui::Checkbox("Enable (Side-facing)", &headOffsetEnabled);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Compensate for head position when enemy is facing sideways");
 
@@ -353,28 +356,35 @@ namespace menu
                 ImGui::Unindent();
             }
 
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Input");
+            ImGui::SliderFloat("Mouse Sensitivity", &mouseSensitivity, 0.1f, 10.0f, "%.2f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Match your in-game mouse sensitivity");
+
+            ImGui::Spacing();
             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Hold %s to aim", GetKeyName(aimbotKey));
         }
+    }
 
-        ImGui::Separator();
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Input Settings:");
-        ImGui::SliderFloat("Mouse Sensitivity", &mouseSensitivity, 0.1f, 10.0f, "%.2f");
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Match your in-game mouse sensitivity");
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Used for aimbot and triggerbot mouse movement.");
-
-        ImGui::Separator();
+    // Render Triggerbot tab content
+    inline void RenderTriggerbotTab()
+    {
         ImGui::Checkbox("Enable Triggerbot", &triggerbotEnabled);
 
         if (triggerbotEnabled)
         {
+            ImGui::Spacing();
             ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Triggerbot Settings:");
+            ImGui::Spacing();
 
             ImGui::SliderInt("Delay (ms)", &triggerbotDelay, 0, 500, "%d ms");
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Delay before shooting (milliseconds)");
 
+            ImGui::Spacing();
             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Hold %s to activate", GetKeyName(triggerbotKey));
             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Auto-aims at head and fires!");
         }
@@ -387,15 +397,15 @@ namespace menu
 
         if (espEnabled)
         {
+            ImGui::Spacing();
             ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Features:");
+            ImGui::Spacing();
 
-            // Box ESP (color = angle/threat level)
+            // Box ESP
             ImGui::Checkbox("Box ESP", &espBox);
             if (espBox) {
                 ImGui::SameLine();
                 ImGui::ColorEdit4("##BoxColor", espBoxColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Default color when View Direction disabled)");
             }
 
             // Health Bar
@@ -408,7 +418,7 @@ namespace menu
                 ImGui::ColorEdit4("##WeaponColor", espWeaponColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
             }
 
-            // View Direction (controls BOX color based on angle)
+            // View Direction
             ImGui::Checkbox("View Direction (Box Color)", &espViewAngle);
             if (espViewAngle) {
                 ImGui::Indent();
@@ -420,7 +430,7 @@ namespace menu
                 ImGui::Unindent();
             }
 
-            // Wall Occlusion Check (controls TRIANGLE color)
+            // Wall Occlusion Check
             ImGui::Checkbox("Wall Check (Triangle)", &espWallCheck);
             if (espWallCheck) {
                 ImGui::Indent();
@@ -430,11 +440,8 @@ namespace menu
                 ImGui::Text("Behind Wall Color:");
                 ImGui::SameLine();
                 ImGui::ColorEdit4("##WallColor", espWallColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Triangle: RED=Visible, GREEN=Behind Wall");
 
-                // Distance threshold slider
-                ImGui::Text("Max Detection Distance:");
-                ImGui::SliderFloat("##WallCheckDistance", &espWallCheckDistance, 500.0f, 5000.0f, "%.0f units");
+                ImGui::SliderFloat("Max Distance", &espWallCheckDistance, 500.0f, 5000.0f, "%.0f units");
                 ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Beyond this: assume visible)");
                 ImGui::Unindent();
             }
@@ -446,14 +453,14 @@ namespace menu
                 ImGui::ColorEdit4("##DistanceColor", espDistanceColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
             }
 
-            // Flashbang Eye Indicator (moved below Distance)
+            // Flashbang Eye Indicator
             ImGui::Checkbox("Flashbang Eye Indicator", &espFlashIndicator);
             if (espFlashIndicator) {
                 ImGui::Indent();
-                ImGui::Text("Normal Eye Color:");
+                ImGui::Text("Normal Eye:");
                 ImGui::SameLine();
                 ImGui::ColorEdit4("##FlashNormalColor", espFlashNormalColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
-                ImGui::Text("Flashed Eye Color:");
+                ImGui::Text("Flashed Eye:");
                 ImGui::SameLine();
                 ImGui::ColorEdit4("##FlashColor", espFlashColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
                 ImGui::Unindent();
@@ -469,56 +476,60 @@ namespace menu
                 ImGui::Combo("Origin", &snaplinesOrigin, origins, IM_ARRAYSIZE(origins));
                 ImGui::Unindent();
             }
-
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Radar:");
-
-            // Radar
-            ImGui::Checkbox("Radar Overlay", &radarEnabled);
-            if (radarEnabled) {
-                ImGui::Indent();
-
-                // Debug: Show center marker
-                ImGui::Checkbox("Show Center Marker", &radarShowCenter);
-                if (radarShowCenter) {
-                    ImGui::SameLine();
-                    ImGui::ColorEdit4("##RadarCenterColor", radarCenterColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Green dot = you, arrow = your direction)");
-                }
-
-                // Colors
-                ImGui::Text("Background:");
-                ImGui::SameLine();
-                ImGui::ColorEdit4("##RadarBgColor", radarBgColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
-
-                ImGui::Text("Enemy Dot:");
-                ImGui::SameLine();
-                ImGui::ColorEdit4("##RadarEnemyColor", radarEnemyColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
-
-                ImGui::Text("Enemy Arrow:");
-                ImGui::SameLine();
-                ImGui::ColorEdit4("##RadarEnemyArrowColor", radarEnemyArrowColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
-
-                // Position adjustments
-                ImGui::Separator();
-                ImGui::Text("Position & Size:");
-                ImGui::SliderFloat("Center X", &radarCenterX, 0.1f, 0.9f, "%.3f");
-                ImGui::SliderFloat("Center Y", &radarCenterY, 0.1f, 0.9f, "%.3f");
-                ImGui::SliderFloat("Radius", &radarRadius, 0.05f, 0.25f, "%.3f");
-                ImGui::SliderFloat("Scale", &radarScale, 0.1f, 5.0f, "%.1f");
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Scale: smaller = see farther)");
-
-                ImGui::Unindent();
-            }
         }
     }
 
-    // Render Settings tab content
-    inline void RenderSettingsTab()
+    // Render Radar tab content
+    inline void RenderRadarTab()
     {
-        // Hotkeys Section
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Hotkeys:");
+        ImGui::Checkbox("Enable Radar", &radarEnabled);
+
+        if (radarEnabled)
+        {
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            ImGui::Checkbox("Show Center Marker", &radarShowCenter);
+            if (radarShowCenter) {
+                ImGui::SameLine();
+                ImGui::ColorEdit4("##RadarCenterColor", radarCenterColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Green dot = you, arrow = your direction)");
+            }
+
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Colors");
+            ImGui::Text("Background:");
+            ImGui::SameLine();
+            ImGui::ColorEdit4("##RadarBgColor", radarBgColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+
+            ImGui::Text("Enemy Dot:");
+            ImGui::SameLine();
+            ImGui::ColorEdit4("##RadarEnemyColor", radarEnemyColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+
+            ImGui::Text("Enemy Arrow:");
+            ImGui::SameLine();
+            ImGui::ColorEdit4("##RadarEnemyArrowColor", radarEnemyArrowColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Position & Size");
+            ImGui::SliderFloat("Center X", &radarCenterX, 0.1f, 0.9f, "%.3f");
+            ImGui::SliderFloat("Center Y", &radarCenterY, 0.1f, 0.9f, "%.3f");
+            ImGui::SliderFloat("Radius", &radarRadius, 0.05f, 0.25f, "%.3f");
+            ImGui::SliderFloat("Scale", &radarScale, 0.1f, 5.0f, "%.1f");
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Scale: smaller = see farther)");
+        }
+    }
+
+    // Render Hotkeys tab content
+    inline void RenderHotkeysTab()
+    {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Key Bindings");
+        ImGui::Spacing();
         ImGui::Separator();
+        ImGui::Spacing();
 
         RenderHotkeyButton("Menu Toggle", &menuToggleKey, "Key to show/hide menu");
         RenderHotkeyButton("Exit Program", &exitKey, "Key to exit the program");
@@ -526,37 +537,40 @@ namespace menu
         RenderHotkeyButton("Triggerbot Key", &triggerbotKey, "Hold to activate triggerbot");
 
         ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Click button and press any key to bind");
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Press ESC to cancel binding");
+    }
 
+    // Render Settings tab content
+    inline void RenderSettingsTab()
+    {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Performance");
         ImGui::Spacing();
         ImGui::Separator();
+        ImGui::Spacing();
 
-        // Performance Section
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Performance:");
         ImGui::SliderInt("Target FPS", &targetFPS, 30, 240);
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Lower = less CPU, Higher = smoother)");
 
         ImGui::Spacing();
         ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "System Info");
+        ImGui::Spacing();
 
-        // Info Section
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "System Info:");
         ImGui::Text("Resolution: %dx%d", WIDTH, HEIGHT);
         ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
         ImGui::Text("Frame Time: %.3f ms", 1000.0f / ImGui::GetIO().Framerate);
-        ImGui::Text("Target FPS: %d", targetFPS);
 
         ImGui::Spacing();
         ImGui::Separator();
-
-        // About Section
-        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "CS2 External ESP");
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "CS2 External ESP v2.0");
         ImGui::Text("SDL2 + ImGui Overlay");
-        ImGui::Text("Build: v2.0");
-        ImGui::Separator();
-        ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "GitHub:");
-        ImGui::TextWrapped("github.com/tiansongyu/cs2_cheat");
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "github.com/tiansongyu/cs2_cheat");
     }
 
     // Main render function
@@ -568,23 +582,21 @@ namespace menu
         UpdateKeyBinding();
 
         // Set window transparency
-        ImGui::SetNextWindowBgAlpha(0.85f);
-        ImGui::SetNextWindowSize(ImVec2(450, 500), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowBgAlpha(0.90f);
+        ImGui::SetNextWindowSize(ImVec2(600, 650), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowPos(ImVec2(100, 100), ImGuiCond_FirstUseEver);
 
         ImGui::Begin("CS2 ESP Menu", nullptr, ImGuiWindowFlags_NoCollapse);
 
         // Header with controls info
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Controls:");
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "%s - Hide menu", GetKeyName(menuToggleKey));
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "| %s - Exit", GetKeyName(exitKey));
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s - Hide menu | %s - Exit", GetKeyName(menuToggleKey), GetKeyName(exitKey));
 
+        ImGui::Spacing();
         ImGui::Separator();
+        ImGui::Spacing();
 
         // Tab Bar
-        if (ImGui::BeginTabBar("MainTabBar", ImGuiTabBarFlags_None))
+        if (ImGui::BeginTabBar("MainTabBar", ImGuiTabBarFlags_FittingPolicyResizeDown))
         {
             if (ImGui::BeginTabItem("Aimbot"))
             {
@@ -593,10 +605,31 @@ namespace menu
                 ImGui::EndTabItem();
             }
 
+            if (ImGui::BeginTabItem("Triggerbot"))
+            {
+                ImGui::Spacing();
+                RenderTriggerbotTab();
+                ImGui::EndTabItem();
+            }
+
             if (ImGui::BeginTabItem("ESP"))
             {
                 ImGui::Spacing();
                 RenderESPTab();
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Radar"))
+            {
+                ImGui::Spacing();
+                RenderRadarTab();
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Hotkeys"))
+            {
+                ImGui::Spacing();
+                RenderHotkeysTab();
                 ImGui::EndTabItem();
             }
 
