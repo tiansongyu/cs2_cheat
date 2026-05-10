@@ -162,6 +162,24 @@ void esp::updateEntities()
         enemy.flashDuration = flashDuration;
         enemy.isFlashed = isFlashed;
         enemy.isSpotted = isSpotted;
+        enemy.hasBones = false;
+
+        // Read bone positions for skeleton ESP
+        if (menu::espSkeleton) {
+            uintptr_t gameSceneNode = memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_pGameSceneNode);
+            if (gameSceneNode) {
+                uintptr_t boneArray = memory::Read<uintptr_t>(gameSceneNode + 0x150 + 0x80);
+                if (boneArray) {
+                    enemy.hasBones = true;
+                    for (int b = 0; b < BoneIndex::BONE_COUNT; b++) {
+                        uintptr_t boneAddr = boneArray + b * 32;
+                        enemy.bonePositions[b].x = memory::Read<float>(boneAddr);
+                        enemy.bonePositions[b].y = memory::Read<float>(boneAddr + 4);
+                        enemy.bonePositions[b].z = memory::Read<float>(boneAddr + 8);
+                    }
+                }
+            }
+        }
 
         buffer.push_back(enemy);
     }
@@ -402,6 +420,48 @@ void esp::render()
                 IM_COL32(dr, dg, db, da),
                 distText
             );
+        }
+
+        // Draw skeleton (bone connections)
+        if (menu::espSkeleton && enemy.hasBones) {
+            ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+
+            uint8_t skR = static_cast<uint8_t>(menu::espSkeletonColor[0] * 255);
+            uint8_t skG = static_cast<uint8_t>(menu::espSkeletonColor[1] * 255);
+            uint8_t skB = static_cast<uint8_t>(menu::espSkeletonColor[2] * 255);
+            uint8_t skA = static_cast<uint8_t>(menu::espSkeletonColor[3] * 255);
+            ImU32 boneColor = IM_COL32(skR, skG, skB, skA);
+
+            static const BoneConnection connections[] = {
+                { BoneIndex::HEAD, BoneIndex::NECK },
+                { BoneIndex::NECK, BoneIndex::SPINE_UPPER },
+                { BoneIndex::SPINE_UPPER, BoneIndex::SPINE_MID },
+                { BoneIndex::SPINE_MID, BoneIndex::PELVIS },
+                { BoneIndex::SPINE_UPPER, BoneIndex::LEFT_SHOULDER },
+                { BoneIndex::LEFT_SHOULDER, BoneIndex::LEFT_ELBOW },
+                { BoneIndex::LEFT_ELBOW, BoneIndex::LEFT_HAND },
+                { BoneIndex::SPINE_UPPER, BoneIndex::RIGHT_SHOULDER },
+                { BoneIndex::RIGHT_SHOULDER, BoneIndex::RIGHT_ELBOW },
+                { BoneIndex::RIGHT_ELBOW, BoneIndex::RIGHT_HAND },
+                { BoneIndex::PELVIS, BoneIndex::LEFT_HIP },
+                { BoneIndex::LEFT_HIP, BoneIndex::LEFT_KNEE },
+                { BoneIndex::LEFT_KNEE, BoneIndex::LEFT_FOOT },
+                { BoneIndex::PELVIS, BoneIndex::RIGHT_HIP },
+                { BoneIndex::RIGHT_HIP, BoneIndex::RIGHT_KNEE },
+                { BoneIndex::RIGHT_KNEE, BoneIndex::RIGHT_FOOT },
+            };
+
+            for (const auto& conn : connections) {
+                vec2 screenFrom, screenTo;
+                if (w2s(enemy.bonePositions[conn.from], screenFrom, vm.m) &&
+                    w2s(enemy.bonePositions[conn.to], screenTo, vm.m)) {
+                    drawList->AddLine(
+                        ImVec2(screenFrom.x, screenFrom.y),
+                        ImVec2(screenTo.x, screenTo.y),
+                        boneColor, 1.5f
+                    );
+                }
+            }
         }
 
         // Draw snaplines

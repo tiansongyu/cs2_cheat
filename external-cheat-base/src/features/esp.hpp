@@ -18,6 +18,36 @@ struct viewMatrix
     float m[16];
 };
 
+// CS2 bone indices
+namespace BoneIndex
+{
+    constexpr int HEAD = 6;
+    constexpr int NECK = 5;
+    constexpr int SPINE_UPPER = 4;
+    constexpr int SPINE_MID = 2;
+    constexpr int PELVIS = 0;
+    constexpr int LEFT_SHOULDER = 8;
+    constexpr int LEFT_ELBOW = 9;
+    constexpr int LEFT_HAND = 10;
+    constexpr int RIGHT_SHOULDER = 13;
+    constexpr int RIGHT_ELBOW = 14;
+    constexpr int RIGHT_HAND = 15;
+    constexpr int LEFT_HIP = 22;
+    constexpr int LEFT_KNEE = 23;
+    constexpr int LEFT_FOOT = 24;
+    constexpr int RIGHT_HIP = 25;
+    constexpr int RIGHT_KNEE = 26;
+    constexpr int RIGHT_FOOT = 27;
+    constexpr int BONE_COUNT = 28;
+}
+
+// Bone connection pair
+struct BoneConnection
+{
+    int from;
+    int to;
+};
+
 // Enemy info structure
 struct EnemyInfo
 {
@@ -25,12 +55,14 @@ struct EnemyInfo
     vec3 headPosition;
     int32_t health;
     float distance;
-    std::string weaponName;  // Current weapon name
-    float viewYaw;           // Enemy's view yaw angle
-    float angleToPlayer;     // Angle difference between enemy view and player direction
-    float flashDuration;     // Flashbang blind duration (> 0 means flashed)
-    bool isFlashed;          // Is enemy currently flashed
-    bool isSpotted;          // Is enemy spotted by local player (visible, not behind wall)
+    std::string weaponName;
+    float viewYaw;
+    float angleToPlayer;
+    float flashDuration;
+    bool isFlashed;
+    bool isSpotted;
+    vec3 bonePositions[BoneIndex::BONE_COUNT];
+    bool hasBones;
 };
 
 // Cached local player info (updated once per frame, shared by aimbot/triggerbot)

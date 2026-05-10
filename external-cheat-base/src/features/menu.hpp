@@ -23,6 +23,10 @@ namespace menu
     inline float espWallCheckDistance = 2000.0f; // Max distance for reliable wall check (game units)
     inline bool espSnaplines = false;
 
+    // Skeleton ESP
+    inline bool espSkeleton = true;
+    inline float espSkeletonColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };  // White
+
     // Colors
     inline float espBoxColor[4] = { 1.0f, 0.0f, 0.0f, 1.0f };          // Red - visible enemies (in direct line of sight)
     inline float espWallColor[4] = { 0.0f, 1.0f, 0.0f, 1.0f };         // Green - enemies behind wall
@@ -475,6 +479,13 @@ namespace menu
                 const char* origins[] = { "Bottom", "Center", "Top" };
                 ImGui::Combo("Origin", &snaplinesOrigin, origins, IM_ARRAYSIZE(origins));
                 ImGui::Unindent();
+            }
+
+            // Skeleton
+            ImGui::Checkbox("Skeleton", &espSkeleton);
+            if (espSkeleton) {
+                ImGui::SameLine();
+                ImGui::ColorEdit4("##SkeletonColor", espSkeletonColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
             }
         }
     }
