@@ -433,8 +433,8 @@ void esp::render()
             ImU32 boneColor = IM_COL32(skR, skG, skB, skA);
 
             static const BoneConnection connections[] = {
-                // Spine: neck -> spine
-                { BoneIndex::NECK, BoneIndex::SPINE_2 },
+                // Shoulder bar: left shoulder -> right shoulder
+                { BoneIndex::LEFT_SHOULDER, BoneIndex::RIGHT_SHOULDER },
                 // Left arm: shoulder -> elbow -> hand
                 { BoneIndex::LEFT_SHOULDER, BoneIndex::LEFT_ELBOW },
                 { BoneIndex::LEFT_ELBOW, BoneIndex::LEFT_HAND },
