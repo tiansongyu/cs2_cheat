@@ -34,15 +34,19 @@ Step-by-step tutorials on game reverse engineering:
 | Lesson 1: Memory Structure Basics | [BV14szCBYErE](https://www.bilibili.com/video/BV14szCBYErE) |
 | Lesson 2: Source Code + CE Hands-on | [BV1Jm6gBaEEd](https://www.bilibili.com/video/BV1Jm6gBaEEd) |
 | Lesson 3: Finding Offsets from Scratch | [BV1Lr6wBeEEF](https://www.bilibili.com/video/BV1Lr6wBeEEF) |
+| Lesson 4: Projection Matrix Overview | [BV1goFNzSEP3](https://www.bilibili.com/video/BV1goFNzSEP3) |
+| Lesson 5: View Matrix Deep Dive | [BV1AtF5zhE5J](https://www.bilibili.com/video/BV1AtF5zhE5J) |
+| Lesson 6: Signature Scanning & IDA Reverse Engineering | [BV1yhcszwEJQ](https://www.bilibili.com/video/BV1yhcszwEJQ) |
 
 ## ✨ Features
 
 | Category | Features |
 |----------|----------|
-| **ESP** | Box ESP, Health Bar, Weapon Display, Distance, Snaplines, Wall Check |
-| **Aimbot** | Auto Aim, FOV Adjustment, Smoothness, RCS Recoil Compensation |
+| **ESP** | Box ESP, Skeleton ESP, Health Bar, Weapon Display, Distance, Snaplines, Wall Check (dashed lines) |
+| **Aimbot** | Auto Aim, FOV Adjustment, Smoothness |
 | **Triggerbot** | Auto Fire, Delay Settings |
 | **Radar** | Standalone Radar Overlay, Enemy Position/Direction Display |
+| **Misc** | Anti-Flash, Bomb Timer, Grenade ESP, Dropped Weapon ESP |
 | **UI** | ImGui Menu, Real-time Settings Adjustment |
 
 ## 🖼️ Screenshot
