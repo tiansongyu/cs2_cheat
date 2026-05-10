@@ -21,11 +21,10 @@ struct viewMatrix
 // CS2 bone indices
 namespace BoneIndex
 {
-    constexpr int HEAD = 6;
-    constexpr int NECK = 5;
-    constexpr int SPINE_UPPER = 4;
-    constexpr int SPINE_MID = 2;
     constexpr int PELVIS = 0;
+    constexpr int SPINE_2 = 2;
+    constexpr int NECK = 5;
+    constexpr int HEAD = 6;
     constexpr int LEFT_SHOULDER = 8;
     constexpr int LEFT_ELBOW = 9;
     constexpr int LEFT_HAND = 10;
