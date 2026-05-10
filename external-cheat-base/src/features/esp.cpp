@@ -214,11 +214,19 @@ void esp::updateEntities()
             if (hp <= 0) continue;
 
             uintptr_t glowBase = pawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_Glow;
-            vec3 glowColor = { menu::glowColor[0], menu::glowColor[1], menu::glowColor[2] };
-            memory::Write<vec3>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_fGlowColor, glowColor);
+            uint8_t r = static_cast<uint8_t>(menu::glowColor[0] * 255);
+            uint8_t g = static_cast<uint8_t>(menu::glowColor[1] * 255);
+            uint8_t b = static_cast<uint8_t>(menu::glowColor[2] * 255);
+            uint32_t colorOverride = r | (g << 8) | (b << 16) | (255 << 24);
+
+            vec3 glowColorVec = { menu::glowColor[0], menu::glowColor[1], menu::glowColor[2] };
+            memory::Write<vec3>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_fGlowColor, glowColorVec);
+            memory::Write<uint32_t>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_glowColorOverride, colorOverride);
+            memory::Write<bool>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_bEligibleForScreenHighlight, true);
+            memory::Write<bool>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_bGlowing, true);
             memory::Write<int>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_iGlowType, 3);
             memory::Write<int>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_nGlowRange, 99999);
-            memory::Write<bool>(glowBase + 0x51, true); // m_bGlowing
+            memory::Write<int>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_nGlowRangeMin, 0);
         }
     }
 
@@ -831,22 +839,44 @@ void esp::render()
             if (!w2s(we.position, screenPos, vm.m)) continue;
 
             ImU32 color;
+            float radius;
             switch (we.type) {
-                case 0: color = IM_COL32(200, 200, 200, 255); break; // Smoke - gray
-                case 1: color = IM_COL32(255, 255, 100, 255); break; // Flash - yellow
-                case 2: color = IM_COL32(255, 80, 80, 255); break;   // HE - red
-                case 3: color = IM_COL32(255, 140, 0, 255); break;   // Molotov - orange
-                case 4: color = IM_COL32(100, 200, 100, 255); break; // Decoy - green
-                case 5: color = IM_COL32(150, 200, 255, 255); break; // Weapon - light blue
-                default: color = IM_COL32(255, 255, 255, 255); break;
+                case 0: color = IM_COL32(100, 100, 255, 230); radius = 10.0f; break; // Smoke - blue
+                case 1: color = IM_COL32(255, 255, 0, 255); radius = 9.0f; break;    // Flash - bright yellow
+                case 2: color = IM_COL32(255, 30, 30, 255); radius = 9.0f; break;    // HE - bright red
+                case 3: color = IM_COL32(255, 100, 0, 255); radius = 10.0f; break;   // Molotov - orange
+                case 4: color = IM_COL32(0, 255, 100, 230); radius = 7.0f; break;    // Decoy - green
+                case 5: color = IM_COL32(0, 200, 255, 255); radius = 8.0f; break;    // Weapon - cyan
+                default: color = IM_COL32(255, 255, 255, 255); radius = 6.0f; break;
             }
 
-            char label[64];
-            snprintf(label, sizeof(label), "%s [%.0fm]", we.name.c_str(), we.distance / 100.0f);
-            drawList->AddText(ImVec2(screenPos.x - 20.0f, screenPos.y), color, label);
+            float sx = screenPos.x;
+            float sy = screenPos.y;
 
             if (we.type <= 4) {
-                drawList->AddCircle(ImVec2(screenPos.x, screenPos.y + 12.0f), 5.0f, color, 8, 1.5f);
+                // Grenades: filled circle with outline
+                drawList->AddCircleFilled(ImVec2(sx, sy), radius, color, 12);
+                drawList->AddCircle(ImVec2(sx, sy), radius, IM_COL32(255, 255, 255, 200), 12, 2.0f);
+            } else {
+                // Dropped weapons: diamond shape with glow
+                drawList->AddQuadFilled(
+                    ImVec2(sx, sy - radius),
+                    ImVec2(sx + radius, sy),
+                    ImVec2(sx, sy + radius),
+                    ImVec2(sx - radius, sy),
+                    color
+                );
+                drawList->AddQuad(
+                    ImVec2(sx, sy - radius),
+                    ImVec2(sx + radius, sy),
+                    ImVec2(sx, sy + radius),
+                    ImVec2(sx - radius, sy),
+                    IM_COL32(255, 255, 255, 220), 2.0f
+                );
+                // Weapon name below
+                char label[32];
+                snprintf(label, sizeof(label), "%s", we.name.c_str());
+                drawList->AddText(ImVec2(sx - 15.0f, sy + radius + 2.0f), IM_COL32(0, 220, 255, 255), label);
             }
         }
     }
