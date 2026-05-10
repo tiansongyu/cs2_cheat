@@ -56,6 +56,11 @@ void esp::updateEntities()
     player_position = localPlayer.eyePosition;
     player_yaw = localEyeAngles.y;
 
+    // Anti-flash: zero out flash duration on local player
+    if (menu::antiFlash) {
+        memory::Write<float>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawnBase::m_flFlashDuration, 0.0f);
+    }
+
     uint8_t myTeam = memory::Read<uint8_t>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
 
     std::vector<EnemyInfo> buffer;
@@ -180,25 +185,6 @@ void esp::updateEntities()
                             enemy.bonePositions[b] = { bx, by, bz };
                         }
                     }
-                    static bool debugOnce = true;
-                    if (debugOnce) {
-                        debugOnce = false;
-                        FILE* f = nullptr;
-                        fopen_s(&f, "C:\\Users\\tsy\\workspace\\cs2_cheat\\bone_debug.txt", "w");
-                        if (f) {
-                            fprintf(f, "GameSceneNode: 0x%llX\n", gameSceneNode);
-                            fprintf(f, "BoneArray: 0x%llX\n", boneArray);
-                            fprintf(f, "Player pos: %.1f, %.1f, %.1f\n", enemy.position.x, enemy.position.y, enemy.position.z);
-                            for (int b = 0; b < 30; b++) {
-                                uintptr_t boneAddr = boneArray + b * 32;
-                                float bx = memory::Read<float>(boneAddr);
-                                float by = memory::Read<float>(boneAddr + 4);
-                                float bz = memory::Read<float>(boneAddr + 8);
-                                fprintf(f, "Bone[%2d]: %10.1f, %10.1f, %10.1f\n", b, bx, by, bz);
-                            }
-                            fclose(f);
-                        }
-                    }
                 }
             }
         }
@@ -207,6 +193,34 @@ void esp::updateEntities()
     }
 
     enemies = buffer;
+
+    // Update bomb info
+    bombInfo.isPlanted = false;
+    if (menu::bombTimer) {
+        uintptr_t globalVars = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwGlobalVars);
+        float curtime = 0.0f;
+        if (globalVars) {
+            curtime = memory::Read<float>(globalVars + 0x2C);
+        }
+
+        uintptr_t plantedC4List = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwPlantedC4);
+        if (plantedC4List) {
+            uintptr_t plantedC4 = memory::Read<uintptr_t>(plantedC4List);
+            if (plantedC4) {
+                bool ticking = memory::Read<bool>(plantedC4 + cs2_dumper::schemas::client_dll::C_PlantedC4::m_bBombTicking);
+                if (ticking) {
+                    bombInfo.isPlanted = true;
+                    bombInfo.curtime = curtime;
+                    bombInfo.blowTime = memory::Read<float>(plantedC4 + cs2_dumper::schemas::client_dll::C_PlantedC4::m_flC4Blow);
+                    bombInfo.isDefusing = memory::Read<bool>(plantedC4 + cs2_dumper::schemas::client_dll::C_PlantedC4::m_bBeingDefused);
+                    bombInfo.defuseCountDown = memory::Read<float>(plantedC4 + cs2_dumper::schemas::client_dll::C_PlantedC4::m_flDefuseCountDown);
+                    bombInfo.hasExploded = memory::Read<bool>(plantedC4 + cs2_dumper::schemas::client_dll::C_PlantedC4::m_bHasExploded);
+                    bombInfo.isDefused = memory::Read<bool>(plantedC4 + cs2_dumper::schemas::client_dll::C_PlantedC4::m_bBombDefused);
+                    bombInfo.bombSite = memory::Read<int>(plantedC4 + cs2_dumper::schemas::client_dll::C_PlantedC4::m_nBombSite);
+                }
+            }
+        }
+    }
 }
 
 void esp::render()
@@ -716,6 +730,50 @@ void esp::render()
                 );
             }
         }
+    }
+
+    // Bomb timer display (moved to renderBombTimer)
+}
+
+void esp::renderBombTimer()
+{
+    if (!menu::bombTimer || !bombInfo.isPlanted || bombInfo.hasExploded || bombInfo.isDefused)
+        return;
+
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+    float timeLeft = bombInfo.blowTime - bombInfo.curtime;
+    if (timeLeft < 0.0f) timeLeft = 0.0f;
+
+    const char* site = bombInfo.bombSite == 0 ? "A" : "B";
+    char bombText[64];
+    snprintf(bombText, sizeof(bombText), "BOMB [%s]: %.1fs", site, timeLeft);
+
+    ImU32 bombColor;
+    if (timeLeft <= 5.0f)
+        bombColor = IM_COL32(255, 0, 0, 255);
+    else if (timeLeft <= 10.0f)
+        bombColor = IM_COL32(255, 165, 0, 255);
+    else
+        bombColor = IM_COL32(255, 255, 0, 255);
+
+    float textX = WIDTH / 2.0f - 80.0f;
+    float textY = 60.0f;
+    drawList->AddText(ImVec2(textX, textY), bombColor, bombText);
+
+    if (bombInfo.isDefusing) {
+        float defuseLeft = bombInfo.defuseCountDown - bombInfo.curtime;
+        if (defuseLeft < 0.0f) defuseLeft = 0.0f;
+
+        char defuseText[64];
+        snprintf(defuseText, sizeof(defuseText), "DEFUSING: %.1fs", defuseLeft);
+
+        ImU32 defuseColor;
+        if (defuseLeft < timeLeft)
+            defuseColor = IM_COL32(0, 255, 0, 255);
+        else
+            defuseColor = IM_COL32(255, 0, 0, 255);
+
+        drawList->AddText(ImVec2(textX, textY + 20.0f), defuseColor, defuseText);
     }
 }
 

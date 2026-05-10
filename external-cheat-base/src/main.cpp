@@ -203,6 +203,7 @@ int main(int argc, char* argv[])
         if (menu::espEnabled) {
             esp::render();
         }
+        esp::renderBombTimer();
         menu::render();
 
         sdl_renderer::renderImGui();

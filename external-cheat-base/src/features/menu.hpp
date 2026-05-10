@@ -73,6 +73,10 @@ namespace menu
     // Radar Settings
     inline bool radarEnabled = true;         // Enable radar overlay
     inline bool radarShowCenter = true;      // Show radar center marker (for debugging)
+
+    // Misc Settings
+    inline bool antiFlash = false;           // Anti-flash (remove flashbang effect)
+    inline bool bombTimer = true;            // Show bomb timer on screen
     inline float radarCenterX = 0.227f;      // Radar center X - right side of game radar
     inline float radarCenterY = 0.142f;      // Radar center Y as percentage of screen height (top area)
     inline float radarRadius = 0.117f;       // Radar radius as percentage of screen height
@@ -555,6 +559,16 @@ namespace menu
     }
 
     // Render Settings tab content
+    inline void RenderMiscTab()
+    {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Misc Features");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::Checkbox("Anti-Flash", &antiFlash);
+        ImGui::Checkbox("Bomb Timer", &bombTimer);
+    }
+
     inline void RenderSettingsTab()
     {
         ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Performance");
@@ -634,6 +648,13 @@ namespace menu
             {
                 ImGui::Spacing();
                 RenderRadarTab();
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Misc"))
+            {
+                ImGui::Spacing();
+                RenderMiscTab();
                 ImGui::EndTabItem();
             }
 

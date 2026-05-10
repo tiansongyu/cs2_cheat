@@ -74,6 +74,19 @@ struct LocalPlayerCache
     bool isValid = false;         // Is cache valid this frame
 };
 
+// Bomb info structure
+struct BombInfo
+{
+    bool isPlanted = false;
+    bool isDefusing = false;
+    bool hasExploded = false;
+    bool isDefused = false;
+    float blowTime = 0.0f;
+    float defuseCountDown = 0.0f;
+    float curtime = 0.0f;
+    int bombSite = 0; // 0=A, 1=B
+};
+
 namespace esp
 {
     inline std::vector<EnemyInfo> enemies;
@@ -86,9 +99,13 @@ namespace esp
     // Cached local player data - updated once per frame
     inline LocalPlayerCache localPlayer;
 
+    // Bomb state
+    inline BombInfo bombInfo;
+
     bool init();
     void updateEntities();
     void render();
+    void renderBombTimer();
     bool w2s(const vec3& world, vec2& screen, float m[16]);
     double player_distance(const vec3& a, const vec3& b);
     float normalizeAngle(float angle);
