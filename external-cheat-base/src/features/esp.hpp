@@ -96,15 +96,34 @@ struct WorldEntityInfo
     float distance;
 };
 
+// Cached entity pawn address for fast-path updates
+struct CachedPawn
+{
+    uintptr_t pawnAddress = 0;
+    uint8_t team = 0;
+    std::string weaponName;
+    float flashDuration = 0.0f;
+    bool isFlashed = false;
+};
+
+#include <mutex>
+
 namespace esp
 {
     inline std::vector<EnemyInfo> enemies;
     inline std::vector<WorldEntityInfo> worldEntities;
     inline viewMatrix vm = {};
     inline vec3 player_position{};
-    inline float player_yaw = 0.0f;  // Local player view yaw for radar rotation
+    inline float player_yaw = 0.0f;
     inline uintptr_t pID;
     inline uintptr_t modBase;
+
+    // Mutex for thread-safe data access between data thread and render thread
+    inline std::mutex dataMutex;
+
+    // Cached pawn addresses (refreshed periodically)
+    inline std::vector<CachedPawn> cachedPawns;
+    inline int slowUpdateFrame = 0;
 
     // Cached local player data - updated once per frame
     inline LocalPlayerCache localPlayer;
@@ -114,6 +133,7 @@ namespace esp
 
     bool init();
     void updateEntities();
+    void refreshEntityCache();
     void render();
     void renderBombTimer();
     bool w2s(const vec3& world, vec2& screen, float m[16]);

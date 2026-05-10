@@ -73,6 +73,9 @@ bool sdl_renderer::init(const wchar_t* targetWindowName)
         WINDOW_H = HEIGHT;
     }
 
+    SDL_SetHint(SDL_HINT_RENDER_VSYNC, "0");
+    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d");
+
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         return false;
     }
@@ -199,10 +202,10 @@ void sdl_renderer::updateWindowPosition()
         return;
     }
 
-    // Throttle: only update every 16ms (~60Hz) to reduce Win32 API overhead
+    // Window position rarely changes, throttle to ~4Hz
     static DWORD lastUpdate = 0;
     DWORD now = GetTickCount();
-    if (now - lastUpdate < 16) return;
+    if (now - lastUpdate < 250) return;
     lastUpdate = now;
 
     RECT gameRect;
@@ -218,7 +221,6 @@ void sdl_renderer::updateWindowPosition()
         WINDOW_H = h;
 
         SetWindowPos(overlayHwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        BringWindowToTop(overlayHwnd);
     }
 }
 

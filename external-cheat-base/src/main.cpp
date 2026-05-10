@@ -3,6 +3,7 @@
 #include "core/renderer/sdl_renderer.h"
 #include "features/menu.hpp"
 #include <thread>
+#include <atomic>
 #include <iostream>
 #include <locale>
 #include <codecvt>
@@ -142,14 +143,21 @@ int main(int argc, char* argv[])
     }
     sdl_renderer::initImGui();
 
-    // Main loop
+    // Data thread: reads game memory at max speed, independent of render
+    std::atomic<bool> dataRunning{true};
+    std::thread dataThread([&dataRunning]() {
+        while (dataRunning.load(std::memory_order_relaxed)) {
+            esp::updateEntities();
+            aimbot::update();
+            aimbot::updateTriggerbot();
+        }
+    });
+
+    // Render loop: draws as fast as possible without waiting for data
     while (sdl_renderer::running)
     {
         sdl_renderer::pollEvents();
         sdl_renderer::updateWindowPosition();
-        esp::updateEntities();
-        aimbot::update();
-        aimbot::updateTriggerbot();
 
         sdl_renderer::beginFrame();
         sdl_renderer::newFrameImGui();
@@ -163,6 +171,9 @@ int main(int argc, char* argv[])
         sdl_renderer::renderImGui();
         sdl_renderer::endFrame();
     }
+
+    dataRunning.store(false, std::memory_order_relaxed);
+    dataThread.join();
 
     sdl_renderer::shutdownImGui();
     sdl_renderer::destroy();
