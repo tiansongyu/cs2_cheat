@@ -27,16 +27,16 @@ namespace BoneIndex
     constexpr int HEAD = 6;
     constexpr int LEFT_SHOULDER = 8;
     constexpr int LEFT_ELBOW = 9;
-    constexpr int LEFT_HAND = 10;
+    constexpr int LEFT_HAND = 11;
     constexpr int RIGHT_SHOULDER = 13;
     constexpr int RIGHT_ELBOW = 14;
     constexpr int RIGHT_HAND = 15;
-    constexpr int LEFT_HIP = 22;
-    constexpr int LEFT_KNEE = 23;
-    constexpr int LEFT_FOOT = 24;
-    constexpr int RIGHT_HIP = 25;
-    constexpr int RIGHT_KNEE = 26;
-    constexpr int RIGHT_FOOT = 27;
+    constexpr int LEFT_HIP = 17;
+    constexpr int LEFT_KNEE = 18;
+    constexpr int LEFT_FOOT = 19;
+    constexpr int RIGHT_HIP = 20;
+    constexpr int RIGHT_KNEE = 21;
+    constexpr int RIGHT_FOOT = 22;
     constexpr int BONE_COUNT = 28;
 }
 

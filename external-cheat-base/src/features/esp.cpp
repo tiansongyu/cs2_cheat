@@ -171,11 +171,33 @@ void esp::updateEntities()
                 uintptr_t boneArray = memory::Read<uintptr_t>(gameSceneNode + 0x150 + 0x80);
                 if (boneArray) {
                     enemy.hasBones = true;
-                    for (int b = 0; b < BoneIndex::BONE_COUNT; b++) {
+                    for (int b = 0; b < 30; b++) {
                         uintptr_t boneAddr = boneArray + b * 32;
-                        enemy.bonePositions[b].x = memory::Read<float>(boneAddr);
-                        enemy.bonePositions[b].y = memory::Read<float>(boneAddr + 4);
-                        enemy.bonePositions[b].z = memory::Read<float>(boneAddr + 8);
+                        float bx = memory::Read<float>(boneAddr);
+                        float by = memory::Read<float>(boneAddr + 4);
+                        float bz = memory::Read<float>(boneAddr + 8);
+                        if (b < BoneIndex::BONE_COUNT) {
+                            enemy.bonePositions[b] = { bx, by, bz };
+                        }
+                    }
+                    static bool debugOnce = true;
+                    if (debugOnce) {
+                        debugOnce = false;
+                        FILE* f = nullptr;
+                        fopen_s(&f, "C:\\Users\\tsy\\workspace\\cs2_cheat\\bone_debug.txt", "w");
+                        if (f) {
+                            fprintf(f, "GameSceneNode: 0x%llX\n", gameSceneNode);
+                            fprintf(f, "BoneArray: 0x%llX\n", boneArray);
+                            fprintf(f, "Player pos: %.1f, %.1f, %.1f\n", enemy.position.x, enemy.position.y, enemy.position.z);
+                            for (int b = 0; b < 30; b++) {
+                                uintptr_t boneAddr = boneArray + b * 32;
+                                float bx = memory::Read<float>(boneAddr);
+                                float by = memory::Read<float>(boneAddr + 4);
+                                float bz = memory::Read<float>(boneAddr + 8);
+                                fprintf(f, "Bone[%2d]: %10.1f, %10.1f, %10.1f\n", b, bx, by, bz);
+                            }
+                            fclose(f);
+                        }
                     }
                 }
             }
@@ -433,8 +455,13 @@ void esp::render()
             ImU32 boneColor = IM_COL32(skR, skG, skB, skA);
 
             static const BoneConnection connections[] = {
-                // Shoulder bar: left shoulder -> right shoulder
-                { BoneIndex::LEFT_SHOULDER, BoneIndex::RIGHT_SHOULDER },
+                // Body: neck -> shoulder connections
+                { BoneIndex::NECK, BoneIndex::LEFT_SHOULDER },
+                { BoneIndex::NECK, BoneIndex::RIGHT_SHOULDER },
+                // Body: neck -> spine -> hips
+                { BoneIndex::NECK, BoneIndex::SPINE_2 },
+                { BoneIndex::SPINE_2, BoneIndex::LEFT_HIP },
+                { BoneIndex::SPINE_2, BoneIndex::RIGHT_HIP },
                 // Left arm: shoulder -> elbow -> hand
                 { BoneIndex::LEFT_SHOULDER, BoneIndex::LEFT_ELBOW },
                 { BoneIndex::LEFT_ELBOW, BoneIndex::LEFT_HAND },
@@ -462,6 +489,29 @@ void esp::render()
                         boneColor, 1.5f
                     );
                 }
+            }
+
+            // Draw head: line from neck to head, circle above head
+            vec2 screenHead, screenNeck;
+            if (w2s(enemy.bonePositions[BoneIndex::HEAD], screenHead, vm.m) &&
+                w2s(enemy.bonePositions[BoneIndex::NECK], screenNeck, vm.m)) {
+                float dx = screenHead.x - screenNeck.x;
+                float dy = screenHead.y - screenNeck.y;
+                float dist = std::sqrt(dx * dx + dy * dy);
+                float radius = dist * 0.7f;
+                if (radius < 3.0f) radius = 3.0f;
+                // Circle center above head position
+                float cx = screenHead.x + dx * 0.7f;
+                float cy = screenHead.y + dy * 0.7f;
+                drawList->AddLine(
+                    ImVec2(screenNeck.x, screenNeck.y),
+                    ImVec2(cx, cy - radius),
+                    boneColor, 1.5f
+                );
+                drawList->AddCircle(
+                    ImVec2(cx, cy),
+                    radius, boneColor, 16, 1.5f
+                );
             }
         }
 
