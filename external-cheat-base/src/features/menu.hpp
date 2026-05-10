@@ -39,9 +39,6 @@ namespace menu
     // Visual Settings
     inline int snaplinesOrigin = 0; // 0=Bottom, 1=Center, 2=Top
 
-    // System Settings
-    inline int targetFPS = 60;           // Target render FPS (30-240)
-
     // Aimbot Settings
     inline bool aimbotEnabled = false;     // Aimbot enabled
     inline float aimbotFOV = 10.0f;        // Field of view for aimbot (degrees)
@@ -75,10 +72,8 @@ namespace menu
     inline bool radarShowCenter = true;      // Show radar center marker (for debugging)
 
     // Misc Settings
-    inline bool antiFlash = false;           // Anti-flash (remove flashbang effect)
+    inline bool antiFlash = true;           // Anti-flash (remove flashbang effect)
     inline bool bombTimer = true;            // Show bomb timer on screen
-    inline bool glowEnabled = false;         // Glow ESP (write glow to enemies)
-    inline float glowColor[3] = { 1.0f, 0.0f, 0.0f }; // Glow color (red)
     inline bool grenadeESP = false;          // Show grenade positions
     inline bool droppedWeaponESP = false;    // Show dropped weapon positions
     inline float radarCenterX = 0.227f;      // Radar center X - right side of game radar
@@ -574,15 +569,6 @@ namespace menu
 
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Glow ESP");
-        ImGui::Spacing();
-        ImGui::Checkbox("Enemy Glow", &glowEnabled);
-        if (glowEnabled) {
-            ImGui::ColorEdit3("Glow Color", glowColor);
-        }
-
-        ImGui::Spacing();
-        ImGui::Separator();
         ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "World ESP");
         ImGui::Spacing();
         ImGui::Checkbox("Grenade ESP", &grenadeESP);
@@ -596,8 +582,7 @@ namespace menu
         ImGui::Separator();
         ImGui::Spacing();
 
-        ImGui::SliderInt("Target FPS", &targetFPS, 30, 240);
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Lower = less CPU, Higher = smoother)");
+        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Unlocked FPS (VSync OFF)");
 
         ImGui::Spacing();
         ImGui::Separator();

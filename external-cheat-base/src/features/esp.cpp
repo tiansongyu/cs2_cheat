@@ -1,5 +1,4 @@
 #include "esp.hpp"
-#include "core/renderer/sdl_renderer.h"
 #include "menu.hpp"
 #include "utils/weapon_names.hpp"
 #include "imgui.h"
@@ -99,61 +98,64 @@ void esp::updateEntities()
         vec3 viewOffset = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
         vec3 headPos = feetPos + viewOffset;
 
-        // Read weapon information
-        std::string weaponName = "Unknown";
-        uintptr_t weaponServices = memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_pWeaponServices);
-        if (weaponServices) {
-            uint32_t activeWeaponHandle = memory::Read<uint32_t>(weaponServices + cs2_dumper::schemas::client_dll::CPlayer_WeaponServices::m_hActiveWeapon);
-            if (activeWeaponHandle && activeWeaponHandle != 0xFFFFFFFF) {
-                uint32_t weaponIndex = activeWeaponHandle & 0x7FFF;
-                uint32_t weaponChunk = weaponIndex >> 9;
-                uint32_t weaponInChunk = weaponIndex & 0x1FF;
+        // Read weapon information (only if ESP weapon display is enabled)
+        std::string weaponName;
+        if (menu::espWeapon) {
+            weaponName = "Unknown";
+            uintptr_t weaponServices = memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_pWeaponServices);
+            if (weaponServices) {
+                uint32_t activeWeaponHandle = memory::Read<uint32_t>(weaponServices + cs2_dumper::schemas::client_dll::CPlayer_WeaponServices::m_hActiveWeapon);
+                if (activeWeaponHandle && activeWeaponHandle != 0xFFFFFFFF) {
+                    uint32_t weaponIndex = activeWeaponHandle & 0x7FFF;
+                    uint32_t weaponChunk = weaponIndex >> 9;
+                    uint32_t weaponInChunk = weaponIndex & 0x1FF;
 
-                uintptr_t weaponListEntry = memory::Read<uintptr_t>(entity_list + 0x10 + 0x8 * weaponChunk);
-                if (weaponListEntry) {
-                    uintptr_t weaponEntity = memory::Read<uintptr_t>(weaponListEntry + 0x70 * weaponInChunk);
-                    if (weaponEntity) {
-                        // Read AttributeManager -> Item -> ItemDefinitionIndex
-                        uintptr_t attributeManager = weaponEntity + cs2_dumper::schemas::client_dll::C_EconEntity::m_AttributeManager;
-                        uint16_t itemDefIndex = memory::Read<uint16_t>(attributeManager + cs2_dumper::schemas::client_dll::C_AttributeContainer::m_Item + cs2_dumper::schemas::client_dll::C_EconItemView::m_iItemDefinitionIndex);
-                        weaponName = weapon_names::getWeaponName(itemDefIndex);
+                    uintptr_t weaponListEntry = memory::Read<uintptr_t>(entity_list + 0x10 + 0x8 * weaponChunk);
+                    if (weaponListEntry) {
+                        uintptr_t weaponEntity = memory::Read<uintptr_t>(weaponListEntry + 0x70 * weaponInChunk);
+                        if (weaponEntity) {
+                            uintptr_t attributeManager = weaponEntity + cs2_dumper::schemas::client_dll::C_EconEntity::m_AttributeManager;
+                            uint16_t itemDefIndex = memory::Read<uint16_t>(attributeManager + cs2_dumper::schemas::client_dll::C_AttributeContainer::m_Item + cs2_dumper::schemas::client_dll::C_EconItemView::m_iItemDefinitionIndex);
+                            weaponName = weapon_names::getWeaponName(itemDefIndex);
+                        }
                     }
                 }
             }
         }
 
-        // Read enemy view angles
-        vec3 eyeAngles = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
-        float enemyYaw = eyeAngles.y;  // Yaw is the Y component of QAngle
+        // Read enemy view angles (needed for angle-based coloring and radar)
+        float enemyYaw = 0.0f;
+        float angleToPlayer = 180.0f;
+        if (menu::espViewAngle || menu::radarEnabled) {
+            vec3 eyeAngles = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
+            enemyYaw = eyeAngles.y;
+            angleToPlayer = calculateAngleToPlayer(enemyYaw, feetPos, player_position);
+        }
 
-        // Calculate angle to player
-        float angleToPlayer = calculateAngleToPlayer(enemyYaw, feetPos, player_position);
-
-        // Read flashbang status with alpha threshold
-        float flashDuration = memory::Read<float>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawnBase::m_flFlashDuration);
-        float flashMaxAlpha = memory::Read<float>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawnBase::m_flFlashMaxAlpha);
-
-        // Only consider flashed if alpha is above threshold (e.g., 0.5 = 50% flash intensity)
-        const float FLASH_ALPHA_THRESHOLD = 0.5f;
-        bool isFlashed = (flashDuration > 0.0f) && (flashMaxAlpha >= FLASH_ALPHA_THRESHOLD);
+        // Read flashbang status (only if flash indicator is enabled)
+        float flashDuration = 0.0f;
+        bool isFlashed = false;
+        if (menu::espFlashIndicator) {
+            flashDuration = memory::Read<float>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawnBase::m_flFlashDuration);
+            float flashMaxAlpha = memory::Read<float>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawnBase::m_flFlashMaxAlpha);
+            const float FLASH_ALPHA_THRESHOLD = 0.5f;
+            isFlashed = (flashDuration > 0.0f) && (flashMaxAlpha >= FLASH_ALPHA_THRESHOLD);
+        }
 
         // Calculate distance first (needed for hybrid detection)
         float distance = static_cast<float>(player_distance(player_position, feetPos));
 
-        // Hybrid visibility detection system
-        // m_bSpotted is reliable only within a certain distance (default ~2000 units)
-        // Beyond that distance, we use fallback logic
-        uintptr_t entitySpottedState = entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_entitySpottedState;
-        bool rawSpotted = memory::Read<bool>(entitySpottedState + 0x8);  // m_bSpotted
+        // Visibility detection (only if wall check is enabled)
+        bool isSpotted = true;
+        if (menu::espWallCheck) {
+            uintptr_t entitySpottedState = entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_entitySpottedState;
+            bool rawSpotted = memory::Read<bool>(entitySpottedState + 0x8);
 
-        bool isSpotted;
-        if (distance < menu::espWallCheckDistance) {
-            // Close range: Use m_bSpotted (accurate)
-            isSpotted = rawSpotted;
-        } else {
-            // Long range: m_bSpotted is unreliable
-            // Fallback: Assume visible (red) since wall occlusion matters less at long range
-            isSpotted = true;  // Default to "visible" at long range
+            if (distance < menu::espWallCheckDistance) {
+                isSpotted = rawSpotted;
+            } else {
+                isSpotted = true;
+            }
         }
 
         EnemyInfo enemy;
@@ -176,14 +178,12 @@ void esp::updateEntities()
                 uintptr_t boneArray = memory::Read<uintptr_t>(gameSceneNode + 0x150 + 0x80);
                 if (boneArray) {
                     enemy.hasBones = true;
-                    for (int b = 0; b < 30; b++) {
-                        uintptr_t boneAddr = boneArray + b * 32;
-                        float bx = memory::Read<float>(boneAddr);
-                        float by = memory::Read<float>(boneAddr + 4);
-                        float bz = memory::Read<float>(boneAddr + 8);
-                        if (b < BoneIndex::BONE_COUNT) {
-                            enemy.bonePositions[b] = { bx, by, bz };
-                        }
+                    // Batch read all bones at once (32 bytes per bone × 28 bones)
+                    struct BoneData { float x, y, z; char pad[20]; };
+                    BoneData bones[BoneIndex::BONE_COUNT];
+                    memory::ReadRaw(boneArray, bones, sizeof(BoneData) * BoneIndex::BONE_COUNT);
+                    for (int b = 0; b < BoneIndex::BONE_COUNT; b++) {
+                        enemy.bonePositions[b] = { bones[b].x, bones[b].y, bones[b].z };
                     }
                 }
             }
@@ -194,41 +194,11 @@ void esp::updateEntities()
 
     enemies = buffer;
 
-    // Glow ESP: write glow properties to enemy pawns
-    if (menu::glowEnabled) {
-        for (uint32_t i = 1; i < 64; i++) {
-            uintptr_t listEntry = memory::Read<uintptr_t>(entity_list + 0x10 + 0x8 * (i >> 9));
-            if (!listEntry) continue;
-            uintptr_t entityController = memory::Read<uintptr_t>(listEntry + 0x70 * (i & 0x1FF));
-            if (!entityController) continue;
-            uint32_t pawnHandle = memory::Read<uint32_t>(entityController + cs2_dumper::schemas::client_dll::CBasePlayerController::m_hPawn);
-            if (!pawnHandle || pawnHandle == 0xFFFFFFFF) continue;
-            uint32_t pawnIndex = pawnHandle & 0x7FFF;
-            uintptr_t pawnListEntry = memory::Read<uintptr_t>(entity_list + 0x10 + 0x8 * (pawnIndex >> 9));
-            if (!pawnListEntry) continue;
-            uintptr_t pawn = memory::Read<uintptr_t>(pawnListEntry + 0x70 * (pawnIndex & 0x1FF));
-            if (!pawn || pawn == localPlayerPawn) continue;
-            uint8_t team = memory::Read<uint8_t>(pawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
-            if (team == myTeam) continue;
-            int32_t hp = memory::Read<int32_t>(pawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth);
-            if (hp <= 0) continue;
-
-            uintptr_t glowBase = pawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_Glow;
-            uint8_t r = static_cast<uint8_t>(menu::glowColor[0] * 255);
-            uint8_t g = static_cast<uint8_t>(menu::glowColor[1] * 255);
-            uint8_t b = static_cast<uint8_t>(menu::glowColor[2] * 255);
-            uint32_t colorOverride = r | (g << 8) | (b << 16) | (255 << 24);
-
-            vec3 glowColorVec = { menu::glowColor[0], menu::glowColor[1], menu::glowColor[2] };
-            memory::Write<vec3>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_fGlowColor, glowColorVec);
-            memory::Write<uint32_t>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_glowColorOverride, colorOverride);
-            memory::Write<bool>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_bEligibleForScreenHighlight, true);
-            memory::Write<bool>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_bGlowing, true);
-            memory::Write<int>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_iGlowType, 3);
-            memory::Write<int>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_nGlowRange, 99999);
-            memory::Write<int>(glowBase + cs2_dumper::schemas::client_dll::CGlowProperty::m_nGlowRangeMin, 0);
-        }
-    }
+    // World entity scanning and bomb info - update every 4 frames to reduce RPM overhead
+    static int slowUpdateCounter = 0;
+    slowUpdateCounter++;
+    if (slowUpdateCounter < 4) return;
+    slowUpdateCounter = 0;
 
     // World entity scanning (grenades, dropped weapons)
     std::vector<WorldEntityInfo> worldBuffer;
@@ -320,18 +290,16 @@ void esp::updateEntities()
 
 void esp::render()
 {
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+
     // Draw FOV circle in the center of the screen
     if (menu::aimbotEnabled && menu::aimbotShowFOV)
     {
-        ImDrawList* drawList = ImGui::GetBackgroundDrawList();
-
         // Screen center
         float centerX = static_cast<float>(WIDTH) / 2.0f;
         float centerY = static_cast<float>(HEIGHT) / 2.0f;
 
         // Convert FOV degrees to screen pixels
-        // Using approximate conversion: radius = tan(fov_degrees * pi/180) * screen_height / 2
-        // This is a simplified approximation that works reasonably well
         float fovRadians = menu::aimbotFOV * (3.14159265f / 180.0f);
         float radius = std::tan(fovRadians) * static_cast<float>(HEIGHT) / 2.0f;
 
@@ -343,8 +311,8 @@ void esp::render()
             static_cast<int>(menu::aimbotFOVColor[3] * 255)
         );
 
-        // Draw circle outline
-        drawList->AddCircle(ImVec2(centerX, centerY), radius, fovColor, 64, 1.5f);
+        // Draw circle outline (reduce segments from 64 to 32)
+        drawList->AddCircle(ImVec2(centerX, centerY), radius, fovColor, 32, 1.5f);
     }
 
     for (const auto& enemy : enemies)
@@ -391,12 +359,14 @@ void esp::render()
 
         // Draw box (color indicates threat level based on angle)
         if (menu::espBox) {
-            sdl_renderer::draw::box(x, y, w, h, r, g, b, a);
+
+            ImU32 boxColor = IM_COL32(r, g, b, a);
+            drawList->AddRect(ImVec2((float)x, (float)y), ImVec2((float)(x + w), (float)(y + h)), boxColor, 0.0f, 0, 2.0f);
         }
 
         // Draw ellipse "eye" indicator below weapon name
         if (menu::espFlashIndicator) {
-            ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+
 
             // Calculate ellipse position (below weapon name, above the box)
             float ellipseCenterX = static_cast<float>(x + w / 2);
@@ -445,20 +415,27 @@ void esp::render()
 
         // Draw health bar (vertical bar on left side)
         if (menu::espHealth) {
+
             int healthBarWidth = 4;
             int healthBarHeight = h;
             int healthBarX = x - 8;
             int healthBarY = y;
 
             // Background bar
-            sdl_renderer::draw::filledBox(healthBarX, healthBarY, healthBarWidth, healthBarHeight, 50, 50, 50, 200);
+            drawList->AddRectFilled(
+                ImVec2((float)healthBarX, (float)healthBarY),
+                ImVec2((float)(healthBarX + healthBarWidth), (float)(healthBarY + healthBarHeight)),
+                IM_COL32(50, 50, 50, 200));
 
             // Health bar (fills from bottom to top)
             int healthHeight = static_cast<int>((enemy.health / 100.0f) * healthBarHeight);
             int healthY = healthBarY + (healthBarHeight - healthHeight);
             uint8_t healthR = static_cast<uint8_t>(255 * (1.0f - enemy.health / 100.0f));
             uint8_t healthG = static_cast<uint8_t>(255 * (enemy.health / 100.0f));
-            sdl_renderer::draw::filledBox(healthBarX, healthY, healthBarWidth, healthHeight, healthR, healthG, 0, 255);
+            drawList->AddRectFilled(
+                ImVec2((float)healthBarX, (float)healthY),
+                ImVec2((float)(healthBarX + healthBarWidth), (float)(healthY + healthHeight)),
+                IM_COL32(healthR, healthG, 0, 255));
         }
 
         // Draw weapon name above the box
@@ -468,7 +445,7 @@ void esp::render()
             uint8_t wb = static_cast<uint8_t>(menu::espWeaponColor[2] * 255);
             uint8_t wa = static_cast<uint8_t>(menu::espWeaponColor[3] * 255);
 
-            ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+
             ImVec2 textSize = ImGui::CalcTextSize(enemy.weaponName.c_str());
             drawList->AddText(
                 ImVec2(static_cast<float>(x + w / 2 - textSize.x / 2), static_cast<float>(y - 18)),
@@ -480,7 +457,7 @@ void esp::render()
         // Draw wall occlusion indicator (triangle arrow)
         // Triangle color indicates visibility: RED = visible, GREEN = behind wall
         if (menu::espWallCheck) {
-            ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+
 
             // Determine triangle color based on WALL OCCLUSION
             uint8_t vr, vg, vb, va;
@@ -545,7 +522,7 @@ void esp::render()
             uint8_t db = static_cast<uint8_t>(menu::espDistanceColor[2] * 255);
             uint8_t da = static_cast<uint8_t>(menu::espDistanceColor[3] * 255);
 
-            ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+
             drawList->AddText(
                 ImVec2(static_cast<float>(x + w / 2 - 10), static_cast<float>(y + h + 2)),
                 IM_COL32(dr, dg, db, da),
@@ -555,7 +532,7 @@ void esp::render()
 
         // Draw skeleton (bone connections)
         if (menu::espSkeleton && enemy.hasBones) {
-            ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+
 
             uint8_t skR = static_cast<uint8_t>(menu::espSkeletonColor[0] * 255);
             uint8_t skG = static_cast<uint8_t>(menu::espSkeletonColor[1] * 255);
@@ -650,17 +627,18 @@ void esp::render()
             uint8_t sb = static_cast<uint8_t>(menu::espSnaplinesColor[2] * 255);
             uint8_t sa = static_cast<uint8_t>(menu::espSnaplinesColor[3] * 255);
 
-            sdl_renderer::draw::line(
-                startX, startY,
-                static_cast<int>(screenFeet.x), static_cast<int>(screenFeet.y),
-                sr, sg, sb, sa
+
+            drawList->AddLine(
+                ImVec2((float)startX, (float)startY),
+                ImVec2(screenFeet.x, screenFeet.y),
+                IM_COL32(sr, sg, sb, sa), 1.5f
             );
         }
     }
 
     // ==================== RADAR OVERLAY ====================
     if (menu::radarEnabled) {
-        ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+
 
         // Calculate radar center position based on screen size
         float radarCenterXPx = WINDOW_W * menu::radarCenterX;
@@ -675,13 +653,13 @@ void esp::render()
         drawList->AddCircleFilled(
             ImVec2(radarCenterXPx, radarCenterYPx),
             radarRadiusPx,
-            IM_COL32(bgR, bgG, bgB, bgA), 64
+            IM_COL32(bgR, bgG, bgB, bgA), 32
         );
         // Draw radar border
         drawList->AddCircle(
             ImVec2(radarCenterXPx, radarCenterYPx),
             radarRadiusPx,
-            IM_COL32(100, 100, 100, 200), 64, 2.0f
+            IM_COL32(100, 100, 100, 200), 32, 2.0f
         );
 
         // Draw player marker at center (you)
@@ -829,7 +807,7 @@ void esp::render()
 
     // World entity ESP (grenades, dropped weapons)
     if (menu::grenadeESP || menu::droppedWeaponESP) {
-        ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+
         for (const auto& we : worldEntities) {
             if (we.type <= 4 && !menu::grenadeESP) continue;
             if (we.type == 5 && !menu::droppedWeaponESP) continue;
@@ -890,6 +868,7 @@ void esp::renderBombTimer()
         return;
 
     ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+
     float timeLeft = bombInfo.blowTime - bombInfo.curtime;
     if (timeLeft < 0.0f) timeLeft = 0.0f;
 

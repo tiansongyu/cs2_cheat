@@ -46,7 +46,7 @@ bool sdl_renderer::initWaiting()
     }
 
     renderer = SDL_CreateRenderer(window, -1,
-        SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+        SDL_RENDERER_ACCELERATED);
 
     if (!renderer) {
         SDL_DestroyWindow(window);
@@ -112,7 +112,7 @@ bool sdl_renderer::init(const wchar_t* targetWindowName)
     }
 
     renderer = SDL_CreateRenderer(window, -1,
-        SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+        SDL_RENDERER_ACCELERATED);
 
     if (!renderer) {
         SDL_DestroyWindow(window);
@@ -199,6 +199,12 @@ void sdl_renderer::updateWindowPosition()
         return;
     }
 
+    // Throttle: only update every 16ms (~60Hz) to reduce Win32 API overhead
+    static DWORD lastUpdate = 0;
+    DWORD now = GetTickCount();
+    if (now - lastUpdate < 16) return;
+    lastUpdate = now;
+
     RECT gameRect;
     if (GetWindowRect(gameHwnd, &gameRect)) {
         int x = gameRect.left;
@@ -211,10 +217,7 @@ void sdl_renderer::updateWindowPosition()
         WINDOW_W = w;
         WINDOW_H = h;
 
-        // Force overlay to stay on top, especially important for fullscreen games
         SetWindowPos(overlayHwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        
-        // Additional force for fullscreen: bring window to top of Z-order
         BringWindowToTop(overlayHwnd);
     }
 }
@@ -256,8 +259,8 @@ void sdl_renderer::initImGui()
     io.FontGlobalScale = 1.0f;
     ImFontConfig fontConfig;
     fontConfig.SizePixels = 18.0f;
-    fontConfig.OversampleH = 2;
-    fontConfig.OversampleV = 2;
+    fontConfig.OversampleH = 1;
+    fontConfig.OversampleV = 1;
     io.Fonts->AddFontDefault(&fontConfig);
 
     ImGui::StyleColorsDark();
