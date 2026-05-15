@@ -1,5 +1,6 @@
 #include "features/esp.hpp"
 #include "features/aimbot.hpp"
+#include "core/memory/memory.hpp"
 #include "core/renderer/sdl_renderer.h"
 #include "features/menu.hpp"
 #include <thread>
@@ -85,6 +86,11 @@ int main(int argc, char* argv[])
 #ifndef SHOW_CONSOLE
     FreeConsole();
 #endif
+
+    // Try kernel driver backend first; on failure fall back to RPM.
+    if (memory::InitDriverBackend()) {
+        memory::SetBackend(&memory::kDriverBackend);
+    }
 
     WIDTH = GetSystemMetrics(SM_CXSCREEN);
     HEIGHT = GetSystemMetrics(SM_CYSCREEN);
@@ -177,5 +183,6 @@ int main(int argc, char* argv[])
 
     sdl_renderer::shutdownImGui();
     sdl_renderer::destroy();
+    memory::ShutdownDriverBackend();
     return 0;
 }

@@ -1,6 +1,7 @@
 #include "esp.hpp"
 #include "menu.hpp"
 #include "utils/weapon_names.hpp"
+#include "core/memory/batch_reader.hpp"
 #include "imgui.h"
 #include <iostream>
 #include <cmath>
@@ -105,10 +106,17 @@ void esp::updateEntities()
     // Read view matrix into local
     viewMatrix localVm = memory::Read<viewMatrix>(modBase + cs2_dumper::offsets::client_dll::dwViewMatrix);
 
-    // Get local player info and cache it for aimbot/triggerbot
-    vec3 localPos = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
-    vec3 viewOffset = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
-    vec3 localEyeAngles = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
+    // Get local player info and cache it for aimbot/triggerbot.
+    // Three reads (position / view offset / eye angles) batched into one IOCTL.
+    BatchReader br;
+    auto hLocalPos    = br.queue<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
+    auto hViewOffset  = br.queue<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
+    auto hEyeAngles   = br.queue<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
+    br.flush();
+
+    vec3 localPos       = br.get<vec3>(hLocalPos);
+    vec3 viewOffset     = br.get<vec3>(hViewOffset);
+    vec3 localEyeAngles = br.get<vec3>(hEyeAngles);
 
     vec3 eyePos = { localPos.x + viewOffset.x, localPos.y + viewOffset.y, localPos.z + viewOffset.z };
 
@@ -136,7 +144,9 @@ void esp::updateEntities()
         refreshEntityCache();
     }
 
-    // Fast path: only read position, health, bones, angles from cached pawns
+    // Fast path: only read position, health, bones, angles from cached pawns.
+    // Per-pawn fast reads (health, feet, viewOffset, optional eyeAngles, optional spotted)
+    // are batched into a single IOCTL per pawn.
     std::vector<EnemyInfo> buffer;
     buffer.reserve(cachedPawns.size());
 
@@ -144,27 +154,38 @@ void esp::updateEntities()
     {
         uintptr_t entity = cp.pawnAddress;
 
-        int32_t health = memory::Read<int32_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth);
+        BatchReader pbr;
+        auto hHealth    = pbr.queue<int32_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth);
+        auto hFeet      = pbr.queue<vec3>   (entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
+        auto hVOffset   = pbr.queue<vec3>   (entity + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
+
+        BatchReader::Handle hEyeAng = 0, hSpot = 0;
+        bool wantEyeAng = (menu::espViewAngle || menu::radarEnabled);
+        bool wantSpot   = menu::espWallCheck;
+        if (wantEyeAng) hEyeAng = pbr.queue<vec3>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
+        if (wantSpot)   hSpot   = pbr.queue<bool>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_entitySpottedState + 0x8);
+        pbr.flush();
+
+        int32_t health = pbr.get<int32_t>(hHealth);
         if (health <= 0) continue;
 
-        vec3 feetPos = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
-        vec3 vOffset = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
+        vec3 feetPos = pbr.get<vec3>(hFeet);
+        vec3 vOffset = pbr.get<vec3>(hVOffset);
         vec3 headPos = feetPos + vOffset;
 
         float distance = static_cast<float>(player_distance(eyePos, feetPos));
 
         float enemyYaw = 0.0f;
         float angleToPlayer = 180.0f;
-        if (menu::espViewAngle || menu::radarEnabled) {
-            vec3 eyeAngles = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
+        if (wantEyeAng) {
+            vec3 eyeAngles = pbr.get<vec3>(hEyeAng);
             enemyYaw = eyeAngles.y;
             angleToPlayer = calculateAngleToPlayer(enemyYaw, feetPos, eyePos);
         }
 
         bool isSpotted = true;
-        if (menu::espWallCheck) {
-            uintptr_t entitySpottedState = entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_entitySpottedState;
-            bool rawSpotted = memory::Read<bool>(entitySpottedState + 0x8);
+        if (wantSpot) {
+            bool rawSpotted = pbr.get<bool>(hSpot);
             if (distance < menu::espWallCheckDistance) {
                 isSpotted = rawSpotted;
             }

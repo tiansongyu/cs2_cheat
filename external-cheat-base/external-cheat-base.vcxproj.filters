@@ -39,6 +39,9 @@
     <ClInclude Include="src\core\memory\memory.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\core\memory\batch_reader.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\core\renderer\sdl_renderer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -78,6 +81,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\core\memory\memory.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\memory\driver_backend.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\core\renderer\sdl_renderer.cpp">
