@@ -109,6 +109,8 @@ void esp::updateEntities()
     vec3 localPos = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
     vec3 viewOffset = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
     vec3 localEyeAngles = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
+    vec3 localVelocity = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_vecAbsVelocity);
+    uint32_t localFlags = memory::Read<uint32_t>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_fFlags);
 
     vec3 eyePos = { localPos.x + viewOffset.x, localPos.y + viewOffset.y, localPos.z + viewOffset.z };
 
@@ -119,6 +121,8 @@ void esp::updateEntities()
         localPlayer.position = localPos;
         localPlayer.eyePosition = eyePos;
         localPlayer.viewAngle = { localEyeAngles.x, localEyeAngles.y };
+        localPlayer.velocity = localVelocity;
+        localPlayer.flags = localFlags;
         localPlayer.isValid = true;
         player_position = eyePos;
         player_yaw = localEyeAngles.y;

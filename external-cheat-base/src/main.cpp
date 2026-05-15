@@ -1,5 +1,6 @@
 #include "features/esp.hpp"
 #include "features/aimbot.hpp"
+#include "features/misc.hpp"
 #include "core/renderer/sdl_renderer.h"
 #include "features/menu.hpp"
 #include <thread>
@@ -150,6 +151,7 @@ int main(int argc, char* argv[])
             esp::updateEntities();
             aimbot::update();
             aimbot::updateTriggerbot();
+            misc::update();
         }
     });
 
@@ -174,6 +176,7 @@ int main(int argc, char* argv[])
 
     dataRunning.store(false, std::memory_order_relaxed);
     dataThread.join();
+    misc::releaseAll();
 
     sdl_renderer::shutdownImGui();
     sdl_renderer::destroy();

@@ -76,6 +76,15 @@ namespace menu
     inline bool bombTimer = true;            // Show bomb timer on screen
     inline bool grenadeESP = false;          // Show grenade positions
     inline bool droppedWeaponESP = false;    // Show dropped weapon positions
+
+    // Movement: Quick Stop (counter-strafe assist)
+    inline bool quickStopEnabled = false;
+    inline int  quickStopKey = VK_LBUTTON;        // Hold to activate (default: Mouse1)
+    inline float quickStopThreshold = 5.0f;       // Velocity below this is considered "stopped"
+
+    // Movement: Bunny Hop (auto-jump on landing)
+    inline bool bhopEnabled = false;
+    inline int  bhopKey = VK_SPACE;               // Hold to activate (default: Space)
     inline float radarCenterX = 0.227f;      // Radar center X - right side of game radar
     inline float radarCenterY = 0.142f;      // Radar center Y as percentage of screen height (top area)
     inline float radarRadius = 0.117f;       // Radar radius as percentage of screen height
@@ -549,6 +558,8 @@ namespace menu
         RenderHotkeyButton("Exit Program", &exitKey, "Key to exit the program");
         RenderHotkeyButton("Aimbot Key", &aimbotKey, "Hold to activate aimbot");
         RenderHotkeyButton("Triggerbot Key", &triggerbotKey, "Hold to activate triggerbot");
+        RenderHotkeyButton("Auto Stop Key", &quickStopKey, "Hold to counter-strafe (Auto Stop)");
+        RenderHotkeyButton("Bunny Hop Key", &bhopKey, "Hold to auto-jump on landing");
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -573,6 +584,33 @@ namespace menu
         ImGui::Spacing();
         ImGui::Checkbox("Grenade ESP", &grenadeESP);
         ImGui::Checkbox("Dropped Weapon ESP", &droppedWeaponESP);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Movement");
+        ImGui::Spacing();
+
+        ImGui::Checkbox("Auto Stop", &quickStopEnabled);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Hold the bound key to counter-strafe and stop instantly");
+        if (quickStopEnabled) {
+            ImGui::Indent();
+            ImGui::SliderFloat("Stop Threshold", &quickStopThreshold, 1.0f, 30.0f, "%.1f u/s");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Velocity below this releases the counter key");
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Hold %s to activate", GetKeyName(quickStopKey));
+            ImGui::Unindent();
+        }
+
+        ImGui::Spacing();
+        ImGui::Checkbox("Bunny Hop", &bhopEnabled);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Hold the bound key to auto-jump on landing");
+        if (bhopEnabled) {
+            ImGui::Indent();
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Hold %s to activate", GetKeyName(bhopKey));
+            ImGui::Unindent();
+        }
     }
 
     inline void RenderSettingsTab()

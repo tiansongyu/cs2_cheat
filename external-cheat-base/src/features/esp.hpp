@@ -64,13 +64,15 @@ struct EnemyInfo
     bool hasBones;
 };
 
-// Cached local player info (updated once per frame, shared by aimbot/triggerbot)
+// Cached local player info (updated once per frame, shared by aimbot/triggerbot/misc)
 struct LocalPlayerCache
 {
     uintptr_t pawn = 0;           // Local player pawn address
     vec3 position{};              // Local player position
     vec3 eyePosition{};           // Local player eye position
     vec2 viewAngle{};             // Current view angles (pitch, yaw)
+    vec3 velocity{};              // World-space absolute velocity (m_vecAbsVelocity)
+    uint32_t flags = 0;           // C_BaseEntity::m_fFlags (bit 0 = on ground)
     bool isValid = false;         // Is cache valid this frame
 };
 
