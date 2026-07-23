@@ -9,6 +9,13 @@
 
 namespace
 {
+    constexpr Uint8 TRANSPARENCY_KEY_R = 1;
+    constexpr Uint8 TRANSPARENCY_KEY_G = 0;
+    constexpr Uint8 TRANSPARENCY_KEY_B = 1;
+    constexpr COLORREF TRANSPARENCY_COLOR_KEY =
+        RGB(TRANSPARENCY_KEY_R, TRANSPARENCY_KEY_G, TRANSPARENCY_KEY_B);
+    constexpr float BASE_FONT_SIZE = 18.0f;
+
     struct GameDisplayGeometry
     {
         RECT gameClient{};
@@ -17,6 +24,10 @@ namespace
     };
 
     GameDisplayGeometry currentGeometry{};
+    ImGuiStyle baseImGuiStyle{};
+    float currentDpiScale = 1.0f;
+    uint32_t dpiRevision = 0;
+    bool baseImGuiStyleReady = false;
 
     int rectWidth(const RECT& rect)
     {
@@ -43,6 +54,56 @@ namespace
         SDL_SetHint(SDL_HINT_WINDOWS_DPI_SCALING, "0");
         SDL_SetHint(SDL_HINT_RENDER_VSYNC, "0");
         SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d");
+    }
+
+    float getWindowDpiScale(HWND targetWindow)
+    {
+        using GetDpiForWindowFn = UINT(WINAPI*)(HWND);
+        static GetDpiForWindowFn getDpiForWindowFn = []() {
+            HMODULE user32 = GetModuleHandleW(L"user32.dll");
+            return user32
+                ? reinterpret_cast<GetDpiForWindowFn>(
+                    GetProcAddress(user32, "GetDpiForWindow"))
+                : nullptr;
+        }();
+
+        UINT dpi = 96;
+        if (targetWindow && getDpiForWindowFn) {
+            const UINT windowDpi = getDpiForWindowFn(targetWindow);
+            if (windowDpi != 0) {
+                dpi = windowDpi;
+            }
+        }
+
+        float scale = static_cast<float>(dpi) / 96.0f;
+        if (scale < 0.5f) scale = 0.5f;
+        if (scale > 4.0f) scale = 4.0f;
+        return scale;
+    }
+
+    void applyImGuiDpiScale(bool force = false)
+    {
+        if (!baseImGuiStyleReady || !ImGui::GetCurrentContext()) {
+            return;
+        }
+
+        const float scale = getWindowDpiScale(sdl_renderer::overlayHwnd);
+        if (!force &&
+            scale > currentDpiScale - 0.01f &&
+            scale < currentDpiScale + 0.01f) {
+            return;
+        }
+
+        // Always scale from the unmodified reference style. ScaleAllSizes()
+        // rounds values, so repeatedly scaling the current style would drift
+        // after moving between monitors several times.
+        ImGuiStyle scaledStyle = baseImGuiStyle;
+        scaledStyle.FontScaleDpi = scale;
+        scaledStyle.ScaleAllSizes(scale);
+        ImGui::GetStyle() = scaledStyle;
+
+        currentDpiScale = scale;
+        ++dpiRevision;
     }
 
     bool getGameDisplayGeometry(HWND gameWindow, GameDisplayGeometry& geometry)
@@ -157,7 +218,12 @@ bool sdl_renderer::initWaiting()
         LONG_PTR exStyle = GetWindowLongPtr(overlayHwnd, GWL_EXSTYLE);
         SetWindowLongPtr(overlayHwnd, GWL_EXSTYLE,
             exStyle | WS_EX_LAYERED | WS_EX_TOPMOST);
-        SetLayeredWindowAttributes(overlayHwnd, RGB(0, 0, 0), 0, LWA_COLORKEY);
+        SetLayeredWindowAttributes(
+            overlayHwnd,
+            TRANSPARENCY_COLOR_KEY,
+            0,
+            LWA_COLORKEY
+        );
 
         MARGINS margins = { -1 };
         DwmExtendFrameIntoClientArea(overlayHwnd, &margins);
@@ -229,7 +295,12 @@ bool sdl_renderer::init(const wchar_t* targetWindowName)
         SetWindowLongPtr(overlayHwnd, GWL_EXSTYLE,
             exStyle | WS_EX_LAYERED | WS_EX_TOPMOST);
 
-        SetLayeredWindowAttributes(overlayHwnd, RGB(0, 0, 0), 0, LWA_COLORKEY);
+        SetLayeredWindowAttributes(
+            overlayHwnd,
+            TRANSPARENCY_COLOR_KEY,
+            0,
+            LWA_COLORKEY
+        );
 
         MARGINS margins = { -1 };
         DwmExtendFrameIntoClientArea(overlayHwnd, &margins);
@@ -272,7 +343,15 @@ void sdl_renderer::destroy()
 
 void sdl_renderer::beginFrame()
 {
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+    // This reserved near-black color is the only transparent color. Pure black
+    // remains available for ImGui backgrounds, outlines, text, and future UI.
+    SDL_SetRenderDrawColor(
+        renderer,
+        TRANSPARENCY_KEY_R,
+        TRANSPARENCY_KEY_G,
+        TRANSPARENCY_KEY_B,
+        255
+    );
     SDL_RenderClear(renderer);
 }
 
@@ -381,6 +460,17 @@ void sdl_renderer::updateWindowPosition()
     }
 
     updateRenderDimensions();
+    applyImGuiDpiScale();
+}
+
+float sdl_renderer::getDpiScale()
+{
+    return currentDpiScale;
+}
+
+uint32_t sdl_renderer::getDpiRevision()
+{
+    return dpiRevision;
 }
 
 void sdl_renderer::draw::line(int x1, int y1, int x2, int y2, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
@@ -417,15 +507,17 @@ void sdl_renderer::initImGui()
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-    io.FontGlobalScale = 1.0f;
     ImFontConfig fontConfig;
-    fontConfig.SizePixels = 18.0f;
+    fontConfig.SizePixels = BASE_FONT_SIZE;
     fontConfig.OversampleH = 1;
     fontConfig.OversampleV = 1;
-    io.Fonts->AddFontDefault(&fontConfig);
+    io.Fonts->AddFontDefaultVector(&fontConfig);
 
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
+    style.FontSizeBase = BASE_FONT_SIZE;
+    style.FontScaleMain = 1.0f;
+    style.FontScaleDpi = 1.0f;
     style.WindowRounding = 8.0f;
     style.FrameRounding = 4.0f;
     style.TabRounding = 4.0f;
@@ -433,6 +525,10 @@ void sdl_renderer::initImGui()
     style.FramePadding = ImVec2(6.0f, 4.0f);
     style.ItemSpacing = ImVec2(8.0f, 6.0f);
     style.TabBarBorderSize = 1.0f;
+
+    baseImGuiStyle = style;
+    baseImGuiStyleReady = true;
+    applyImGuiDpiScale(true);
 
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
@@ -443,6 +539,7 @@ void sdl_renderer::shutdownImGui()
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
+    baseImGuiStyleReady = false;
 }
 
 void sdl_renderer::newFrameImGui()

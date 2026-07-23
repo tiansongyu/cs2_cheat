@@ -237,8 +237,9 @@ namespace menu
     // Render hotkey button
     inline void RenderHotkeyButton(const char* label, int* keyCode, const char* tooltip = nullptr)
     {
+        const float dpiScale = sdl_renderer::getDpiScale();
         ImGui::Text("%s:", label);
-        ImGui::SameLine(150);
+        ImGui::SameLine(150.0f * dpiScale);
 
         char buttonLabel[64];
         if (isBindingKey && bindingKeyTarget == keyCode)
@@ -252,7 +253,7 @@ namespace menu
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.4f, 0.6f, 1.0f));
         }
 
-        if (ImGui::Button(buttonLabel, ImVec2(100, 0)))
+        if (ImGui::Button(buttonLabel, ImVec2(100.0f * dpiScale, 0.0f)))
         {
             isBindingKey = true;
             bindingKeyTarget = keyCode;
@@ -611,10 +612,22 @@ namespace menu
         // Update key binding
         UpdateKeyBinding();
 
+        const float dpiScale = sdl_renderer::getDpiScale();
+        const uint32_t dpiRevision = sdl_renderer::getDpiRevision();
+        static uint32_t appliedDpiRevision = UINT32_MAX;
+        const bool dpiChanged = appliedDpiRevision != dpiRevision;
+
         // Set window transparency
         ImGui::SetNextWindowBgAlpha(0.90f);
-        ImGui::SetNextWindowSize(ImVec2(600, 650), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowPos(ImVec2(100, 100), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(
+            ImVec2(600.0f * dpiScale, 650.0f * dpiScale),
+            dpiChanged ? ImGuiCond_Always : ImGuiCond_FirstUseEver
+        );
+        ImGui::SetNextWindowPos(
+            ImVec2(100.0f * dpiScale, 100.0f * dpiScale),
+            dpiChanged ? ImGuiCond_Always : ImGuiCond_FirstUseEver
+        );
+        appliedDpiRevision = dpiRevision;
 
         ImGui::Begin("CS2 ESP Menu", nullptr, ImGuiWindowFlags_NoCollapse);
 

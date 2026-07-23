@@ -47,13 +47,25 @@ uint32_t WINDOW_H;
 // Render waiting screen with ImGui
 void renderWaitingScreen(int dotCount)
 {
-    ImGui::SetNextWindowPos(ImVec2(WIDTH / 2.0f - 200, HEIGHT / 2.0f - 100), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(400, 200), ImGuiCond_Always);
+    const float dpiScale = sdl_renderer::getDpiScale();
+    const float windowWidth = 400.0f * dpiScale;
+    const float windowHeight = 200.0f * dpiScale;
+    ImGui::SetNextWindowPos(
+        ImVec2(
+            WIDTH / 2.0f - windowWidth / 2.0f,
+            HEIGHT / 2.0f - windowHeight / 2.0f
+        ),
+        ImGuiCond_Always
+    );
+    ImGui::SetNextWindowSize(
+        ImVec2(windowWidth, windowHeight),
+        ImGuiCond_Always
+    );
 
     ImGui::Begin("CS2 ESP Tool", nullptr,
         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
-    ImGui::Dummy(ImVec2(0, 10));
+    ImGui::Dummy(ImVec2(0.0f, 10.0f * dpiScale));
 
     // Waiting message with animated dots
     char dots[4] = {0};
@@ -62,16 +74,16 @@ void renderWaitingScreen(int dotCount)
     ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Waiting for CS2 to start%s", dots);
     ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Checking every 3 seconds...");
 
-    ImGui::Dummy(ImVec2(0, 15));
+    ImGui::Dummy(ImVec2(0.0f, 15.0f * dpiScale));
     ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, 10));
+    ImGui::Dummy(ImVec2(0.0f, 10.0f * dpiScale));
 
     // Important notice
     ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "[!] IMPORTANT:");
     ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "CS2 must use Fullscreen Windowed mode");
     ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Settings > Video > Display Mode)");
 
-    ImGui::Dummy(ImVec2(0, 10));
+    ImGui::Dummy(ImVec2(0.0f, 10.0f * dpiScale));
     ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Press F9 to exit");
 
     ImGui::End();

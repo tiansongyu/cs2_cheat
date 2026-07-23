@@ -26,6 +26,8 @@ namespace sdl_renderer
     void endFrame();
     void pollEvents();
     void updateWindowPosition();
+    float getDpiScale();
+    uint32_t getDpiRevision();
 
     void initImGui();
     void shutdownImGui();
@@ -41,4 +43,3 @@ namespace sdl_renderer
         void text(int x, int y, const char* str, uint8_t r, uint8_t g, uint8_t b);
     }
 }
-
