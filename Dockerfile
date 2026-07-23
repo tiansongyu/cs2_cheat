@@ -25,7 +25,6 @@ RUN mkdir -p /artifacts \
         -DNDEBUG \
         -DUNICODE \
         -D_UNICODE \
-        -DNOMINMAX \
         -DSDL_MAIN_HANDLED \
         -Wno-unknown-pragmas \
         -Iexternal-cheat-base/vendor/SDL2/include \

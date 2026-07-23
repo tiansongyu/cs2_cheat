@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include <SDL.h>
 #include <SDL_syswm.h>
 #include <Windows.h>
