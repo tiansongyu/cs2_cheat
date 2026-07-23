@@ -6,6 +6,53 @@
 #include <cmath>
 #include <algorithm>  // For std::min
 
+namespace
+{
+    bool isFiniteVec3(const vec3& value)
+    {
+        return std::isfinite(value.x) &&
+            std::isfinite(value.y) &&
+            std::isfinite(value.z) &&
+            std::abs(value.x) < 10000000.0f &&
+            std::abs(value.y) < 10000000.0f &&
+            std::abs(value.z) < 10000000.0f;
+    }
+
+    bool isUsableViewMatrix(const viewMatrix& matrix)
+    {
+        bool hasNonZeroValue = false;
+        for (float value : matrix.m) {
+            if (!std::isfinite(value) || std::abs(value) > 100000.0f) {
+                return false;
+            }
+            hasNonZeroValue = hasNonZeroValue || std::abs(value) > 0.000001f;
+        }
+        return hasNonZeroValue;
+    }
+
+    float overlayScale()
+    {
+        return std::clamp(sdl_renderer::getDpiScale(), 0.75f, 3.0f);
+    }
+
+    vec3 pointAlongView(
+        const vec3& origin,
+        float pitchDegrees,
+        float yawDegrees,
+        float distance)
+    {
+        constexpr float DEG_TO_RAD = 3.14159265f / 180.0f;
+        const float pitch = pitchDegrees * DEG_TO_RAD;
+        const float yaw = yawDegrees * DEG_TO_RAD;
+        const float cosPitch = std::cos(pitch);
+        return {
+            origin.x + cosPitch * std::cos(yaw) * distance,
+            origin.y + cosPitch * std::sin(yaw) * distance,
+            origin.z - std::sin(pitch) * distance
+        };
+    }
+}
+
 bool esp::init()
 {
     pID = memory::GetProcID(L"cs2.exe");
@@ -25,7 +72,7 @@ bool esp::init()
     return true;
 }
 
-void esp::refreshEntityCache()
+void esp::refreshEntityCache(const menu::RuntimeConfig& config)
 {
     uintptr_t entity_list = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwEntityList);
     if (!entity_list) { cachedPawns.clear(); return; }
@@ -62,7 +109,7 @@ void esp::refreshEntityCache()
         cp.team = team;
 
         // Read slow-changing data
-        if (menu::espWeapon) {
+        if (config.espWeapon) {
             cp.weaponName = "Unknown";
             uintptr_t weaponServices = memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_pWeaponServices);
             if (weaponServices) {
@@ -82,7 +129,7 @@ void esp::refreshEntityCache()
             }
         }
 
-        if (menu::espFlashIndicator) {
+        if (config.espFlashIndicator) {
             cp.flashDuration = memory::Read<float>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawnBase::m_flFlashDuration);
             float flashMaxAlpha = memory::Read<float>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawnBase::m_flFlashMaxAlpha);
             cp.isFlashed = (cp.flashDuration > 0.0f) && (flashMaxAlpha >= 0.5f);
@@ -94,22 +141,44 @@ void esp::refreshEntityCache()
     cachedPawns = std::move(newCache);
 }
 
-void esp::updateEntities()
+void esp::updateEntities(const menu::RuntimeConfig& config)
 {
     // Reset local player cache validity
-    localPlayer.isValid = false;
+    {
+        std::lock_guard<std::mutex> lock(dataMutex);
+        localPlayer.isValid = false;
+    }
 
     uintptr_t localPlayerPawn = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
     if (!localPlayerPawn) return;
 
-    // Read view matrix into local
-    viewMatrix localVm = memory::Read<viewMatrix>(modBase + cs2_dumper::offsets::client_dll::dwViewMatrix);
+    // Treat the local-player state as one coherent sample. If any required
+    // read fails while the game changes level or shuts down, keep the previous
+    // render snapshot instead of publishing partial/zeroed coordinates.
+    viewMatrix localVm{};
+    vec3 localPos{};
+    vec3 viewOffset{};
+    vec3 localEyeAngles{};
+    if (!memory::TryRead(
+            modBase + cs2_dumper::offsets::client_dll::dwViewMatrix,
+            localVm) ||
+        !memory::TryRead(
+            localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin,
+            localPos) ||
+        !memory::TryRead(
+            localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset,
+            viewOffset) ||
+        !memory::TryRead(
+            localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles,
+            localEyeAngles) ||
+        !isUsableViewMatrix(localVm) ||
+        !isFiniteVec3(localPos) ||
+        !isFiniteVec3(viewOffset) ||
+        !isFiniteVec3(localEyeAngles)) {
+        return;
+    }
 
     // Get local player info and cache it for aimbot/triggerbot
-    vec3 localPos = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
-    vec3 viewOffset = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
-    vec3 localEyeAngles = memory::Read<vec3>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
-
     vec3 eyePos = { localPos.x + viewOffset.x, localPos.y + viewOffset.y, localPos.z + viewOffset.z };
 
     {
@@ -125,7 +194,7 @@ void esp::updateEntities()
     }
 
     // Anti-flash: zero out flash duration on local player
-    if (menu::antiFlash) {
+    if (config.antiFlash) {
         memory::Write<float>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawnBase::m_flFlashDuration, 0.0f);
     }
 
@@ -133,7 +202,7 @@ void esp::updateEntities()
     slowUpdateFrame++;
     if (slowUpdateFrame >= 8 || cachedPawns.empty()) {
         slowUpdateFrame = 0;
-        refreshEntityCache();
+        refreshEntityCache(config);
     }
 
     // Fast path: only read position, health, bones, angles from cached pawns
@@ -145,27 +214,37 @@ void esp::updateEntities()
         uintptr_t entity = cp.pawnAddress;
 
         int32_t health = memory::Read<int32_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth);
-        if (health <= 0) continue;
+        if (health <= 0 || health > 200) continue;
 
-        vec3 feetPos = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin);
-        vec3 vOffset = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset);
+        vec3 feetPos{};
+        vec3 vOffset{};
+        if (!memory::TryRead(
+                entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin,
+                feetPos) ||
+            !memory::TryRead(
+                entity + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset,
+                vOffset) ||
+            !isFiniteVec3(feetPos) ||
+            !isFiniteVec3(vOffset)) {
+            continue;
+        }
         vec3 headPos = feetPos + vOffset;
 
         float distance = static_cast<float>(player_distance(eyePos, feetPos));
 
         float enemyYaw = 0.0f;
         float angleToPlayer = 180.0f;
-        if (menu::espViewAngle || menu::radarEnabled) {
+        if (config.espViewAngle || config.radarEnabled) {
             vec3 eyeAngles = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
             enemyYaw = eyeAngles.y;
             angleToPlayer = calculateAngleToPlayer(enemyYaw, feetPos, eyePos);
         }
 
         bool isSpotted = true;
-        if (menu::espWallCheck) {
+        if (config.espWallCheck) {
             uintptr_t entitySpottedState = entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_entitySpottedState;
             bool rawSpotted = memory::Read<bool>(entitySpottedState + 0x8);
-            if (distance < menu::espWallCheckDistance) {
+            if (distance < config.espWallCheckDistance) {
                 isSpotted = rawSpotted;
             }
         }
@@ -184,17 +263,25 @@ void esp::updateEntities()
         enemy.hasBones = false;
 
         // Read bone positions for skeleton ESP
-        if (menu::espSkeleton) {
+        if (config.espSkeleton) {
             uintptr_t gameSceneNode = memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_pGameSceneNode);
             if (gameSceneNode) {
                 uintptr_t boneArray = memory::Read<uintptr_t>(gameSceneNode + 0x150 + 0x80);
                 if (boneArray) {
-                    enemy.hasBones = true;
                     struct BoneData { float x, y, z; char pad[20]; };
-                    BoneData bones[BoneIndex::BONE_COUNT];
-                    memory::ReadRaw(boneArray, bones, sizeof(BoneData) * BoneIndex::BONE_COUNT);
-                    for (int b = 0; b < BoneIndex::BONE_COUNT; b++) {
-                        enemy.bonePositions[b] = { bones[b].x, bones[b].y, bones[b].z };
+                    BoneData bones[BoneIndex::BONE_COUNT]{};
+                    if (memory::ReadRaw(
+                        boneArray,
+                        bones,
+                        sizeof(BoneData) * BoneIndex::BONE_COUNT)) {
+                        bool bonesValid = true;
+                        for (int b = 0; b < BoneIndex::BONE_COUNT; b++) {
+                            enemy.bonePositions[b] = { bones[b].x, bones[b].y, bones[b].z };
+                            bonesValid =
+                                bonesValid &&
+                                isFiniteVec3(enemy.bonePositions[b]);
+                        }
+                        enemy.hasBones = bonesValid;
                     }
                 }
             }
@@ -216,7 +303,7 @@ void esp::updateEntities()
 
     // World entity scanning (grenades, dropped weapons)
     std::vector<WorldEntityInfo> worldBuffer;
-    if (menu::grenadeESP || menu::droppedWeaponESP) {
+    if (config.grenadeESP || config.droppedWeaponESP) {
         uintptr_t entity_list = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwEntityList);
         if (entity_list) {
         uintptr_t gameEntitySystem = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwGameEntitySystem);
@@ -246,7 +333,7 @@ void esp::updateEntities()
             int type = -1;
             std::string displayName;
 
-            if (menu::grenadeESP) {
+            if (config.grenadeESP) {
                 if (name == "smokegrenade_projectile") { type = 0; displayName = "Smoke"; }
                 else if (name == "flashbang_projectile") { type = 1; displayName = "Flash"; }
                 else if (name == "hegrenade_projectile") { type = 2; displayName = "HE"; }
@@ -254,7 +341,7 @@ void esp::updateEntities()
                 else if (name == "decoy_projectile") { type = 4; displayName = "Decoy"; }
             }
 
-            if (menu::droppedWeaponESP && type == -1) {
+            if (config.droppedWeaponESP && type == -1) {
                 if (name.find("weapon_") == 0) {
                     uint32_t ownerHandle = memory::Read<uint32_t>(ent + cs2_dumper::schemas::client_dll::C_BaseEntity::m_hOwnerEntity);
                     if (ownerHandle == 0xFFFFFFFF || ownerHandle == 0) {
@@ -268,6 +355,7 @@ void esp::updateEntities()
                 uintptr_t gameSceneNode = memory::Read<uintptr_t>(ent + cs2_dumper::schemas::client_dll::C_BaseEntity::m_pGameSceneNode);
                 if (!gameSceneNode) continue;
                 vec3 pos = memory::Read<vec3>(gameSceneNode + cs2_dumper::schemas::client_dll::CGameSceneNode::m_vecAbsOrigin);
+                if (!isFiniteVec3(pos)) continue;
                 float dist = static_cast<float>(player_distance(player_position, pos));
                 worldBuffer.push_back({ pos, type, displayName, dist });
             }
@@ -282,7 +370,7 @@ void esp::updateEntities()
     // Update bomb info
     BombInfo localBombInfo;
     localBombInfo.isPlanted = false;
-    if (menu::bombTimer) {
+    if (config.bombTimer) {
         uintptr_t globalVars = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwGlobalVars);
         float curtime = 0.0f;
         if (globalVars) {
@@ -323,6 +411,7 @@ void esp::render()
     viewMatrix snapVm;
     vec3 snapPlayerPos;
     float snapPlayerYaw;
+    LocalPlayerCache snapLocalPlayer;
     {
         std::lock_guard<std::mutex> lock(dataMutex);
         snapEnemies = enemies;
@@ -330,20 +419,16 @@ void esp::render()
         snapVm = vm;
         snapPlayerPos = player_position;
         snapPlayerYaw = player_yaw;
+        snapLocalPlayer = localPlayer;
     }
 
-    // Draw FOV circle in the center of the screen
-    if (menu::aimbotEnabled && menu::aimbotShowFOV)
+    // Project the same angular boundary used by the aimbot through the game's
+    // current view matrix. Unlike a fixed tan()/screen-height approximation,
+    // this follows the actual aspect ratio, camera projection, and viewport.
+    if (menu::aimbotEnabled &&
+        menu::aimbotShowFOV &&
+        snapLocalPlayer.isValid)
     {
-        // Screen center
-        float centerX = static_cast<float>(WIDTH) / 2.0f;
-        float centerY = static_cast<float>(HEIGHT) / 2.0f;
-
-        // Convert FOV degrees to screen pixels
-        float fovRadians = menu::aimbotFOV * (3.14159265f / 180.0f);
-        float radius = std::tan(fovRadians) * static_cast<float>(HEIGHT) / 2.0f;
-
-        // Get color
         ImU32 fovColor = IM_COL32(
             static_cast<int>(menu::aimbotFOVColor[0] * 255),
             static_cast<int>(menu::aimbotFOVColor[1] * 255),
@@ -351,8 +436,36 @@ void esp::render()
             static_cast<int>(menu::aimbotFOVColor[3] * 255)
         );
 
-        // Draw circle outline (reduce segments from 64 to 32)
-        drawList->AddCircle(ImVec2(centerX, centerY), radius, fovColor, 32, 1.5f);
+        constexpr int SEGMENTS = 48;
+        constexpr float TWO_PI = 6.28318530f;
+        ImVec2 points[SEGMENTS];
+        bool projectionValid = true;
+        for (int index = 0; index < SEGMENTS; ++index) {
+            const float phase =
+                TWO_PI * static_cast<float>(index) /
+                static_cast<float>(SEGMENTS);
+            const float pitchOffset = std::sin(phase) * menu::aimbotFOV;
+            const float yawOffset = std::cos(phase) * menu::aimbotFOV;
+            const vec3 rayPoint = pointAlongView(
+                snapLocalPlayer.eyePosition,
+                snapLocalPlayer.viewAngle.x + pitchOffset,
+                snapLocalPlayer.viewAngle.y + yawOffset,
+                4096.0f);
+            vec2 projected{};
+            if (!w2s(rayPoint, projected, snapVm.m)) {
+                projectionValid = false;
+                break;
+            }
+            points[index] = ImVec2(projected.x, projected.y);
+        }
+        if (projectionValid) {
+            drawList->AddPolyline(
+                points,
+                SEGMENTS,
+                fovColor,
+                ImDrawFlags_Closed,
+                1.5f * overlayScale());
+        }
     }
 
     for (const auto& enemy : snapEnemies)
@@ -369,6 +482,29 @@ void esp::render()
         int y = static_cast<int>(screenHead.y);
         int w = static_cast<int>(width);
         int h = static_cast<int>(height);
+        const float scale = overlayScale();
+
+        // Build a DPI-aware stack above the box. Every enabled indicator gets
+        // its own vertical slot, so scaled text cannot overlap the eye marker
+        // or visibility arrow.
+        float topCursor = static_cast<float>(y) - 3.0f * scale;
+        ImVec2 weaponTextSize{};
+        float weaponTextY = topCursor;
+        if (menu::espWeapon) {
+            weaponTextSize = ImGui::CalcTextSize(enemy.weaponName.c_str());
+            weaponTextY = topCursor - weaponTextSize.y;
+            topCursor = weaponTextY - 3.0f * scale;
+        }
+
+        const float ellipseRadiusY = 4.0f * scale;
+        float ellipseCenterY = topCursor;
+        if (menu::espFlashIndicator) {
+            ellipseCenterY = topCursor - ellipseRadiusY;
+            topCursor = ellipseCenterY - ellipseRadiusY - 3.0f * scale;
+        }
+
+        const float arrowSize = 7.0f * scale;
+        const float arrowTopY = topCursor - arrowSize;
 
         // Determine box color based on ANGLE (threat level)
         // Red = enemy facing you (danger), Green = enemy facing away (safe)
@@ -401,7 +537,13 @@ void esp::render()
         if (menu::espBox) {
 
             ImU32 boxColor = IM_COL32(r, g, b, a);
-            drawList->AddRect(ImVec2((float)x, (float)y), ImVec2((float)(x + w), (float)(y + h)), boxColor, 0.0f, 0, 2.0f);
+            drawList->AddRect(
+                ImVec2((float)x, (float)y),
+                ImVec2((float)(x + w), (float)(y + h)),
+                boxColor,
+                0.0f,
+                0,
+                2.0f * scale);
         }
 
         // Draw ellipse "eye" indicator below weapon name
@@ -411,18 +553,8 @@ void esp::render()
             // Calculate ellipse position (below weapon name, above the box)
             float ellipseCenterX = static_cast<float>(x + w / 2);
 
-            // If weapon is shown, place ellipse below it; otherwise place above box
-            float ellipseCenterY;
-            if (menu::espWeapon) {
-                // Weapon is at y-18, text height is ~13px, so ellipse at y-18+13+3 = y-2
-                ellipseCenterY = static_cast<float>(y - 2);
-            } else {
-                // No weapon, place ellipse above box
-                ellipseCenterY = static_cast<float>(y - 10);
-            }
-
             float ellipseRadiusX = w * 0.25f;  // 25% of box width
-            float ellipseRadiusY = 6.0f;       // Fixed height
+            ellipseRadiusX = std::max(ellipseRadiusX, 6.0f * scale);
 
             // Determine eye color: Red (normal) or Yellow (flashed)
             ImU32 eyeColor;
@@ -456,9 +588,9 @@ void esp::render()
         // Draw health bar (vertical bar on left side)
         if (menu::espHealth) {
 
-            int healthBarWidth = 4;
+            int healthBarWidth = std::max(2, static_cast<int>(std::round(4.0f * scale)));
             int healthBarHeight = h;
-            int healthBarX = x - 8;
+            int healthBarX = x - static_cast<int>(std::round(8.0f * scale));
             int healthBarY = y;
 
             // Background bar
@@ -468,10 +600,17 @@ void esp::render()
                 IM_COL32(50, 50, 50, 200));
 
             // Health bar (fills from bottom to top)
-            int healthHeight = static_cast<int>((enemy.health / 100.0f) * healthBarHeight);
+            const float healthFraction = std::clamp(
+                enemy.health / 100.0f,
+                0.0f,
+                1.0f);
+            int healthHeight =
+                static_cast<int>(healthFraction * healthBarHeight);
             int healthY = healthBarY + (healthBarHeight - healthHeight);
-            uint8_t healthR = static_cast<uint8_t>(255 * (1.0f - enemy.health / 100.0f));
-            uint8_t healthG = static_cast<uint8_t>(255 * (enemy.health / 100.0f));
+            uint8_t healthR =
+                static_cast<uint8_t>(255 * (1.0f - healthFraction));
+            uint8_t healthG =
+                static_cast<uint8_t>(255 * healthFraction);
             drawList->AddRectFilled(
                 ImVec2((float)healthBarX, (float)healthY),
                 ImVec2((float)(healthBarX + healthBarWidth), (float)(healthY + healthHeight)),
@@ -486,9 +625,10 @@ void esp::render()
             uint8_t wa = static_cast<uint8_t>(menu::espWeaponColor[3] * 255);
 
 
-            ImVec2 textSize = ImGui::CalcTextSize(enemy.weaponName.c_str());
             drawList->AddText(
-                ImVec2(static_cast<float>(x + w / 2 - textSize.x / 2), static_cast<float>(y - 18)),
+                ImVec2(
+                    static_cast<float>(x + w / 2) - weaponTextSize.x / 2.0f,
+                    weaponTextY),
                 IM_COL32(wr, wg, wb, wa),
                 enemy.weaponName.c_str()
             );
@@ -517,8 +657,7 @@ void esp::render()
 
             // Draw arrow indicator at top of box
             float centerX = static_cast<float>(x + w / 2);
-            float topY = static_cast<float>(y - 35);
-            float arrowSize = 8.0f;
+            float topY = arrowTopY;
 
             // Draw filled triangle pointing in enemy's view direction relative to player
             // Triangle direction still shows where enemy is facing
@@ -543,7 +682,9 @@ void esp::render()
                 snprintf(angleText, sizeof(angleText), "%.0f deg", enemy.angleToPlayer);
                 ImVec2 angleTextSize = ImGui::CalcTextSize(angleText);
                 drawList->AddText(
-                    ImVec2(centerX - angleTextSize.x / 2, topY + arrowSize + 2),
+                    ImVec2(
+                        centerX - angleTextSize.x / 2,
+                        topY - angleTextSize.y - 2.0f * scale),
                     IM_COL32(vr, vg, vb, va),
                     angleText
                 );
@@ -562,9 +703,11 @@ void esp::render()
             uint8_t db = static_cast<uint8_t>(menu::espDistanceColor[2] * 255);
             uint8_t da = static_cast<uint8_t>(menu::espDistanceColor[3] * 255);
 
-
+            const ImVec2 distanceTextSize = ImGui::CalcTextSize(distText);
             drawList->AddText(
-                ImVec2(static_cast<float>(x + w / 2 - 10), static_cast<float>(y + h + 2)),
+                ImVec2(
+                    static_cast<float>(x + w / 2) - distanceTextSize.x / 2.0f,
+                    static_cast<float>(y + h) + 2.0f * scale),
                 IM_COL32(dr, dg, db, da),
                 distText
             );
@@ -612,7 +755,7 @@ void esp::render()
                     drawList->AddLine(
                         ImVec2(screenFrom.x, screenFrom.y),
                         ImVec2(screenTo.x, screenTo.y),
-                        boneColor, 1.5f
+                        boneColor, 1.5f * scale
                     );
                 }
             }
@@ -625,18 +768,18 @@ void esp::render()
                 float dy = screenHead.y - screenNeck.y;
                 float dist = std::sqrt(dx * dx + dy * dy);
                 float radius = dist * 0.7f;
-                if (radius < 3.0f) radius = 3.0f;
+                if (radius < 3.0f * scale) radius = 3.0f * scale;
                 // Circle center above head position
                 float cx = screenHead.x + dx * 0.7f;
                 float cy = screenHead.y + dy * 0.7f;
                 drawList->AddLine(
                     ImVec2(screenNeck.x, screenNeck.y),
                     ImVec2(cx, cy - radius),
-                    boneColor, 1.5f
+                    boneColor, 1.5f * scale
                 );
                 drawList->AddCircle(
                     ImVec2(cx, cy),
-                    radius, boneColor, 16, 1.5f
+                    radius, boneColor, 16, 1.5f * scale
                 );
             }
         }
@@ -646,20 +789,20 @@ void esp::render()
             int startX, startY;
             switch (menu::snaplinesOrigin) {
                 case 0: // Bottom
-                    startX = WINDOW_W / 2;
-                    startY = WINDOW_H;
+                    startX = VIEWPORT_X + static_cast<int>(VIEWPORT_W / 2);
+                    startY = VIEWPORT_Y + static_cast<int>(VIEWPORT_H);
                     break;
                 case 1: // Center
-                    startX = WINDOW_W / 2;
-                    startY = WINDOW_H / 2;
+                    startX = VIEWPORT_X + static_cast<int>(VIEWPORT_W / 2);
+                    startY = VIEWPORT_Y + static_cast<int>(VIEWPORT_H / 2);
                     break;
                 case 2: // Top
-                    startX = WINDOW_W / 2;
-                    startY = 0;
+                    startX = VIEWPORT_X + static_cast<int>(VIEWPORT_W / 2);
+                    startY = VIEWPORT_Y;
                     break;
                 default:
-                    startX = WINDOW_W / 2;
-                    startY = WINDOW_H;
+                    startX = VIEWPORT_X + static_cast<int>(VIEWPORT_W / 2);
+                    startY = VIEWPORT_Y + static_cast<int>(VIEWPORT_H);
             }
 
             uint8_t sr = static_cast<uint8_t>(menu::espSnaplinesColor[0] * 255);
@@ -671,7 +814,7 @@ void esp::render()
             drawList->AddLine(
                 ImVec2((float)startX, (float)startY),
                 ImVec2(screenFeet.x, screenFeet.y),
-                IM_COL32(sr, sg, sb, sa), 1.5f
+                IM_COL32(sr, sg, sb, sa), 1.5f * overlayScale()
             );
         }
     }
@@ -681,9 +824,12 @@ void esp::render()
 
 
         // Calculate radar center position based on screen size
-        float radarCenterXPx = WINDOW_W * menu::radarCenterX;
-        float radarCenterYPx = WINDOW_H * menu::radarCenterY;
-        float radarRadiusPx = WINDOW_H * menu::radarRadius;
+        const float scale = overlayScale();
+        float radarCenterXPx =
+            static_cast<float>(VIEWPORT_X) + VIEWPORT_W * menu::radarCenterX;
+        float radarCenterYPx =
+            static_cast<float>(VIEWPORT_Y) + VIEWPORT_H * menu::radarCenterY;
+        float radarRadiusPx = VIEWPORT_H * menu::radarRadius;
 
         // Draw radar background (semi-transparent circle)
         uint8_t bgR = static_cast<uint8_t>(menu::radarBgColor[0] * 255);
@@ -699,7 +845,7 @@ void esp::render()
         drawList->AddCircle(
             ImVec2(radarCenterXPx, radarCenterYPx),
             radarRadiusPx,
-            IM_COL32(100, 100, 100, 200), 32, 2.0f
+            IM_COL32(100, 100, 100, 200), 32, 2.0f * scale
         );
 
         // Draw player marker at center (you)
@@ -710,7 +856,7 @@ void esp::render()
             uint8_t ca = static_cast<uint8_t>(menu::radarCenterColor[3] * 255);
 
             // Draw player dot at center (1.5x size: 5 * 1.5 = 7.5)
-            float playerDotRadius = 7.5f;
+            float playerDotRadius = 7.5f * scale;
             drawList->AddCircleFilled(
                 ImVec2(radarCenterXPx, radarCenterYPx),
                 playerDotRadius,
@@ -718,12 +864,12 @@ void esp::render()
             );
 
             // Draw player direction arrow (pointing up = forward)
-            float arrowLen = 14.0f;
+            float arrowLen = 14.0f * scale;
             float arrowOffset = playerDotRadius + 2.0f;  // Start from circle edge
             drawList->AddTriangleFilled(
                 ImVec2(radarCenterXPx, radarCenterYPx - arrowOffset - arrowLen),  // Top point
-                ImVec2(radarCenterXPx - 6.0f, radarCenterYPx - arrowOffset),      // Bottom left
-                ImVec2(radarCenterXPx + 6.0f, radarCenterYPx - arrowOffset),      // Bottom right
+                ImVec2(radarCenterXPx - 6.0f * scale, radarCenterYPx - arrowOffset),      // Bottom left
+                ImVec2(radarCenterXPx + 6.0f * scale, radarCenterYPx - arrowOffset),      // Bottom right
                 IM_COL32(cr, cg, cb, ca)
             );
         }
@@ -767,7 +913,7 @@ void esp::render()
             // Only draw if within radar radius
             if (distFromCenter <= radarRadiusPx) {
                 // Draw enemy dot (red by default) - 1.5x size (6 * 1.5 = 9)
-                float dotRadius = 9.0f;
+                float dotRadius = 9.0f * scale;
                 drawList->AddCircleFilled(
                     ImVec2(radarX, radarY),
                     dotRadius,
@@ -810,9 +956,9 @@ void esp::render()
                 float enemyDirRad = (90.0f - relativeYaw) * (3.14159265f / 180.0f);
 
                 // Arrow starts from edge of circle, not center (to avoid overlap)
-                float arrowLen = 12.0f;
-                float arrowWidth = 6.0f;
-                float arrowOffset = dotRadius + 2.0f;  // Start from circle edge + small gap
+                float arrowLen = 12.0f * scale;
+                float arrowWidth = 6.0f * scale;
+                float arrowOffset = dotRadius + 2.0f * scale;  // Start from circle edge + small gap
 
                 // Calculate arrow direction vector (pointing where enemy is facing)
                 // cos(angle) gives X component, -sin(angle) gives Y component (screen coords)
@@ -847,6 +993,7 @@ void esp::render()
 
     // World entity ESP (grenades, dropped weapons)
     if (menu::grenadeESP || menu::droppedWeaponESP) {
+        const float scale = overlayScale();
 
         for (const auto& we : snapWorldEntities) {
             if (we.type <= 4 && !menu::grenadeESP) continue;
@@ -867,6 +1014,7 @@ void esp::render()
                 case 5: color = IM_COL32(0, 200, 255, 255); radius = 8.0f; break;    // Weapon - cyan
                 default: color = IM_COL32(255, 255, 255, 255); radius = 6.0f; break;
             }
+            radius *= scale;
 
             float sx = screenPos.x;
             float sy = screenPos.y;
@@ -874,7 +1022,12 @@ void esp::render()
             if (we.type <= 4) {
                 // Grenades: filled circle with outline
                 drawList->AddCircleFilled(ImVec2(sx, sy), radius, color, 12);
-                drawList->AddCircle(ImVec2(sx, sy), radius, IM_COL32(255, 255, 255, 200), 12, 2.0f);
+                drawList->AddCircle(
+                    ImVec2(sx, sy),
+                    radius,
+                    IM_COL32(255, 255, 255, 200),
+                    12,
+                    2.0f * scale);
             } else {
                 // Dropped weapons: diamond shape with glow
                 drawList->AddQuadFilled(
@@ -889,12 +1042,18 @@ void esp::render()
                     ImVec2(sx + radius, sy),
                     ImVec2(sx, sy + radius),
                     ImVec2(sx - radius, sy),
-                    IM_COL32(255, 255, 255, 220), 2.0f
+                    IM_COL32(255, 255, 255, 220), 2.0f * scale
                 );
                 // Weapon name below
                 char label[32];
                 snprintf(label, sizeof(label), "%s", we.name.c_str());
-                drawList->AddText(ImVec2(sx - 15.0f, sy + radius + 2.0f), IM_COL32(0, 220, 255, 255), label);
+                const ImVec2 labelSize = ImGui::CalcTextSize(label);
+                drawList->AddText(
+                    ImVec2(
+                        sx - labelSize.x / 2.0f,
+                        sy + radius + 2.0f * scale),
+                    IM_COL32(0, 220, 255, 255),
+                    label);
             }
         }
     }
@@ -930,8 +1089,13 @@ void esp::renderBombTimer()
     else
         bombColor = IM_COL32(255, 255, 0, 255);
 
-    float textX = WIDTH / 2.0f - 80.0f;
-    float textY = 60.0f;
+    const float scale = overlayScale();
+    const ImVec2 bombTextSize = ImGui::CalcTextSize(bombText);
+    float textX =
+        static_cast<float>(VIEWPORT_X) +
+        VIEWPORT_W / 2.0f -
+        bombTextSize.x / 2.0f;
+    float textY = static_cast<float>(VIEWPORT_Y) + 60.0f * scale;
     drawList->AddText(ImVec2(textX, textY), bombColor, bombText);
 
     if (snapBomb.isDefusing) {
@@ -947,7 +1111,15 @@ void esp::renderBombTimer()
         else
             defuseColor = IM_COL32(255, 0, 0, 255);
 
-        drawList->AddText(ImVec2(textX, textY + 20.0f), defuseColor, defuseText);
+        const ImVec2 defuseTextSize = ImGui::CalcTextSize(defuseText);
+        const float defuseX =
+            static_cast<float>(VIEWPORT_X) +
+            VIEWPORT_W / 2.0f -
+            defuseTextSize.x / 2.0f;
+        drawList->AddText(
+            ImVec2(defuseX, textY + bombTextSize.y + 3.0f * scale),
+            defuseColor,
+            defuseText);
     }
 }
 
@@ -956,17 +1128,32 @@ bool esp::w2s(const vec3& world, vec2& screen, float m[16])
     vec4 clipCoords;
     clipCoords.x = world.x * m[0] + world.y * m[1] + world.z * m[2] + m[3];
     clipCoords.y = world.x * m[4] + world.y * m[5] + world.z * m[6] + m[7];
-    clipCoords.z = world.x * m[8] + world.y * m[9] + world.z * m[10] + m[11];
     clipCoords.w = world.x * m[12] + world.y * m[13] + world.z * m[14] + m[15];
 
-    if (clipCoords.w < 0.1f) return false;
+    if (!std::isfinite(clipCoords.x) ||
+        !std::isfinite(clipCoords.y) ||
+        !std::isfinite(clipCoords.w) ||
+        clipCoords.w < 0.1f ||
+        VIEWPORT_W == 0 ||
+        VIEWPORT_H == 0) {
+        return false;
+    }
 
     vec3 ndc;
     ndc.x = clipCoords.x / clipCoords.w;
     ndc.y = clipCoords.y / clipCoords.w;
+    if (!std::isfinite(ndc.x) || !std::isfinite(ndc.y)) {
+        return false;
+    }
 
-    screen.x = (WINDOW_W / 2.0f * ndc.x) + WINDOW_W / 2.0f;
-    screen.y = -(WINDOW_H / 2.0f * ndc.y) + WINDOW_H / 2.0f;
+    screen.x =
+        static_cast<float>(VIEWPORT_X) +
+        (VIEWPORT_W / 2.0f * ndc.x) +
+        VIEWPORT_W / 2.0f;
+    screen.y =
+        static_cast<float>(VIEWPORT_Y) -
+        (VIEWPORT_H / 2.0f * ndc.y) +
+        VIEWPORT_H / 2.0f;
 
     return true;
 }

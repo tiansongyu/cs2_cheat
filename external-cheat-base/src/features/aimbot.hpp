@@ -6,6 +6,11 @@
 #include "client_dll.hpp"
 #include <cstdint>
 
+namespace menu
+{
+    struct RuntimeConfig;
+}
+
 namespace aimbot
 {
     inline uintptr_t pID = 0;
@@ -19,10 +24,10 @@ namespace aimbot
     bool init();
 
     // Update aimbot - should be called every frame
-    void update();
+    void update(const menu::RuntimeConfig& config);
 
     // Update Triggerbot - should be called every frame
-    void updateTriggerbot();
+    void updateTriggerbot(const menu::RuntimeConfig& config);
 
     // Calculate angle to target
     vec2 calcAngle(const vec3& src, const vec3& dst);
@@ -33,4 +38,3 @@ namespace aimbot
     // Normalize angle to -180 to 180
     float normalizeAngle(float angle);
 }
-

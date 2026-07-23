@@ -9,6 +9,10 @@ extern uint32_t WIDTH;
 extern uint32_t HEIGHT;
 extern uint32_t WINDOW_W;
 extern uint32_t WINDOW_H;
+extern int32_t VIEWPORT_X;
+extern int32_t VIEWPORT_Y;
+extern uint32_t VIEWPORT_W;
+extern uint32_t VIEWPORT_H;
 
 namespace sdl_renderer
 {
@@ -19,17 +23,18 @@ namespace sdl_renderer
     inline HWND gameHwnd = nullptr;
     inline bool menuVisible = true;
 
-    bool init(const wchar_t* targetWindowName);
+    bool init(const wchar_t* targetWindowName, DWORD targetProcessId = 0);
     bool initWaiting();  // Initialize waiting screen (no game window)
     void destroy();
-    void beginFrame();
+    bool beginFrame();
     void endFrame();
     void pollEvents();
     void updateWindowPosition();
+    bool isGameVisible();
     float getDpiScale();
     uint32_t getDpiRevision();
 
-    void initImGui();
+    bool initImGui();
     void shutdownImGui();
     void newFrameImGui();
     void renderImGui();

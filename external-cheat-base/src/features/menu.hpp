@@ -3,10 +3,49 @@
 #include "imgui.h"
 #include "core/renderer/sdl_renderer.h"
 #include <Windows.h>
+#include <algorithm>
+#include <mutex>
 #include <string>
 
 namespace menu
 {
+    // ImGui edits these values on the render thread. The worker copies one
+    // coherent snapshot under this mutex at the start of each update pass.
+    inline std::mutex configMutex;
+
+    struct RuntimeConfig
+    {
+        bool espWeapon = true;
+        bool espFlashIndicator = false;
+        bool antiFlash = true;
+        bool espViewAngle = true;
+        bool radarEnabled = false;
+        bool espWallCheck = true;
+        float espWallCheckDistance = 2000.0f;
+        bool espSkeleton = true;
+        bool grenadeESP = false;
+        bool droppedWeaponESP = false;
+        bool bombTimer = true;
+
+        bool headOffsetEnabled = true;
+        float headOffsetAmount = 5.0f;
+        float headOffsetAngleMin = 45.0f;
+        float headOffsetAngleMax = 135.0f;
+        bool aimbotEnabled = false;
+        float aimbotFOV = 10.0f;
+        float aimbotSmoothing = 5.0f;
+        int aimbotBone = 0;
+        bool aimbotVisibleOnly = true;
+        int aimbotKey = VK_SHIFT;
+        bool smartAimEnabled = false;
+        int smartAimPriority = 0;
+        float mouseSensitivity = 1.0f;
+
+        bool triggerbotEnabled = false;
+        int triggerbotDelay = 50;
+        int triggerbotKey = 0x46;
+    };
+
     // Current tab index
     inline int currentTab = 0;
 
@@ -67,6 +106,10 @@ namespace menu
     // Input Settings
     inline float mouseSensitivity = 1.0f;  // In-game mouse sensitivity (for aim/trigger mouse conversion)
 
+    // Viewport mapping: 0=auto black-bar detection, 1=full client,
+    // 2=force 4:3 black bars, 3=force 16:10 black bars.
+    inline int viewportMode = 0;
+
     // Radar Settings
     inline bool radarEnabled = false;        // Radar overlay - Default OFF
     inline bool radarShowCenter = true;      // Show radar center marker (for debugging)
@@ -88,6 +131,42 @@ namespace menu
     // Menu Toggle Key
     inline int menuToggleKey = VK_F4;        // Menu toggle key (default: F4)
     inline int exitKey = VK_F9;              // Exit key (default: F9)
+
+    inline RuntimeConfig getRuntimeConfig()
+    {
+        std::lock_guard<std::mutex> lock(configMutex);
+        RuntimeConfig config{};
+        config.espWeapon = espWeapon;
+        config.espFlashIndicator = espFlashIndicator;
+        config.antiFlash = antiFlash;
+        config.espViewAngle = espViewAngle;
+        config.radarEnabled = radarEnabled;
+        config.espWallCheck = espWallCheck;
+        config.espWallCheckDistance = espWallCheckDistance;
+        config.espSkeleton = espSkeleton;
+        config.grenadeESP = grenadeESP;
+        config.droppedWeaponESP = droppedWeaponESP;
+        config.bombTimer = bombTimer;
+
+        config.headOffsetEnabled = headOffsetEnabled;
+        config.headOffsetAmount = headOffsetAmount;
+        config.headOffsetAngleMin = headOffsetAngleMin;
+        config.headOffsetAngleMax = headOffsetAngleMax;
+        config.aimbotEnabled = aimbotEnabled;
+        config.aimbotFOV = aimbotFOV;
+        config.aimbotSmoothing = aimbotSmoothing;
+        config.aimbotBone = aimbotBone;
+        config.aimbotVisibleOnly = aimbotVisibleOnly;
+        config.aimbotKey = aimbotKey;
+        config.smartAimEnabled = smartAimEnabled;
+        config.smartAimPriority = smartAimPriority;
+        config.mouseSensitivity = mouseSensitivity;
+
+        config.triggerbotEnabled = triggerbotEnabled;
+        config.triggerbotDelay = triggerbotDelay;
+        config.triggerbotKey = triggerbotKey;
+        return config;
+    }
 
     // Hotkey binding state
     inline bool isBindingKey = false;
@@ -583,7 +662,25 @@ namespace menu
         ImGui::Separator();
         ImGui::Spacing();
 
-        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Unlocked FPS (VSync OFF)");
+        ImGui::TextColored(
+            ImVec4(0.5f, 1.0f, 0.5f, 1.0f),
+            "Overlay capped at 144 FPS (VSync OFF)");
+        const char* viewportModes[] = {
+            "Auto-detect black bars",
+            "Full client (stretched)",
+            "Force 4:3 black bars",
+            "Force 16:10 black bars"
+        };
+        ImGui::Combo(
+            "Game Viewport",
+            &viewportMode,
+            viewportModes,
+            IM_ARRAYSIZE(viewportModes));
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Auto is recommended. Use a forced mode only if a capture-"
+                "protected or very dark scene prevents black-bar detection.");
+        }
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -592,8 +689,17 @@ namespace menu
         ImGui::Spacing();
 
         ImGui::Text("Resolution: %dx%d", WIDTH, HEIGHT);
+        ImGui::Text(
+            "Game viewport: %dx%d at (%d, %d)",
+            VIEWPORT_W,
+            VIEWPORT_H,
+            VIEWPORT_X,
+            VIEWPORT_Y);
         ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-        ImGui::Text("Frame Time: %.3f ms", 1000.0f / ImGui::GetIO().Framerate);
+        const float frameRate = ImGui::GetIO().Framerate;
+        ImGui::Text(
+            "Frame Time: %.3f ms",
+            frameRate > 0.0f ? 1000.0f / frameRate : 0.0f);
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -609,27 +715,60 @@ namespace menu
     {
         if (!sdl_renderer::menuVisible) return;
 
+        std::lock_guard<std::mutex> configLock(configMutex);
+
         // Update key binding
         UpdateKeyBinding();
 
         const float dpiScale = sdl_renderer::getDpiScale();
-        const uint32_t dpiRevision = sdl_renderer::getDpiRevision();
-        static uint32_t appliedDpiRevision = UINT32_MAX;
-        const bool dpiChanged = appliedDpiRevision != dpiRevision;
+        const float margin = std::max(8.0f, 16.0f * dpiScale);
+        const float availableWidth =
+            std::max(1.0f, static_cast<float>(WIDTH) - margin * 2.0f);
+        const float availableHeight =
+            std::max(1.0f, static_cast<float>(HEIGHT) - margin * 2.0f);
+        const float defaultWidth =
+            std::min(600.0f * dpiScale, availableWidth);
+        const float defaultHeight =
+            std::min(650.0f * dpiScale, availableHeight);
+        const float minimumWidth =
+            std::min(360.0f * dpiScale, availableWidth);
+        const float minimumHeight =
+            std::min(300.0f * dpiScale, availableHeight);
 
         // Set window transparency
         ImGui::SetNextWindowBgAlpha(0.90f);
+        ImGui::SetNextWindowSizeConstraints(
+            ImVec2(minimumWidth, minimumHeight),
+            ImVec2(availableWidth, availableHeight));
         ImGui::SetNextWindowSize(
-            ImVec2(600.0f * dpiScale, 650.0f * dpiScale),
-            dpiChanged ? ImGuiCond_Always : ImGuiCond_FirstUseEver
+            ImVec2(defaultWidth, defaultHeight),
+            ImGuiCond_FirstUseEver
         );
         ImGui::SetNextWindowPos(
-            ImVec2(100.0f * dpiScale, 100.0f * dpiScale),
-            dpiChanged ? ImGuiCond_Always : ImGuiCond_FirstUseEver
+            ImVec2(
+                (static_cast<float>(WIDTH) - defaultWidth) / 2.0f,
+                (static_cast<float>(HEIGHT) - defaultHeight) / 2.0f),
+            ImGuiCond_FirstUseEver
         );
-        appliedDpiRevision = dpiRevision;
 
         ImGui::Begin("CS2 ESP Menu", nullptr, ImGuiWindowFlags_NoCollapse);
+
+        // Saved ImGui positions may belong to another monitor/resolution.
+        // Clamp without resetting a valid user-selected position or size.
+        const ImVec2 windowPos = ImGui::GetWindowPos();
+        const ImVec2 windowSize = ImGui::GetWindowSize();
+        const ImVec2 clampedPos(
+            std::clamp(
+                windowPos.x,
+                margin,
+                std::max(margin, static_cast<float>(WIDTH) - windowSize.x - margin)),
+            std::clamp(
+                windowPos.y,
+                margin,
+                std::max(margin, static_cast<float>(HEIGHT) - windowSize.y - margin)));
+        if (clampedPos.x != windowPos.x || clampedPos.y != windowPos.y) {
+            ImGui::SetWindowPos(clampedPos);
+        }
 
         // Header with controls info
         ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s - Hide menu | %s - Exit", GetKeyName(menuToggleKey), GetKeyName(exitKey));

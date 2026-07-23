@@ -1,4 +1,6 @@
+#ifndef NOMINMAX
 #define NOMINMAX  // Prevent Windows.h from defining min/max macros
+#endif
 
 #include "aimbot.hpp"
 #include "esp.hpp"
@@ -16,23 +18,32 @@
 // Calculate head offset for side-facing enemies
 // When enemy is facing sideways (angle 45-135 degrees to player),
 // the head extends forward in the direction they are facing
-vec3 calculateHeadOffset(const vec3& headPos, float enemyViewYaw, float angleToPlayer)
+vec3 calculateHeadOffset(
+    const vec3& headPos,
+    float enemyViewYaw,
+    float angleToPlayer,
+    const menu::RuntimeConfig& config)
 {
     // Check if head offset is enabled
-    if (!menu::headOffsetEnabled) {
+    if (!config.headOffsetEnabled) {
         return headPos;
     }
 
     // Check if enemy is within the angle range for offset
-    if (angleToPlayer < menu::headOffsetAngleMin || angleToPlayer > menu::headOffsetAngleMax) {
+    if (angleToPlayer < config.headOffsetAngleMin ||
+        angleToPlayer > config.headOffsetAngleMax) {
         return headPos;
     }
 
     // Calculate offset strength based on angle
     // Maximum offset at 90 degrees (perfectly sideways), less at edges
-    float centerAngle = (menu::headOffsetAngleMin + menu::headOffsetAngleMax) / 2.0f;
-    float angleRange = (menu::headOffsetAngleMax - menu::headOffsetAngleMin) / 2.0f;
-    float angleFactor = 1.0f - std::abs(angleToPlayer - centerAngle) / angleRange;
+    float centerAngle =
+        (config.headOffsetAngleMin + config.headOffsetAngleMax) / 2.0f;
+    float angleRange =
+        (config.headOffsetAngleMax - config.headOffsetAngleMin) / 2.0f;
+    float angleFactor = angleRange > 0.0001f
+        ? 1.0f - std::abs(angleToPlayer - centerAngle) / angleRange
+        : 1.0f;
     angleFactor = std::max(0.0f, std::min(1.0f, angleFactor));  // Clamp to 0-1
 
     // Calculate offset direction (perpendicular to enemy's facing direction)
@@ -40,8 +51,8 @@ vec3 calculateHeadOffset(const vec3& headPos, float enemyViewYaw, float angleToP
     float yawRadians = enemyViewYaw * static_cast<float>(M_PI) / 180.0f;
 
     // Head extends in the direction enemy is facing
-    float offsetX = std::cos(yawRadians) * menu::headOffsetAmount * angleFactor;
-    float offsetY = std::sin(yawRadians) * menu::headOffsetAmount * angleFactor;
+    float offsetX = std::cos(yawRadians) * config.headOffsetAmount * angleFactor;
+    float offsetY = std::sin(yawRadians) * config.headOffsetAmount * angleFactor;
 
     vec3 adjustedHead = headPos;
     adjustedHead.x += offsetX;
@@ -105,13 +116,13 @@ float aimbot::getFOV(const vec2& viewAngle, const vec2& aimAngle)
 }
 
 
-void aimbot::update()
+void aimbot::update(const menu::RuntimeConfig& config)
 {
     // Check if aimbot is enabled
-    if (!menu::aimbotEnabled) return;
+    if (!config.aimbotEnabled) return;
 
     // Check if aimbot key is held (Shift)
-    if (!(GetAsyncKeyState(menu::aimbotKey) & 0x8000)) return;
+    if (!(GetAsyncKeyState(config.aimbotKey) & 0x8000)) return;
 
     // Use cached local player data (updated once per frame in esp::updateEntities)
     if (!esp::localPlayer.isValid) return;
@@ -122,7 +133,7 @@ void aimbot::update()
     vec2 bestAngle = { 0.0f, 0.0f };
     bool foundTarget = false;
 
-    if (menu::smartAimEnabled) {
+    if (config.smartAimEnabled) {
         // Smart Aim Mode: Ignore FOV, select best visible target by priority
         float bestScore = 999999.0f;  // Lower is better
 
@@ -133,7 +144,7 @@ void aimbot::update()
 
             // Calculate priority score based on selected mode
             float score;
-            if (menu::smartAimPriority == 0) {
+            if (config.smartAimPriority == 0) {
                 // Distance first: closer enemies have lower score
                 score = enemy.distance;
             } else {
@@ -148,13 +159,21 @@ void aimbot::update()
 
                 // Get target position based on selected bone
                 vec3 targetPos;
-                switch (menu::aimbotBone)
+                switch (config.aimbotBone)
                 {
                     case 0: // Head
-                        targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
+                        targetPos = calculateHeadOffset(
+                            enemy.headPosition,
+                            enemy.viewYaw,
+                            enemy.angleToPlayer,
+                            config);
                         break;
                     case 1: // Neck
-                        targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
+                        targetPos = calculateHeadOffset(
+                            enemy.headPosition,
+                            enemy.viewYaw,
+                            enemy.angleToPlayer,
+                            config);
                         targetPos.z -= 5.0f;
                         break;
                     case 2: // Chest
@@ -163,7 +182,11 @@ void aimbot::update()
                         targetPos.z = (enemy.headPosition.z + enemy.position.z) / 2.0f;
                         break;
                     default:
-                        targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
+                        targetPos = calculateHeadOffset(
+                            enemy.headPosition,
+                            enemy.viewYaw,
+                            enemy.angleToPlayer,
+                            config);
                         break;
                 }
 
@@ -174,22 +197,30 @@ void aimbot::update()
     }
     else {
         // Normal Mode: Use FOV to find closest target to crosshair
-        float bestFOV = menu::aimbotFOV;
+        float bestFOV = config.aimbotFOV;
 
         for (const auto& enemy : esp::enemies)
         {
             // Skip if visible only mode and enemy is behind wall
-            if (menu::aimbotVisibleOnly && !enemy.isSpotted) continue;
+            if (config.aimbotVisibleOnly && !enemy.isSpotted) continue;
 
             // Get target position based on selected bone
             vec3 targetPos;
-            switch (menu::aimbotBone)
+            switch (config.aimbotBone)
             {
                 case 0: // Head
-                    targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
+                    targetPos = calculateHeadOffset(
+                        enemy.headPosition,
+                        enemy.viewYaw,
+                        enemy.angleToPlayer,
+                        config);
                     break;
                 case 1: // Neck
-                    targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
+                    targetPos = calculateHeadOffset(
+                        enemy.headPosition,
+                        enemy.viewYaw,
+                        enemy.angleToPlayer,
+                        config);
                     targetPos.z -= 5.0f;
                     break;
                 case 2: // Chest
@@ -198,7 +229,11 @@ void aimbot::update()
                     targetPos.z = (enemy.headPosition.z + enemy.position.z) / 2.0f;
                     break;
                 default:
-                    targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
+                    targetPos = calculateHeadOffset(
+                        enemy.headPosition,
+                        enemy.viewYaw,
+                        enemy.angleToPlayer,
+                        config);
                     break;
             }
 
@@ -221,12 +256,12 @@ void aimbot::update()
     if (!foundTarget) return;
 
     // Apply smoothing using linear interpolation (Lerp)
-    float smoothing = menu::aimbotSmoothing;
+    float smoothing = config.aimbotSmoothing;
     float deltaPitch = (bestAngle.x - currentViewAngle.x) / smoothing;
     float deltaYaw = normalizeAngle(bestAngle.y - currentViewAngle.y) / smoothing;
 
     // Convert angle delta to mouse movement
-    float mouseSensitivityFactor = menu::mouseSensitivity * 0.022f;
+    float mouseSensitivityFactor = config.mouseSensitivity * 0.022f;
 
     // In CS2: Moving mouse RIGHT decreases Yaw, DOWN increases Pitch
     float moveX = -deltaYaw / mouseSensitivityFactor;
@@ -244,16 +279,16 @@ void aimbot::update()
     }
 }
 
-void aimbot::updateTriggerbot()
+void aimbot::updateTriggerbot(const menu::RuntimeConfig& config)
 {
     // Check if triggerbot is enabled
-    if (!menu::triggerbotEnabled) {
+    if (!config.triggerbotEnabled) {
         triggerbotHasTarget = false;
         return;
     }
 
     // Check if triggerbot key is held (Alt by default)
-    if (!(GetAsyncKeyState(menu::triggerbotKey) & 0x8000)) {
+    if (!(GetAsyncKeyState(config.triggerbotKey) & 0x8000)) {
         triggerbotHasTarget = false;
         return;
     }
@@ -277,7 +312,11 @@ void aimbot::updateTriggerbot()
         if (!enemy.isSpotted) continue;
 
         // Target head position with offset compensation for side-facing enemies
-        vec3 targetPos = calculateHeadOffset(enemy.headPosition, enemy.viewYaw, enemy.angleToPlayer);
+        vec3 targetPos = calculateHeadOffset(
+            enemy.headPosition,
+            enemy.viewYaw,
+            enemy.angleToPlayer,
+            config);
 
         // Calculate angle to target
         vec2 aimAngle = calcAngle(eyePos, targetPos);
@@ -298,13 +337,14 @@ void aimbot::updateTriggerbot()
 
             // Check if delay has passed
             DWORD currentTime = GetTickCount();
-            if (currentTime - triggerbotTargetTime >= static_cast<DWORD>(menu::triggerbotDelay))
+            if (currentTime - triggerbotTargetTime >=
+                static_cast<DWORD>(config.triggerbotDelay))
             {
                 // Aim at head first (snap to target)
                 float deltaPitch = (aimAngle.x - currentViewAngle.x) / 2.0f;
                 float deltaYaw = normalizeAngle(aimAngle.y - currentViewAngle.y) / 2.0f;
 
-                float mouseSensitivityFactor = menu::mouseSensitivity * 0.022f;
+                float mouseSensitivityFactor = config.mouseSensitivity * 0.022f;
 
                 float moveX = -deltaYaw / mouseSensitivityFactor;
                 float moveY = deltaPitch / mouseSensitivityFactor;
@@ -341,4 +381,3 @@ void aimbot::updateTriggerbot()
         triggerbotHasTarget = false;
     }
 }
-

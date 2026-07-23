@@ -49,6 +49,7 @@ RUN mkdir -p /artifacts \
         external-cheat-base/vendor/imgui/imgui_impl_sdlrenderer2.cpp \
         external-cheat-base/vendor/SDL2/lib/x64/SDL2.lib \
         -ldwmapi \
+        -lgdi32 \
         -static \
         -static-libgcc \
         -static-libstdc++ \

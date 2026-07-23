@@ -2,6 +2,7 @@
 #include "features/aimbot.hpp"
 #include "core/renderer/sdl_renderer.h"
 #include "features/menu.hpp"
+#include <algorithm>
 #include <thread>
 #include <atomic>
 #include <iostream>
@@ -43,13 +44,22 @@ uint32_t WIDTH;
 uint32_t HEIGHT;
 uint32_t WINDOW_W;
 uint32_t WINDOW_H;
+int32_t VIEWPORT_X;
+int32_t VIEWPORT_Y;
+uint32_t VIEWPORT_W;
+uint32_t VIEWPORT_H;
 
 // Render waiting screen with ImGui
 void renderWaitingScreen(int dotCount)
 {
     const float dpiScale = sdl_renderer::getDpiScale();
-    const float windowWidth = 400.0f * dpiScale;
-    const float windowHeight = 200.0f * dpiScale;
+    const float margin = std::max(8.0f, 16.0f * dpiScale);
+    const float windowWidth = std::min(
+        400.0f * dpiScale,
+        std::max(1.0f, static_cast<float>(WIDTH) - margin * 2.0f));
+    const float windowHeight = std::min(
+        200.0f * dpiScale,
+        std::max(1.0f, static_cast<float>(HEIGHT) - margin * 2.0f));
     ImGui::SetNextWindowPos(
         ImVec2(
             WIDTH / 2.0f - windowWidth / 2.0f,
@@ -102,7 +112,10 @@ int main(int argc, char* argv[])
     if (!sdl_renderer::initWaiting()) {
         return -1;
     }
-    sdl_renderer::initImGui();
+    if (!sdl_renderer::initImGui()) {
+        sdl_renderer::destroy();
+        return -1;
+    }
 
     // Wait for CS2 to start
     int dotCount = 0;
@@ -126,7 +139,9 @@ int main(int argc, char* argv[])
             }
         }
 
-        sdl_renderer::beginFrame();
+        if (!sdl_renderer::beginFrame()) {
+            break;
+        }
         sdl_renderer::newFrameImGui();
         renderWaitingScreen(dotCount);
         sdl_renderer::renderImGui();
@@ -145,28 +160,46 @@ int main(int argc, char* argv[])
     sdl_renderer::shutdownImGui();
     sdl_renderer::destroy();
 
-    if (!sdl_renderer::init(L"Counter-Strike 2")) {
+    if (!sdl_renderer::init(
+            L"Counter-Strike 2",
+            static_cast<DWORD>(esp::pID))) {
         return -1;
     }
-    sdl_renderer::initImGui();
+    if (!sdl_renderer::initImGui()) {
+        sdl_renderer::destroy();
+        return -1;
+    }
 
-    // Data thread: reads game memory at max speed, independent of render
+    // Data thread: consumes a coherent settings snapshot independently of render
     std::atomic<bool> dataRunning{true};
     std::thread dataThread([&dataRunning]() {
         while (dataRunning.load(std::memory_order_relaxed)) {
-            esp::updateEntities();
-            aimbot::update();
-            aimbot::updateTriggerbot();
+            const menu::RuntimeConfig config = menu::getRuntimeConfig();
+            esp::updateEntities(config);
+            aimbot::update(config);
+            aimbot::updateTriggerbot(config);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
     });
 
-    // Render loop: draws as fast as possible without waiting for data
+    // Cap the overlay independently of the game. Rendering materially faster
+    // than a high-refresh monitor only consumes CPU/GPU and can make CS2 less
+    // consistent under load.
+    constexpr auto renderInterval = std::chrono::microseconds(6944); // ~144 Hz
+    auto nextRenderTime = std::chrono::steady_clock::now();
     while (sdl_renderer::running)
     {
         sdl_renderer::pollEvents();
         sdl_renderer::updateWindowPosition();
+        if (!sdl_renderer::isGameVisible()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            nextRenderTime = std::chrono::steady_clock::now();
+            continue;
+        }
 
-        sdl_renderer::beginFrame();
+        if (!sdl_renderer::beginFrame()) {
+            break;
+        }
         sdl_renderer::newFrameImGui();
 
         if (menu::espEnabled) {
@@ -177,6 +210,14 @@ int main(int argc, char* argv[])
 
         sdl_renderer::renderImGui();
         sdl_renderer::endFrame();
+
+        nextRenderTime += renderInterval;
+        const auto now = std::chrono::steady_clock::now();
+        if (nextRenderTime > now) {
+            std::this_thread::sleep_until(nextRenderTime);
+        } else {
+            nextRenderTime = now;
+        }
     }
 
     dataRunning.store(false, std::memory_order_relaxed);

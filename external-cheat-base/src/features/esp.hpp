@@ -108,6 +108,11 @@ struct CachedPawn
 
 #include <mutex>
 
+namespace menu
+{
+    struct RuntimeConfig;
+}
+
 namespace esp
 {
     inline std::vector<EnemyInfo> enemies;
@@ -132,8 +137,8 @@ namespace esp
     inline BombInfo bombInfo;
 
     bool init();
-    void updateEntities();
-    void refreshEntityCache();
+    void updateEntities(const menu::RuntimeConfig& config);
+    void refreshEntityCache(const menu::RuntimeConfig& config);
     void render();
     void renderBombTimer();
     bool w2s(const vec3& world, vec2& screen, float m[16]);
