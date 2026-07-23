@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <vector>
 
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -54,6 +55,9 @@ namespace
     bool baseImGuiStyleReady = false;
     bool imguiInitialized = false;
     bool gameVisible = true;
+    bool autoViewportDetectionPending = false;
+    DWORD autoViewportDetectionRequestedAt = 0;
+    int autoViewportDetectionAttempts = 0;
 
     int rectWidth(const RECT& rect)
     {
@@ -84,6 +88,42 @@ namespace
         VIEWPORT_Y = viewport.y;
         VIEWPORT_W = static_cast<uint32_t>(std::max(0, viewport.width));
         VIEWPORT_H = static_cast<uint32_t>(std::max(0, viewport.height));
+    }
+
+    void requestAutoViewportDetection(DWORD now)
+    {
+        autoViewportDetectionPending = true;
+        autoViewportDetectionRequestedAt = now;
+        autoViewportDetectionAttempts = 0;
+        pendingViewport = {};
+        pendingViewportSamples = 0;
+    }
+
+    struct AsyncKeyTracker
+    {
+        int virtualKey = 0;
+        bool wasDown = false;
+    };
+
+    bool consumeAsyncKeyPress(int virtualKey, AsyncKeyTracker& tracker)
+    {
+        if (virtualKey <= 0 || virtualKey > 0xFF) {
+            tracker = {};
+            return false;
+        }
+
+        if (tracker.virtualKey != virtualKey) {
+            tracker.virtualKey = virtualKey;
+            tracker.wasDown = false;
+        }
+
+        const SHORT state = GetAsyncKeyState(virtualKey);
+        const bool isDown = (state & 0x8000) != 0;
+        const bool pressedSinceLastPoll = (state & 0x0001) != 0;
+        const bool pressed =
+            pressedSinceLastPoll || (isDown && !tracker.wasDown);
+        tracker.wasDown = isDown;
+        return pressed;
     }
 
     BOOL CALLBACK findProcessWindow(HWND hwnd, LPARAM parameter)
@@ -147,52 +187,152 @@ namespace
         return processId == 0 ? FindWindowW(nullptr, expectedTitle) : nullptr;
     }
 
-    bool isNearBlack(COLORREF color)
+    struct CapturedClientSample
     {
-        return color != CLR_INVALID &&
-            GetRValue(color) <= 12 &&
-            GetGValue(color) <= 12 &&
-            GetBValue(color) <= 12;
+        int width = 0;
+        int height = 0;
+        std::vector<uint32_t> pixels;
+    };
+
+    bool captureClientSample(
+        const RECT& clientScreenRect,
+        CapturedClientSample& sample)
+    {
+        constexpr int MAX_SAMPLE_WIDTH = 320;
+        constexpr int MAX_SAMPLE_HEIGHT = 180;
+
+        const int sourceWidth = rectWidth(clientScreenRect);
+        const int sourceHeight = rectHeight(clientScreenRect);
+        if (sourceWidth <= 0 || sourceHeight <= 0) {
+            return false;
+        }
+
+        const float scale = std::min(
+            1.0f,
+            std::min(
+                static_cast<float>(MAX_SAMPLE_WIDTH) / sourceWidth,
+                static_cast<float>(MAX_SAMPLE_HEIGHT) / sourceHeight));
+        const int sampleWidth = std::max(
+            1,
+            static_cast<int>(std::lround(sourceWidth * scale)));
+        const int sampleHeight = std::max(
+            1,
+            static_cast<int>(std::lround(sourceHeight * scale)));
+
+        HDC desktop = GetDC(nullptr);
+        if (!desktop) {
+            return false;
+        }
+
+        HDC memory = CreateCompatibleDC(desktop);
+        if (!memory) {
+            ReleaseDC(nullptr, desktop);
+            return false;
+        }
+
+        BITMAPINFO bitmapInfo{};
+        bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bitmapInfo.bmiHeader.biWidth = sampleWidth;
+        bitmapInfo.bmiHeader.biHeight = -sampleHeight;
+        bitmapInfo.bmiHeader.biPlanes = 1;
+        bitmapInfo.bmiHeader.biBitCount = 32;
+        bitmapInfo.bmiHeader.biCompression = BI_RGB;
+
+        void* bitmapBits = nullptr;
+        HBITMAP bitmap = CreateDIBSection(
+            memory,
+            &bitmapInfo,
+            DIB_RGB_COLORS,
+            &bitmapBits,
+            nullptr,
+            0);
+        if (!bitmap || !bitmapBits) {
+            if (bitmap) {
+                DeleteObject(bitmap);
+            }
+            DeleteDC(memory);
+            ReleaseDC(nullptr, desktop);
+            return false;
+        }
+
+        HGDIOBJ previousBitmap = SelectObject(memory, bitmap);
+        SetStretchBltMode(memory, COLORONCOLOR);
+        const BOOL captured = StretchBlt(
+            memory,
+            0,
+            0,
+            sampleWidth,
+            sampleHeight,
+            desktop,
+            clientScreenRect.left,
+            clientScreenRect.top,
+            sourceWidth,
+            sourceHeight,
+            SRCCOPY | CAPTUREBLT);
+
+        if (previousBitmap) {
+            SelectObject(memory, previousBitmap);
+        }
+
+        if (captured) {
+            sample.width = sampleWidth;
+            sample.height = sampleHeight;
+            sample.pixels.resize(
+                static_cast<size_t>(sampleWidth) *
+                static_cast<size_t>(sampleHeight));
+            std::copy_n(
+                static_cast<const uint32_t*>(bitmapBits),
+                sample.pixels.size(),
+                sample.pixels.begin());
+        }
+
+        DeleteObject(bitmap);
+        DeleteDC(memory);
+        ReleaseDC(nullptr, desktop);
+        return captured != FALSE;
     }
 
-    float blackRatioForColumn(HDC desktop, int x, const RECT& rect)
+    bool isNearBlack(uint32_t pixel)
     {
-        constexpr int SAMPLE_COUNT = 17;
-        int valid = 0;
-        int black = 0;
-        const int height = rectHeight(rect);
-        for (int i = 1; i <= SAMPLE_COUNT; ++i) {
-            const int y = rect.top + (height * i) / (SAMPLE_COUNT + 1);
-            const COLORREF color = GetPixel(desktop, x, y);
-            if (color == CLR_INVALID) {
-                continue;
-            }
-            ++valid;
-            black += isNearBlack(color) ? 1 : 0;
-        }
-        return valid > 0
-            ? static_cast<float>(black) / static_cast<float>(valid)
-            : 0.0f;
+        // A top-down 32-bit BI_RGB DIB stores pixels as B, G, R, X.
+        const uint8_t blue = static_cast<uint8_t>(pixel);
+        const uint8_t green = static_cast<uint8_t>(pixel >> 8);
+        const uint8_t red = static_cast<uint8_t>(pixel >> 16);
+        return red <= 12 && green <= 12 && blue <= 12;
     }
 
-    float blackRatioForRow(HDC desktop, int y, const RECT& rect)
+    float blackRatioForColumn(
+        const CapturedClientSample& sample,
+        int x)
     {
         constexpr int SAMPLE_COUNT = 17;
-        int valid = 0;
         int black = 0;
-        const int width = rectWidth(rect);
         for (int i = 1; i <= SAMPLE_COUNT; ++i) {
-            const int x = rect.left + (width * i) / (SAMPLE_COUNT + 1);
-            const COLORREF color = GetPixel(desktop, x, y);
-            if (color == CLR_INVALID) {
-                continue;
-            }
-            ++valid;
-            black += isNearBlack(color) ? 1 : 0;
+            const int y =
+                (sample.height * i) / (SAMPLE_COUNT + 1);
+            const size_t index =
+                static_cast<size_t>(y) * sample.width + x;
+            black += isNearBlack(sample.pixels[index]) ? 1 : 0;
         }
-        return valid > 0
-            ? static_cast<float>(black) / static_cast<float>(valid)
-            : 0.0f;
+        return static_cast<float>(black) /
+            static_cast<float>(SAMPLE_COUNT);
+    }
+
+    float blackRatioForRow(
+        const CapturedClientSample& sample,
+        int y)
+    {
+        constexpr int SAMPLE_COUNT = 17;
+        int black = 0;
+        for (int i = 1; i <= SAMPLE_COUNT; ++i) {
+            const int x =
+                (sample.width * i) / (SAMPLE_COUNT + 1);
+            const size_t index =
+                static_cast<size_t>(y) * sample.width + x;
+            black += isNearBlack(sample.pixels[index]) ? 1 : 0;
+        }
+        return static_cast<float>(black) /
+            static_cast<float>(SAMPLE_COUNT);
     }
 
     ContentViewport detectContentViewport(const RECT& clientScreenRect)
@@ -204,13 +344,13 @@ namespace
             return result;
         }
 
-        HDC desktop = GetDC(nullptr);
-        if (!desktop) {
+        CapturedClientSample sample{};
+        if (!captureClientSample(clientScreenRect, sample)) {
             return result;
         }
 
-        const int maxHorizontalBorder = width * 3 / 10;
-        const int maxVerticalBorder = height * 3 / 10;
+        const int maxHorizontalBorder = sample.width * 3 / 10;
+        const int maxVerticalBorder = sample.height * 3 / 10;
         int left = 0;
         int right = 0;
         int top = 0;
@@ -218,72 +358,78 @@ namespace
 
         while (left < maxHorizontalBorder &&
             blackRatioForColumn(
-                desktop,
-                clientScreenRect.left + left,
-                clientScreenRect) >= 0.88f) {
+                sample,
+                left) >= 0.88f) {
             ++left;
         }
         while (right < maxHorizontalBorder &&
             blackRatioForColumn(
-                desktop,
-                clientScreenRect.right - 1 - right,
-                clientScreenRect) >= 0.88f) {
+                sample,
+                sample.width - 1 - right) >= 0.88f) {
             ++right;
         }
         while (top < maxVerticalBorder &&
             blackRatioForRow(
-                desktop,
-                clientScreenRect.top + top,
-                clientScreenRect) >= 0.88f) {
+                sample,
+                top) >= 0.88f) {
             ++top;
         }
         while (bottom < maxVerticalBorder &&
             blackRatioForRow(
-                desktop,
-                clientScreenRect.bottom - 1 - bottom,
-                clientScreenRect) >= 0.88f) {
+                sample,
+                sample.height - 1 - bottom) >= 0.88f) {
             ++bottom;
         }
 
-        const int horizontalTolerance = std::max(4, width / 100);
-        const int verticalTolerance = std::max(4, height / 100);
-        const int minimumHorizontalBorder = std::max(8, width / 100);
-        const int minimumVerticalBorder = std::max(8, height / 100);
+        const int horizontalTolerance =
+            std::max(2, sample.width / 100);
+        const int verticalTolerance =
+            std::max(2, sample.height / 100);
+        const int minimumHorizontalBorder =
+            std::max(2, sample.width / 100);
+        const int minimumVerticalBorder =
+            std::max(2, sample.height / 100);
         const int horizontalProbe =
-            std::min(width - 1, left + std::max(3, width / 200));
+            std::min(
+                sample.width - 1,
+                left + std::max(2, sample.width / 200));
         const int verticalProbe =
-            std::min(height - 1, top + std::max(3, height / 200));
+            std::min(
+                sample.height - 1,
+                top + std::max(2, sample.height / 200));
 
         const bool hasSideBars =
             left >= minimumHorizontalBorder &&
             right >= minimumHorizontalBorder &&
             std::abs(left - right) <= horizontalTolerance &&
             blackRatioForColumn(
-                desktop,
-                clientScreenRect.left + horizontalProbe,
-                clientScreenRect) < 0.65f;
+                sample,
+                horizontalProbe) < 0.65f;
         const bool hasTopBars =
             top >= minimumVerticalBorder &&
             bottom >= minimumVerticalBorder &&
             std::abs(top - bottom) <= verticalTolerance &&
             blackRatioForRow(
-                desktop,
-                clientScreenRect.top + verticalProbe,
-                clientScreenRect) < 0.65f;
-
-        ReleaseDC(nullptr, desktop);
+                sample,
+                verticalProbe) < 0.65f;
 
         // A real game viewport normally letterboxes on only one axis. If both
         // candidates match, retain the stronger normalized pair.
         if (hasSideBars &&
             (!hasTopBars ||
-             static_cast<float>(left + right) / width >=
-                 static_cast<float>(top + bottom) / height)) {
-            const int symmetricBorder = (left + right) / 2;
+             static_cast<float>(left + right) / sample.width >=
+                 static_cast<float>(top + bottom) / sample.height)) {
+            const int symmetricSampleBorder = (left + right) / 2;
+            const int symmetricBorder = static_cast<int>(std::lround(
+                static_cast<float>(symmetricSampleBorder) * width /
+                sample.width));
             result.x = symmetricBorder;
             result.width = width - symmetricBorder * 2;
         } else if (hasTopBars) {
-            const int symmetricBorder = (top + bottom) / 2;
+            const int symmetricSampleBorder = (top + bottom) / 2;
+            const int symmetricBorder = static_cast<int>(std::lround(
+                static_cast<float>(symmetricSampleBorder) * height /
+                sample.height));
             result.y = symmetricBorder;
             result.height = height - symmetricBorder * 2;
         }
@@ -825,6 +971,11 @@ bool sdl_renderer::init(
                 appliedViewportMode,
                 rectWidth(initialGeometry.gameClient),
                 rectHeight(initialGeometry.gameClient)));
+    autoViewportDetectionPending = false;
+    autoViewportDetectionRequestedAt = 0;
+    autoViewportDetectionAttempts = 0;
+    pendingViewport = {};
+    pendingViewportSamples = 0;
 
     window = SDL_CreateWindow(
         "Overlay",
@@ -893,6 +1044,9 @@ void sdl_renderer::destroy()
     pendingViewport = {};
     pendingViewportSamples = 0;
     appliedViewportMode = -1;
+    autoViewportDetectionPending = false;
+    autoViewportDetectionRequestedAt = 0;
+    autoViewportDetectionAttempts = 0;
     VIEWPORT_X = 0;
     VIEWPORT_Y = 0;
     VIEWPORT_W = 0;
@@ -935,6 +1089,9 @@ void sdl_renderer::endFrame()
 
 void sdl_renderer::pollEvents()
 {
+    static AsyncKeyTracker exitKeyTracker{};
+    static AsyncKeyTracker menuKeyTracker{};
+
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         ImGui_ImplSDL2_ProcessEvent(&event);
@@ -951,26 +1108,24 @@ void sdl_renderer::pollEvents()
 
     // Skip hotkey processing if we're binding a key
     if (menu::isBindingKey) {
+        exitKeyTracker = {};
+        menuKeyTracker = {};
         return;
     }
 
     // Check exit key (configurable, default: F9)
-    if (GetAsyncKeyState(menu::exitKey) & 0x8000) {
+    if (consumeAsyncKeyPress(menu::exitKey, exitKeyTracker)) {
         running = false;
+        return;
     }
 
-    // Check menu toggle key (configurable, default: F4)
-    static bool menuKeyPressed = false;
-    if (GetAsyncKeyState(menu::menuToggleKey) & 0x8000) {
-        if (!menuKeyPressed) {
-            menuKeyPressed = true;
-            menuVisible = !menuVisible;
-            if (!setClickThrough(overlayHwnd, !menuVisible)) {
-                running = false;
-            }
+    // The low-order GetAsyncKeyState bit records a short press that happened
+    // between frames. This keeps F4 responsive even if a frame is delayed.
+    if (consumeAsyncKeyPress(menu::menuToggleKey, menuKeyTracker)) {
+        menuVisible = !menuVisible;
+        if (!setClickThrough(overlayHwnd, !menuVisible)) {
+            running = false;
         }
-    } else {
-        menuKeyPressed = false;
     }
 }
 
@@ -1034,8 +1189,13 @@ void sdl_renderer::updateWindowPosition()
             menu::viewportMode,
             width,
             height));
-        pendingViewport = {};
-        pendingViewportSamples = 0;
+        if (menu::viewportMode == 0) {
+            requestAutoViewportDetection(now);
+        } else {
+            autoViewportDetectionPending = false;
+            pendingViewport = {};
+            pendingViewportSamples = 0;
+        }
     } else {
         // Reassert top-most state occasionally instead of doing it on every
         // geometry poll.
@@ -1067,16 +1227,23 @@ void sdl_renderer::updateWindowPosition()
             height));
         pendingViewport = {};
         pendingViewportSamples = 0;
+        if (appliedViewportMode == 0) {
+            requestAutoViewportDetection(now);
+        } else {
+            autoViewportDetectionPending = false;
+        }
     }
 
-    // Color-key overlays appear in desktop captures, so refresh black-bar
-    // detection only while click-through mode is active. The initial viewport
-    // is sampled before the overlay window is shown.
-    static DWORD lastViewportCheck = 0;
-    if (menu::viewportMode == 0 &&
+    // The initial viewport is sampled before the overlay is shown. Re-sample
+    // only after a geometry/mode change, never continuously just because F4
+    // hid ImGui. Two small captures confirm the result without adding a
+    // permanent hidden-menu render-thread workload.
+    if (autoViewportDetectionPending &&
+        menu::viewportMode == 0 &&
         !menuVisible &&
-        now - lastViewportCheck >= 1000) {
-        lastViewportCheck = now;
+        now - autoViewportDetectionRequestedAt >= 250) {
+        autoViewportDetectionRequestedAt = now;
+        ++autoViewportDetectionAttempts;
         const ContentViewport detected =
             detectContentViewport(geometry.gameClient);
         if (sameViewport(detected, pendingViewport)) {
@@ -1085,9 +1252,14 @@ void sdl_renderer::updateWindowPosition()
             pendingViewport = detected;
             pendingViewportSamples = 1;
         }
-        if (pendingViewportSamples >= 2 &&
-            !sameViewport(detected, currentViewport)) {
-            publishViewport(detected);
+        if (pendingViewportSamples >= 2) {
+            if (!sameViewport(detected, currentViewport)) {
+                publishViewport(detected);
+            }
+            autoViewportDetectionPending = false;
+        } else if (autoViewportDetectionAttempts >= 4) {
+            // Avoid repeatedly sampling an animated/dark scene forever.
+            autoViewportDetectionPending = false;
         }
     }
 
