@@ -68,7 +68,7 @@ namespace menu
     inline float mouseSensitivity = 1.0f;  // In-game mouse sensitivity (for aim/trigger mouse conversion)
 
     // Radar Settings
-    inline bool radarEnabled = true;         // Enable radar overlay
+    inline bool radarEnabled = false;        // Radar overlay - Default OFF
     inline bool radarShowCenter = true;      // Show radar center marker (for debugging)
 
     // Misc Settings

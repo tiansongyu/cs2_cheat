@@ -86,11 +86,6 @@ int main(int argc, char* argv[])
     FreeConsole();
 #endif
 
-    WIDTH = GetSystemMetrics(SM_CXSCREEN);
-    HEIGHT = GetSystemMetrics(SM_CYSCREEN);
-    WINDOW_W = WIDTH;
-    WINDOW_H = HEIGHT;
-
     // Initialize SDL2 for waiting screen (without game window)
     if (!sdl_renderer::initWaiting()) {
         return -1;

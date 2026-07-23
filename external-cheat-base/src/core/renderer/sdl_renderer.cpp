@@ -7,19 +7,139 @@
 
 #pragma comment(lib, "dwmapi.lib")
 
-// Initialize waiting screen (centered window, no game attachment)
+namespace
+{
+    struct GameDisplayGeometry
+    {
+        RECT gameClient{};
+        RECT monitor{};
+        HMONITOR monitorHandle = nullptr;
+    };
+
+    GameDisplayGeometry currentGeometry{};
+
+    int rectWidth(const RECT& rect)
+    {
+        return rect.right - rect.left;
+    }
+
+    int rectHeight(const RECT& rect)
+    {
+        return rect.bottom - rect.top;
+    }
+
+    bool sameRect(const RECT& lhs, const RECT& rhs)
+    {
+        return lhs.left == rhs.left && lhs.top == rhs.top &&
+            lhs.right == rhs.right && lhs.bottom == rhs.bottom;
+    }
+
+    // Keep SDL and Win32 in the same physical-pixel coordinate system. This is
+    // especially important when the game is on a monitor whose scale differs
+    // from the primary monitor.
+    void configureVideoHints()
+    {
+        SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+        SDL_SetHint(SDL_HINT_WINDOWS_DPI_SCALING, "0");
+        SDL_SetHint(SDL_HINT_RENDER_VSYNC, "0");
+        SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d");
+    }
+
+    bool getGameDisplayGeometry(HWND gameWindow, GameDisplayGeometry& geometry)
+    {
+        if (!gameWindow || !IsWindow(gameWindow)) {
+            return false;
+        }
+
+        RECT clientRect{};
+        if (!GetClientRect(gameWindow, &clientRect)) {
+            return false;
+        }
+
+        POINT topLeft{ clientRect.left, clientRect.top };
+        POINT bottomRight{ clientRect.right, clientRect.bottom };
+        if (!ClientToScreen(gameWindow, &topLeft) ||
+            !ClientToScreen(gameWindow, &bottomRight)) {
+            return false;
+        }
+
+        RECT clientScreenRect{
+            topLeft.x,
+            topLeft.y,
+            bottomRight.x,
+            bottomRight.y
+        };
+        if (rectWidth(clientScreenRect) <= 0 || rectHeight(clientScreenRect) <= 0) {
+            return false;
+        }
+
+        // MonitorFromWindow selects the monitor with the largest intersection
+        // with the game window, so this also handles monitors left/above the
+        // primary display (negative virtual-desktop coordinates).
+        HMONITOR monitor = MonitorFromWindow(gameWindow, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO monitorInfo{};
+        monitorInfo.cbSize = sizeof(monitorInfo);
+        if (!monitor || !GetMonitorInfoW(monitor, &monitorInfo)) {
+            return false;
+        }
+
+        geometry.gameClient = clientScreenRect;
+        geometry.monitor = monitorInfo.rcMonitor;
+        geometry.monitorHandle = monitor;
+        return true;
+    }
+
+    void updateRenderDimensions()
+    {
+        if (!sdl_renderer::window) {
+            return;
+        }
+
+        // ImGui draw coordinates use SDL window coordinates. With DPI scaling
+        // disabled above these are physical pixels and match the game client.
+        int renderWidth = 0;
+        int renderHeight = 0;
+        SDL_GetWindowSize(sdl_renderer::window, &renderWidth, &renderHeight);
+        if (renderWidth <= 0 || renderHeight <= 0) {
+            return;
+        }
+
+        WIDTH = static_cast<uint32_t>(renderWidth);
+        HEIGHT = static_cast<uint32_t>(renderHeight);
+        WINDOW_W = WIDTH;
+        WINDOW_H = HEIGHT;
+    }
+}
+
+// Initialize waiting screen on the primary display (no game attachment)
 bool sdl_renderer::initWaiting()
 {
+    configureVideoHints();
+
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         return false;
     }
 
+    SDL_Rect primaryDisplay{};
+    if (SDL_GetDisplayBounds(0, &primaryDisplay) != 0) {
+        primaryDisplay.x = 0;
+        primaryDisplay.y = 0;
+        primaryDisplay.w = GetSystemMetrics(SM_CXSCREEN);
+        primaryDisplay.h = GetSystemMetrics(SM_CYSCREEN);
+    }
+
+    WIDTH = static_cast<uint32_t>(primaryDisplay.w);
+    HEIGHT = static_cast<uint32_t>(primaryDisplay.h);
+    WINDOW_W = WIDTH;
+    WINDOW_H = HEIGHT;
+
     window = SDL_CreateWindow(
         "CS2 ESP - Waiting",
-        SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED,
+        primaryDisplay.x,
+        primaryDisplay.y,
         WIDTH, HEIGHT,
-        SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALWAYS_ON_TOP | SDL_WINDOW_SHOWN
+        SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALWAYS_ON_TOP |
+        SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_SHOWN
     );
 
     if (!window) {
@@ -60,32 +180,36 @@ bool sdl_renderer::initWaiting()
 
 bool sdl_renderer::init(const wchar_t* targetWindowName)
 {
-    gameHwnd = FindWindowW(nullptr, targetWindowName);
-    if (!gameHwnd) {
-        gameHwnd = FindWindowW(L"SDL_app", nullptr);
-    }
-
-    RECT gameRect;
-    if (gameHwnd && GetWindowRect(gameHwnd, &gameRect)) {
-        WIDTH = gameRect.right - gameRect.left;
-        HEIGHT = gameRect.bottom - gameRect.top;
-        WINDOW_W = WIDTH;
-        WINDOW_H = HEIGHT;
-    }
-
-    SDL_SetHint(SDL_HINT_RENDER_VSYNC, "0");
-    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d");
+    configureVideoHints();
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         return false;
     }
 
+    gameHwnd = FindWindowW(nullptr, targetWindowName);
+    if (!gameHwnd) {
+        gameHwnd = FindWindowW(L"SDL_app", nullptr);
+    }
+
+    GameDisplayGeometry initialGeometry{};
+    if (!getGameDisplayGeometry(gameHwnd, initialGeometry)) {
+        SDL_Quit();
+        return false;
+    }
+
+    currentGeometry = initialGeometry;
+    WIDTH = static_cast<uint32_t>(rectWidth(initialGeometry.gameClient));
+    HEIGHT = static_cast<uint32_t>(rectHeight(initialGeometry.gameClient));
+    WINDOW_W = WIDTH;
+    WINDOW_H = HEIGHT;
+
     window = SDL_CreateWindow(
         "Overlay",
-        SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED,
+        initialGeometry.gameClient.left,
+        initialGeometry.gameClient.top,
         WIDTH, HEIGHT,
-        SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALWAYS_ON_TOP | SDL_WINDOW_SHOWN
+        SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALWAYS_ON_TOP |
+        SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_SHOWN
     );
 
     if (!window) {
@@ -125,6 +249,7 @@ bool sdl_renderer::init(const wchar_t* targetWindowName)
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     updateWindowPosition();
+    updateRenderDimensions();
 
     return true;
 }
@@ -139,6 +264,9 @@ void sdl_renderer::destroy()
         SDL_DestroyWindow(window);
         window = nullptr;
     }
+    overlayHwnd = nullptr;
+    gameHwnd = nullptr;
+    currentGeometry = {};
     SDL_Quit();
 }
 
@@ -208,20 +336,51 @@ void sdl_renderer::updateWindowPosition()
     if (now - lastUpdate < 250) return;
     lastUpdate = now;
 
-    RECT gameRect;
-    if (GetWindowRect(gameHwnd, &gameRect)) {
-        int x = gameRect.left;
-        int y = gameRect.top;
-        int w = gameRect.right - gameRect.left;
-        int h = gameRect.bottom - gameRect.top;
-
-        WIDTH = w;
-        HEIGHT = h;
-        WINDOW_W = w;
-        WINDOW_H = h;
-
-        SetWindowPos(overlayHwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    if (IsIconic(gameHwnd) || !IsWindowVisible(gameHwnd)) {
+        ShowWindow(overlayHwnd, SW_HIDE);
+        return;
     }
+
+    GameDisplayGeometry geometry{};
+    if (!getGameDisplayGeometry(gameHwnd, geometry)) {
+        return;
+    }
+
+    const int x = geometry.gameClient.left;
+    const int y = geometry.gameClient.top;
+    const int width = rectWidth(geometry.gameClient);
+    const int height = rectHeight(geometry.gameClient);
+
+    // The monitor rectangle is deliberately not used as the render rectangle.
+    // The visible game client is the viewport. Forcing the overlay to the
+    // monitor's native resolution when a windowed/borderless game uses another
+    // resolution produces non-uniform X/Y scaling and visibly deforms ESP.
+    if (!sameRect(geometry.gameClient, currentGeometry.gameClient) ||
+        !sameRect(geometry.monitor, currentGeometry.monitor) ||
+        geometry.monitorHandle != currentGeometry.monitorHandle) {
+        SetWindowPos(
+            overlayHwnd,
+            HWND_TOPMOST,
+            x,
+            y,
+            width,
+            height,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW
+        );
+        currentGeometry = geometry;
+    } else {
+        SetWindowPos(
+            overlayHwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW
+        );
+    }
+
+    updateRenderDimensions();
 }
 
 void sdl_renderer::draw::line(int x1, int y1, int x2, int y2, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
