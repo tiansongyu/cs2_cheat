@@ -1,10 +1,13 @@
 #include "esp.hpp"
 #include "menu.hpp"
 #include "utils/weapon_names.hpp"
+#include "core/memory/game_layout.hpp"
+#include "core/renderer/viewport_math.hpp"
 #include "imgui.h"
 #include <iostream>
 #include <cmath>
 #include <algorithm>  // For std::min
+#include <chrono>
 
 namespace
 {
@@ -28,6 +31,45 @@ namespace
             hasNonZeroValue = hasNonZeroValue || std::abs(value) > 0.000001f;
         }
         return hasNonZeroValue;
+    }
+
+    uintptr_t entityAddress(
+        uintptr_t entityList,
+        uint32_t index)
+    {
+        const uintptr_t listEntry = memory::Read<uintptr_t>(
+            entityList +
+            game_layout::ENTITY_LIST_CHUNK_ARRAY +
+            sizeof(uintptr_t) *
+                (index >> game_layout::ENTITY_CHUNK_SHIFT));
+        if (!listEntry) {
+            return 0;
+        }
+        return memory::Read<uintptr_t>(
+            listEntry +
+            game_layout::ENTITY_IDENTITY_STRIDE *
+                (index & game_layout::ENTITY_CHUNK_MASK));
+    }
+
+    bool validTeam(uint8_t team)
+    {
+        return team == 2 || team == 3;
+    }
+
+    int consecutiveReadFailures = 0;
+    std::chrono::steady_clock::time_point lastEntityCacheRefresh{};
+    std::chrono::steady_clock::time_point lastWorldRefresh{};
+
+    void recordUpdateFailure()
+    {
+        ++consecutiveReadFailures;
+        if (consecutiveReadFailures >= 3) {
+            esp::clearRuntimeState();
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(esp::dataMutex);
+        esp::localPlayer.isValid = false;
     }
 
     float overlayScale()
@@ -72,37 +114,67 @@ bool esp::init()
     return true;
 }
 
+void esp::clearRuntimeState()
+{
+    std::lock_guard<std::mutex> lock(dataMutex);
+    enemies = std::make_shared<const std::vector<EnemyInfo>>();
+    worldEntities =
+        std::make_shared<const std::vector<WorldEntityInfo>>();
+    vm = {};
+    player_position = {};
+    player_yaw = 0.0f;
+    localPlayer = {};
+    bombInfo = {};
+    cachedPawns.clear();
+    consecutiveReadFailures = 0;
+    lastEntityCacheRefresh = {};
+    lastWorldRefresh = {};
+}
+
+esp::EnemySnapshot esp::getEnemySnapshot()
+{
+    std::lock_guard<std::mutex> lock(dataMutex);
+    return enemies;
+}
+
 void esp::refreshEntityCache(const menu::RuntimeConfig& config)
 {
     uintptr_t entity_list = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwEntityList);
     if (!entity_list) { cachedPawns.clear(); return; }
 
     uintptr_t localPlayerPawn = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
+    if (!localPlayerPawn) {
+        cachedPawns.clear();
+        return;
+    }
     uint8_t myTeam = memory::Read<uint8_t>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
+    if (!validTeam(myTeam)) {
+        cachedPawns.clear();
+        return;
+    }
 
     std::vector<CachedPawn> newCache;
     newCache.reserve(16);
 
-    for (uint32_t i = 1; i < 64; i++)
+    for (uint32_t i = 1;
+         i < game_layout::MAX_PLAYER_CONTROLLERS;
+         ++i)
     {
-        uintptr_t listEntry = memory::Read<uintptr_t>(entity_list + 0x10 + 0x8 * (i >> 9));
-        if (!listEntry) continue;
-
-        uintptr_t entityController = memory::Read<uintptr_t>(listEntry + 0x70 * (i & 0x1FF));
+        const uintptr_t entityController =
+            entityAddress(entity_list, i);
         if (!entityController) continue;
 
         uint32_t pawnHandle = memory::Read<uint32_t>(entityController + cs2_dumper::schemas::client_dll::CBasePlayerController::m_hPawn);
         if (!pawnHandle || pawnHandle == 0xFFFFFFFF) continue;
 
-        uint32_t pawnIndex = pawnHandle & 0x7FFF;
-        uintptr_t pawnListEntry = memory::Read<uintptr_t>(entity_list + 0x10 + 0x8 * (pawnIndex >> 9));
-        if (!pawnListEntry) continue;
-
-        uintptr_t entity = memory::Read<uintptr_t>(pawnListEntry + 0x70 * (pawnIndex & 0x1FF));
+        const uint32_t pawnIndex =
+            pawnHandle & game_layout::ENTITY_HANDLE_MASK;
+        const uintptr_t entity =
+            entityAddress(entity_list, pawnIndex);
         if (!entity || entity == localPlayerPawn) continue;
 
         uint8_t team = memory::Read<uint8_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
-        if (team == myTeam) continue;
+        if (!validTeam(team) || team == myTeam) continue;
 
         CachedPawn cp;
         cp.pawnAddress = entity;
@@ -115,15 +187,15 @@ void esp::refreshEntityCache(const menu::RuntimeConfig& config)
             if (weaponServices) {
                 uint32_t activeWeaponHandle = memory::Read<uint32_t>(weaponServices + cs2_dumper::schemas::client_dll::CPlayer_WeaponServices::m_hActiveWeapon);
                 if (activeWeaponHandle && activeWeaponHandle != 0xFFFFFFFF) {
-                    uint32_t weaponIndex = activeWeaponHandle & 0x7FFF;
-                    uintptr_t weaponListEntry = memory::Read<uintptr_t>(entity_list + 0x10 + 0x8 * (weaponIndex >> 9));
-                    if (weaponListEntry) {
-                        uintptr_t weaponEntity = memory::Read<uintptr_t>(weaponListEntry + 0x70 * (weaponIndex & 0x1FF));
-                        if (weaponEntity) {
+                    const uint32_t weaponIndex =
+                        activeWeaponHandle &
+                        game_layout::ENTITY_HANDLE_MASK;
+                    const uintptr_t weaponEntity =
+                        entityAddress(entity_list, weaponIndex);
+                    if (weaponEntity) {
                             uintptr_t attributeManager = weaponEntity + cs2_dumper::schemas::client_dll::C_EconEntity::m_AttributeManager;
                             uint16_t itemDefIndex = memory::Read<uint16_t>(attributeManager + cs2_dumper::schemas::client_dll::C_AttributeContainer::m_Item + cs2_dumper::schemas::client_dll::C_EconItemView::m_iItemDefinitionIndex);
                             cp.weaponName = weapon_names::getWeaponName(itemDefIndex);
-                        }
                     }
                 }
             }
@@ -143,14 +215,11 @@ void esp::refreshEntityCache(const menu::RuntimeConfig& config)
 
 void esp::updateEntities(const menu::RuntimeConfig& config)
 {
-    // Reset local player cache validity
-    {
-        std::lock_guard<std::mutex> lock(dataMutex);
-        localPlayer.isValid = false;
-    }
-
     uintptr_t localPlayerPawn = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
-    if (!localPlayerPawn) return;
+    if (!localPlayerPawn) {
+        recordUpdateFailure();
+        return;
+    }
 
     // Treat the local-player state as one coherent sample. If any required
     // read fails while the game changes level or shuts down, keep the previous
@@ -175,8 +244,10 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         !isFiniteVec3(localPos) ||
         !isFiniteVec3(viewOffset) ||
         !isFiniteVec3(localEyeAngles)) {
+        recordUpdateFailure();
         return;
     }
+    consecutiveReadFailures = 0;
 
     // Get local player info and cache it for aimbot/triggerbot
     vec3 eyePos = { localPos.x + viewOffset.x, localPos.y + viewOffset.y, localPos.z + viewOffset.z };
@@ -198,10 +269,12 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         memory::Write<float>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawnBase::m_flFlashDuration, 0.0f);
     }
 
-    // Slow path: refresh entity cache every 8 frames
-    slowUpdateFrame++;
-    if (slowUpdateFrame >= 8 || cachedPawns.empty()) {
-        slowUpdateFrame = 0;
+    const auto updateNow = std::chrono::steady_clock::now();
+    if (cachedPawns.empty() ||
+        lastEntityCacheRefresh.time_since_epoch().count() == 0 ||
+        updateNow - lastEntityCacheRefresh >=
+            std::chrono::milliseconds(100)) {
+        lastEntityCacheRefresh = updateNow;
         refreshEntityCache(config);
     }
 
@@ -234,19 +307,36 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
 
         float enemyYaw = 0.0f;
         float angleToPlayer = 180.0f;
-        if (config.espViewAngle || config.radarEnabled) {
+        if (config.espViewAngle ||
+            config.radarEnabled ||
+            (config.headOffsetEnabled &&
+                (config.aimbotEnabled ||
+                 config.triggerbotEnabled))) {
             vec3 eyeAngles = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
-            enemyYaw = eyeAngles.y;
-            angleToPlayer = calculateAngleToPlayer(enemyYaw, feetPos, eyePos);
+            if (isFiniteVec3(eyeAngles)) {
+                enemyYaw = eyeAngles.y;
+                angleToPlayer =
+                    calculateAngleToPlayer(
+                        enemyYaw,
+                        feetPos,
+                        eyePos);
+            }
         }
 
-        bool isSpotted = true;
-        if (config.espWallCheck) {
+        const bool needsSpottedState =
+            config.espWallCheck ||
+            (config.aimbotEnabled &&
+                (config.aimbotVisibleOnly ||
+                 config.smartAimEnabled)) ||
+            config.triggerbotEnabled;
+        bool isSpotted = false;
+        bool visibilityKnown = false;
+        if (needsSpottedState) {
             uintptr_t entitySpottedState = entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_entitySpottedState;
-            bool rawSpotted = memory::Read<bool>(entitySpottedState + 0x8);
-            if (distance < config.espWallCheckDistance) {
-                isSpotted = rawSpotted;
-            }
+            visibilityKnown = memory::TryRead(
+                entitySpottedState +
+                    game_layout::spottedFlagOffset(),
+                isSpotted);
         }
 
         EnemyInfo enemy;
@@ -260,15 +350,29 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         enemy.flashDuration = cp.flashDuration;
         enemy.isFlashed = cp.isFlashed;
         enemy.isSpotted = isSpotted;
+        enemy.visibilityKnown = visibilityKnown;
         enemy.hasBones = false;
 
         // Read bone positions for skeleton ESP
         if (config.espSkeleton) {
             uintptr_t gameSceneNode = memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_pGameSceneNode);
             if (gameSceneNode) {
-                uintptr_t boneArray = memory::Read<uintptr_t>(gameSceneNode + 0x150 + 0x80);
+                uintptr_t boneArray = memory::Read<uintptr_t>(
+                    gameSceneNode +
+                    game_layout::boneArrayPointerOffset());
                 if (boneArray) {
-                    struct BoneData { float x, y, z; char pad[20]; };
+                    struct BoneData
+                    {
+                        float x;
+                        float y;
+                        float z;
+                        char pad[
+                            game_layout::BONE_STRIDE -
+                            sizeof(float) * 3];
+                    };
+                    static_assert(
+                        sizeof(BoneData) ==
+                        game_layout::BONE_STRIDE);
                     BoneData bones[BoneIndex::BONE_COUNT]{};
                     if (memory::ReadRaw(
                         boneArray,
@@ -281,6 +385,13 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
                                 bonesValid &&
                                 isFiniteVec3(enemy.bonePositions[b]);
                         }
+                        const double headToFeet = player_distance(
+                            enemy.bonePositions[BoneIndex::HEAD],
+                            feetPos);
+                        bonesValid =
+                            bonesValid &&
+                            headToFeet > 10.0 &&
+                            headToFeet < 200.0;
                         enemy.hasBones = bonesValid;
                     }
                 }
@@ -292,14 +403,19 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
 
     {
         std::lock_guard<std::mutex> lock(dataMutex);
-        enemies = std::move(buffer);
+        enemies = std::make_shared<
+            const std::vector<EnemyInfo>>(
+                std::move(buffer));
     }
 
-    // World entity scanning and bomb info - update every 4 frames to reduce RPM overhead
-    static int slowUpdateCounter = 0;
-    slowUpdateCounter++;
-    if (slowUpdateCounter < 4) return;
-    slowUpdateCounter = 0;
+    // Expensive world/bomb scanning is time-based so changing the worker
+    // frequency does not accidentally multiply RPM overhead.
+    if (lastWorldRefresh.time_since_epoch().count() != 0 &&
+        updateNow - lastWorldRefresh <
+            std::chrono::milliseconds(250)) {
+        return;
+    }
+    lastWorldRefresh = updateNow;
 
     // World entity scanning (grenades, dropped weapons)
     std::vector<WorldEntityInfo> worldBuffer;
@@ -311,12 +427,12 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         if (gameEntitySystem) {
             highestIndex = memory::Read<uint32_t>(gameEntitySystem + cs2_dumper::offsets::client_dll::dwGameEntitySystem_highestEntityIndex);
         }
-        if (highestIndex > 1024) highestIndex = 1024;
+        if (highestIndex > game_layout::MAX_WORLD_ENTITIES) {
+            highestIndex = game_layout::MAX_WORLD_ENTITIES;
+        }
 
         for (uint32_t i = 64; i <= highestIndex; i++) {
-            uintptr_t listEntry = memory::Read<uintptr_t>(entity_list + 0x10 + 0x8 * (i >> 9));
-            if (!listEntry) continue;
-            uintptr_t ent = memory::Read<uintptr_t>(listEntry + 0x70 * (i & 0x1FF));
+            const uintptr_t ent = entityAddress(entity_list, i);
             if (!ent) continue;
 
             uintptr_t identity = memory::Read<uintptr_t>(ent + cs2_dumper::schemas::client_dll::CEntityInstance::m_pEntity);
@@ -364,7 +480,9 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
     }
     {
         std::lock_guard<std::mutex> lock(dataMutex);
-        worldEntities = std::move(worldBuffer);
+        worldEntities = std::make_shared<
+            const std::vector<WorldEntityInfo>>(
+                std::move(worldBuffer));
     }
 
     // Update bomb info
@@ -374,7 +492,9 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         uintptr_t globalVars = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwGlobalVars);
         float curtime = 0.0f;
         if (globalVars) {
-            curtime = memory::Read<float>(globalVars + 0x2C);
+            curtime = memory::Read<float>(
+                globalVars +
+                game_layout::GLOBAL_VARS_CURRENT_TIME);
         }
 
         uintptr_t plantedC4List = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwPlantedC4);
@@ -406,8 +526,8 @@ void esp::render()
     ImDrawList* drawList = ImGui::GetBackgroundDrawList();
 
     // Take a snapshot of shared data under lock
-    std::vector<EnemyInfo> snapEnemies;
-    std::vector<WorldEntityInfo> snapWorldEntities;
+    EnemySnapshot snapEnemies;
+    WorldEntitySnapshot snapWorldEntities;
     viewMatrix snapVm;
     vec3 snapPlayerPos;
     float snapPlayerYaw;
@@ -420,6 +540,30 @@ void esp::render()
         snapPlayerPos = player_position;
         snapPlayerYaw = player_yaw;
         snapLocalPlayer = localPlayer;
+    }
+    if (!snapEnemies) {
+        snapEnemies =
+            std::make_shared<const std::vector<EnemyInfo>>();
+    }
+    if (!snapWorldEntities) {
+        snapWorldEntities =
+            std::make_shared<
+                const std::vector<WorldEntityInfo>>();
+    }
+
+    const bool clipToViewport =
+        VIEWPORT_W > 0 && VIEWPORT_H > 0;
+    if (clipToViewport) {
+        drawList->PushClipRect(
+            ImVec2(
+                static_cast<float>(VIEWPORT_X),
+                static_cast<float>(VIEWPORT_Y)),
+            ImVec2(
+                static_cast<float>(VIEWPORT_X) +
+                    static_cast<float>(VIEWPORT_W),
+                static_cast<float>(VIEWPORT_Y) +
+                    static_cast<float>(VIEWPORT_H)),
+            true);
     }
 
     // Project the same angular boundary used by the aimbot through the game's
@@ -468,7 +612,7 @@ void esp::render()
         }
     }
 
-    for (const auto& enemy : snapEnemies)
+    for (const auto& enemy : *snapEnemies)
     {
         vec2 screenFeet, screenHead;
 
@@ -476,6 +620,11 @@ void esp::render()
         if (!w2s(enemy.headPosition, screenHead, snapVm.m)) continue;
 
         float height = screenFeet.y - screenHead.y;
+        if (!viewport_math::validProjectedBox(
+                height,
+                static_cast<float>(VIEWPORT_H))) {
+            continue;
+        }
         float width = height / 2.5f;
 
         int x = static_cast<int>(screenHead.x - width / 2);
@@ -597,7 +746,7 @@ void esp::render()
             drawList->AddRectFilled(
                 ImVec2((float)healthBarX, (float)healthBarY),
                 ImVec2((float)(healthBarX + healthBarWidth), (float)(healthBarY + healthBarHeight)),
-                IM_COL32(50, 50, 50, 200));
+                IM_COL32(50, 50, 50, 255));
 
             // Health bar (fills from bottom to top)
             const float healthFraction = std::clamp(
@@ -634,21 +783,21 @@ void esp::render()
             );
         }
 
-        // Draw wall occlusion indicator (triangle arrow)
-        // Triangle color indicates visibility: RED = visible, GREEN = behind wall
+        // Draw the spotted-state indicator. It deliberately does not claim
+        // geometric line-of-sight: red is spotted, green is unknown/not spotted.
         if (menu::espWallCheck) {
 
 
-            // Determine triangle color based on WALL OCCLUSION
+            // Determine triangle color from the spotted state.
             uint8_t vr, vg, vb, va;
             if (enemy.isSpotted) {
-                // Enemy is visible (no wall) - RED
+                // Enemy is spotted - RED
                 vr = static_cast<uint8_t>(menu::espBoxColor[0] * 255);
                 vg = static_cast<uint8_t>(menu::espBoxColor[1] * 255);
                 vb = static_cast<uint8_t>(menu::espBoxColor[2] * 255);
                 va = static_cast<uint8_t>(menu::espBoxColor[3] * 255);
             } else {
-                // Enemy is behind wall - GREEN
+                // Enemy is not spotted or the state is unknown - GREEN
                 vr = static_cast<uint8_t>(menu::espWallColor[0] * 255);
                 vg = static_cast<uint8_t>(menu::espWallColor[1] * 255);
                 vb = static_cast<uint8_t>(menu::espWallColor[2] * 255);
@@ -661,7 +810,7 @@ void esp::render()
 
             // Draw filled triangle pointing in enemy's view direction relative to player
             // Triangle direction still shows where enemy is facing
-            // But COLOR now shows wall occlusion status
+            // Color shows spotted-state status.
             if (enemy.angleToPlayer < 90.0f) {
                 // Enemy is facing towards player - arrow points down
                 ImVec2 p1(centerX, topY + arrowSize);           // Bottom point
@@ -845,7 +994,7 @@ void esp::render()
         drawList->AddCircle(
             ImVec2(radarCenterXPx, radarCenterYPx),
             radarRadiusPx,
-            IM_COL32(100, 100, 100, 200), 32, 2.0f * scale
+            IM_COL32(100, 100, 100, 255), 32, 2.0f * scale
         );
 
         // Draw player marker at center (you)
@@ -887,7 +1036,7 @@ void esp::render()
         float cosRot = std::cos(rotationRad);
         float sinRot = std::sin(rotationRad);
 
-        for (const auto& enemy : snapEnemies) {
+        for (const auto& enemy : *snapEnemies) {
             // Calculate relative position from player to enemy (world coords)
             float deltaX = enemy.position.x - snapPlayerPos.x;
             float deltaY = enemy.position.y - snapPlayerPos.y;
@@ -995,7 +1144,7 @@ void esp::render()
     if (menu::grenadeESP || menu::droppedWeaponESP) {
         const float scale = overlayScale();
 
-        for (const auto& we : snapWorldEntities) {
+        for (const auto& we : *snapWorldEntities) {
             if (we.type <= 4 && !menu::grenadeESP) continue;
             if (we.type == 5 && !menu::droppedWeaponESP) continue;
             if (we.distance > 2000.0f) continue;
@@ -1006,11 +1155,11 @@ void esp::render()
             ImU32 color;
             float radius;
             switch (we.type) {
-                case 0: color = IM_COL32(100, 100, 255, 230); radius = 10.0f; break; // Smoke - blue
+                case 0: color = IM_COL32(100, 100, 255, 255); radius = 10.0f; break; // Smoke - blue
                 case 1: color = IM_COL32(255, 255, 0, 255); radius = 9.0f; break;    // Flash - bright yellow
                 case 2: color = IM_COL32(255, 30, 30, 255); radius = 9.0f; break;    // HE - bright red
                 case 3: color = IM_COL32(255, 100, 0, 255); radius = 10.0f; break;   // Molotov - orange
-                case 4: color = IM_COL32(0, 255, 100, 230); radius = 7.0f; break;    // Decoy - green
+                case 4: color = IM_COL32(0, 255, 100, 255); radius = 7.0f; break;    // Decoy - green
                 case 5: color = IM_COL32(0, 200, 255, 255); radius = 8.0f; break;    // Weapon - cyan
                 default: color = IM_COL32(255, 255, 255, 255); radius = 6.0f; break;
             }
@@ -1025,7 +1174,7 @@ void esp::render()
                 drawList->AddCircle(
                     ImVec2(sx, sy),
                     radius,
-                    IM_COL32(255, 255, 255, 200),
+                    IM_COL32(255, 255, 255, 255),
                     12,
                     2.0f * scale);
             } else {
@@ -1042,7 +1191,7 @@ void esp::render()
                     ImVec2(sx + radius, sy),
                     ImVec2(sx, sy + radius),
                     ImVec2(sx - radius, sy),
-                    IM_COL32(255, 255, 255, 220), 2.0f * scale
+                    IM_COL32(255, 255, 255, 255), 2.0f * scale
                 );
                 // Weapon name below
                 char label[32];
@@ -1056,6 +1205,10 @@ void esp::render()
                     label);
             }
         }
+    }
+
+    if (clipToViewport) {
+        drawList->PopClipRect();
     }
 
     // Bomb timer display (moved to renderBombTimer)
@@ -1142,7 +1295,10 @@ bool esp::w2s(const vec3& world, vec2& screen, float m[16])
     vec3 ndc;
     ndc.x = clipCoords.x / clipCoords.w;
     ndc.y = clipCoords.y / clipCoords.w;
-    if (!std::isfinite(ndc.x) || !std::isfinite(ndc.y)) {
+    if (!std::isfinite(ndc.x) ||
+        !std::isfinite(ndc.y) ||
+        std::abs(ndc.x) > 8.0f ||
+        std::abs(ndc.y) > 8.0f) {
         return false;
     }
 
@@ -1155,7 +1311,18 @@ bool esp::w2s(const vec3& world, vec2& screen, float m[16])
         (VIEWPORT_H / 2.0f * ndc.y) +
         VIEWPORT_H / 2.0f;
 
-    return true;
+    const float maxX =
+        static_cast<float>(VIEWPORT_W) * 4.0f;
+    const float maxY =
+        static_cast<float>(VIEWPORT_H) * 4.0f;
+    return std::isfinite(screen.x) &&
+        std::isfinite(screen.y) &&
+        screen.x >= static_cast<float>(VIEWPORT_X) - maxX &&
+        screen.x <= static_cast<float>(VIEWPORT_X) +
+            static_cast<float>(VIEWPORT_W) + maxX &&
+        screen.y >= static_cast<float>(VIEWPORT_Y) - maxY &&
+        screen.y <= static_cast<float>(VIEWPORT_Y) +
+            static_cast<float>(VIEWPORT_H) + maxY;
 }
 
 double esp::player_distance(const vec3& a, const vec3& b)

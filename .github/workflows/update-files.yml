@@ -2,85 +2,105 @@ name: Update CS2 Offset Files
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 每小时运行一次
+    - cron: '0 * * * *'
   workflow_dispatch:
     inputs:
       force_update:
-        description: 'Force update even if no changes'
+        description: 'Re-download the current cs2-dumper revision'
         required: false
         type: boolean
-        default: true
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: update-cs2-offset-files
+  cancel-in-progress: false
 
 jobs:
   update-files:
     runs-on: ubuntu-latest
     outputs:
-      updated: ${{ steps.check_updates.outputs.updated }}
+      pushed: ${{ steps.publish.outputs.pushed }}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
+        fetch-depth: 0
         persist-credentials: false
 
     - name: Set up Git
       run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
         git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
 
-    - name: Check cs2-dumper updates
-      id: check_updates
+    - name: Resolve cs2-dumper revision
+      id: revision
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        FORCE_UPDATE: ${{ inputs.force_update }}
       run: |
-        # Check if manually triggered with force_update
-        if [ "${{ github.event.inputs.force_update }}" = "true" ]; then
-          echo "Manual trigger with force_update enabled, skipping version check"
-          echo "UPDATE_AVAILABLE=true" >> $GITHUB_ENV
-          echo "updated=true" >> $GITHUB_OUTPUT
+        set -euo pipefail
+        latest_commit="$(gh api repos/a2x/cs2-dumper/commits/main --jq '.sha')"
+        last_commit="$(cat last_commit.txt 2>/dev/null || true)"
+
+        echo "Latest commit: $latest_commit"
+        echo "Recorded commit: ${last_commit:-none}"
+        echo "sha=$latest_commit" >> "$GITHUB_OUTPUT"
+
+        if [[ "$FORCE_UPDATE" == "true" || "$latest_commit" != "$last_commit" ]]; then
+          echo "download=true" >> "$GITHUB_OUTPUT"
         else
-          # Normal update check using GitHub CLI
-          latest_commit=$(gh api repos/a2x/cs2-dumper/commits/main --jq '.sha')
-          last_commit=$(cat last_commit.txt 2>/dev/null || echo "none")
-
-          echo "Latest commit: $latest_commit"
-          echo "Last commit: $last_commit"
-
-          if [ "$latest_commit" != "$last_commit" ]; then
-            echo "UPDATE_AVAILABLE=true" >> $GITHUB_ENV
-            echo "updated=true" >> $GITHUB_OUTPUT
-            echo -n "$latest_commit" > last_commit.txt
-          else
-            echo "UPDATE_AVAILABLE=false" >> $GITHUB_ENV
-            echo "updated=false" >> $GITHUB_OUTPUT
-            echo "No updates available"
-          fi
+          echo "download=false" >> "$GITHUB_OUTPUT"
         fi
 
-    - name: Update offset header files
-      if: env.UPDATE_AVAILABLE == 'true'
+    - name: Download generated headers at pinned revision
+      if: steps.revision.outputs.download == 'true'
+      env:
+        REVISION: ${{ steps.revision.outputs.sha }}
       run: |
-        curl -o external-cheat-base/generated/client_dll.hpp https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/client_dll.hpp
-        curl -o external-cheat-base/generated/offsets.hpp https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.hpp
-        curl -o external-cheat-base/generated/buttons.hpp https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/buttons.hpp
+        set -euo pipefail
+        base_url="https://raw.githubusercontent.com/a2x/cs2-dumper/${REVISION}/output"
+        curl --fail --location --retry 3 --output external-cheat-base/generated/client_dll.hpp "${base_url}/client_dll.hpp"
+        curl --fail --location --retry 3 --output external-cheat-base/generated/offsets.hpp "${base_url}/offsets.hpp"
+        curl --fail --location --retry 3 --output external-cheat-base/generated/buttons.hpp "${base_url}/buttons.hpp"
+        printf '%s' "$REVISION" > last_commit.txt
 
     - name: Commit and push changes
-      if: env.UPDATE_AVAILABLE == 'true'
+      id: publish
+      if: steps.revision.outputs.download == 'true'
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        REVISION: ${{ steps.revision.outputs.sha }}
       run: |
+        set -euo pipefail
         git add external-cheat-base/generated/client_dll.hpp external-cheat-base/generated/offsets.hpp external-cheat-base/generated/buttons.hpp last_commit.txt
-        git commit -m "Update CS2 offset files from cs2-dumper"
-        git push origin HEAD:main
+        if git diff --cached --quiet; then
+          echo "pushed=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
 
-  # 触发 build workflow
+        git commit -m "Update CS2 offsets to ${REVISION:0:12}"
+        for attempt in 1 2 3; do
+          git pull --rebase origin main
+          if git push origin HEAD:main; then
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Push attempt $attempt failed; retrying after rebase"
+        done
+        echo "Unable to publish offset update after three attempts" >&2
+        exit 1
+
   trigger-build:
     needs: update-files
-    if: needs.update-files.outputs.updated == 'true'
+    if: needs.update-files.outputs.pushed == 'true'
     runs-on: ubuntu-latest
     steps:
     - name: Trigger Build Workflow
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        gh workflow run build.yaml --repo ${{ github.repository }} -f force_build=true
+        gh workflow run build.yaml --repo "${{ github.repository }}" -f force_build=true

@@ -3,10 +3,16 @@
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
+#include "viewport_math.hpp"
+#include "../diagnostics.hpp"
 #include "../../features/menu.hpp"
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <condition_variable>
 #include <iterator>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 #pragma comment(lib, "dwmapi.lib")
@@ -28,13 +34,7 @@ namespace
         HMONITOR monitorHandle = nullptr;
     };
 
-    struct ContentViewport
-    {
-        int x = 0;
-        int y = 0;
-        int width = 0;
-        int height = 0;
-    };
+    using ContentViewport = viewport_math::Viewport;
 
     struct WindowSearchContext
     {
@@ -55,9 +55,52 @@ namespace
     bool baseImGuiStyleReady = false;
     bool imguiInitialized = false;
     bool gameVisible = true;
-    bool autoViewportDetectionPending = false;
-    DWORD autoViewportDetectionRequestedAt = 0;
-    int autoViewportDetectionAttempts = 0;
+    bool mixedMonitorBlocked = false;
+    std::atomic<bool> gameForeground{ false };
+    std::atomic<bool> inputAllowed{ false };
+    std::atomic<bool> gameDisconnected{ false };
+    std::atomic<bool> acceleratedRenderer{ false };
+    std::atomic<bool> dpiAwarenessReliable{ false };
+    std::atomic<bool> gameOnSingleMonitor{ true };
+    std::atomic<int> targetRefreshRate{ 144 };
+    RECT interactiveRect{};
+    WNDPROC originalWindowProc = nullptr;
+
+    struct ViewportDetectionRequest
+    {
+        RECT rect{};
+        uint64_t generation = 0;
+    };
+
+    struct ViewportDetectionResult
+    {
+        RECT rect{};
+        ContentViewport viewport{};
+        uint64_t generation = 0;
+    };
+
+    std::mutex viewportWorkerMutex;
+    std::condition_variable viewportWorkerCv;
+    std::thread viewportWorker;
+    bool viewportWorkerStopping = false;
+    bool viewportRequestReady = false;
+    bool viewportResultReady = false;
+    ViewportDetectionRequest viewportRequest{};
+    ViewportDetectionResult viewportResult{};
+    uint64_t viewportGeneration = 0;
+    DWORD lastViewportQueueTime = 0;
+
+    template <typename Function>
+    Function loadFunction(
+        HMODULE module,
+        const char* functionName)
+    {
+        static_assert(sizeof(Function) == sizeof(FARPROC));
+        return module
+            ? std::bit_cast<Function>(
+                GetProcAddress(module, functionName))
+            : nullptr;
+    }
 
     int rectWidth(const RECT& rect)
     {
@@ -77,8 +120,7 @@ namespace
 
     bool sameViewport(const ContentViewport& lhs, const ContentViewport& rhs)
     {
-        return lhs.x == rhs.x && lhs.y == rhs.y &&
-            lhs.width == rhs.width && lhs.height == rhs.height;
+        return viewport_math::same(lhs, rhs);
     }
 
     void publishViewport(const ContentViewport& viewport)
@@ -88,15 +130,6 @@ namespace
         VIEWPORT_Y = viewport.y;
         VIEWPORT_W = static_cast<uint32_t>(std::max(0, viewport.width));
         VIEWPORT_H = static_cast<uint32_t>(std::max(0, viewport.height));
-    }
-
-    void requestAutoViewportDetection(DWORD now)
-    {
-        autoViewportDetectionPending = true;
-        autoViewportDetectionRequestedAt = now;
-        autoViewportDetectionAttempts = 0;
-        pendingViewport = {};
-        pendingViewportSamples = 0;
     }
 
     struct AsyncKeyTracker
@@ -268,7 +301,7 @@ namespace
             clientScreenRect.top,
             sourceWidth,
             sourceHeight,
-            SRCCOPY | CAPTUREBLT);
+            SRCCOPY);
 
         if (previousBitmap) {
             SelectObject(memory, previousBitmap);
@@ -440,31 +473,99 @@ namespace
         return result;
     }
 
-    ContentViewport viewportForAspect(
-        int clientWidth,
-        int clientHeight,
-        float targetAspect)
+    void queueViewportDetection(
+        const RECT& rect,
+        uint64_t generation)
     {
-        ContentViewport result{ 0, 0, clientWidth, clientHeight };
-        if (clientWidth <= 0 ||
-            clientHeight <= 0 ||
-            targetAspect <= 0.0f) {
-            return result;
+        {
+            std::lock_guard<std::mutex> lock(viewportWorkerMutex);
+            if (viewportWorkerStopping) {
+                return;
+            }
+            viewportRequest = ViewportDetectionRequest{ rect, generation };
+            viewportRequestReady = true;
+        }
+        viewportWorkerCv.notify_one();
+    }
+
+    void startViewportDetectionWorker()
+    {
+        std::lock_guard<std::mutex> lock(viewportWorkerMutex);
+        if (viewportWorker.joinable()) {
+            return;
+        }
+        viewportWorkerStopping = false;
+        viewportRequestReady = false;
+        viewportResultReady = false;
+        viewportWorker = std::thread([]() {
+            while (true) {
+                ViewportDetectionRequest request{};
+                {
+                    std::unique_lock<std::mutex> lock(viewportWorkerMutex);
+                    viewportWorkerCv.wait(lock, []() {
+                        return viewportWorkerStopping ||
+                            viewportRequestReady;
+                    });
+                    if (viewportWorkerStopping) {
+                        return;
+                    }
+                    request = viewportRequest;
+                    viewportRequestReady = false;
+                }
+
+                const ContentViewport detected =
+                    detectContentViewport(request.rect);
+
+                {
+                    std::lock_guard<std::mutex> lock(viewportWorkerMutex);
+                    if (!viewportWorkerStopping) {
+                        viewportResult = ViewportDetectionResult{
+                            request.rect,
+                            detected,
+                            request.generation
+                        };
+                        viewportResultReady = true;
+                    }
+                }
+            }
+        });
+    }
+
+    void stopViewportDetectionWorker()
+    {
+        {
+            std::lock_guard<std::mutex> lock(viewportWorkerMutex);
+            viewportWorkerStopping = true;
+            viewportRequestReady = false;
+        }
+        viewportWorkerCv.notify_all();
+        if (viewportWorker.joinable()) {
+            viewportWorker.join();
         }
 
-        const float clientAspect =
-            static_cast<float>(clientWidth) /
-            static_cast<float>(clientHeight);
-        if (clientAspect > targetAspect) {
-            result.width = static_cast<int>(
-                std::round(clientHeight * targetAspect));
-            result.x = (clientWidth - result.width) / 2;
-        } else if (clientAspect < targetAspect) {
-            result.height = static_cast<int>(
-                std::round(clientWidth / targetAspect));
-            result.y = (clientHeight - result.height) / 2;
+        std::lock_guard<std::mutex> lock(viewportWorkerMutex);
+        viewportResultReady = false;
+        viewportWorkerStopping = false;
+    }
+
+    bool consumeViewportDetection(ViewportDetectionResult& result)
+    {
+        std::lock_guard<std::mutex> lock(viewportWorkerMutex);
+        if (!viewportResultReady) {
+            return false;
         }
-        return result;
+        result = viewportResult;
+        viewportResultReady = false;
+        return true;
+    }
+
+    void resetAutoViewportDetection(const RECT& rect)
+    {
+        ++viewportGeneration;
+        pendingViewport = {};
+        pendingViewportSamples = 0;
+        lastViewportQueueTime = GetTickCount();
+        queueViewportDetection(rect, viewportGeneration);
     }
 
     ContentViewport viewportForMode(
@@ -472,77 +573,85 @@ namespace
         int clientWidth,
         int clientHeight)
     {
-        switch (mode) {
-            case 2:
-                return viewportForAspect(
-                    clientWidth,
-                    clientHeight,
-                    4.0f / 3.0f);
-            case 3:
-                return viewportForAspect(
-                    clientWidth,
-                    clientHeight,
-                    16.0f / 10.0f);
-            default:
-                return ContentViewport{
-                    0,
-                    0,
-                    clientWidth,
-                    clientHeight
-                };
-        }
+        return viewport_math::forMode(mode, clientWidth, clientHeight);
     }
 
     // Keep SDL and Win32 in the same physical-pixel coordinate system. This is
     // especially important when the game is on a monitor whose scale differs
     // from the primary monitor.
-    void configureVideoHints()
+    bool configureVideoHints()
     {
         using SetProcessDpiAwarenessContextFn =
             BOOL(WINAPI*)(DPI_AWARENESS_CONTEXT);
         static SetProcessDpiAwarenessContextFn setProcessDpiAwarenessContext =
             []() {
-                HMODULE user32 = GetModuleHandleW(L"user32.dll");
-                return user32
-                    ? reinterpret_cast<SetProcessDpiAwarenessContextFn>(
-                        GetProcAddress(
-                            user32,
-                            "SetProcessDpiAwarenessContext"))
-                    : nullptr;
+                return loadFunction<
+                    SetProcessDpiAwarenessContextFn>(
+                        GetModuleHandleW(L"user32.dll"),
+                        "SetProcessDpiAwarenessContext");
             }();
 
+        bool awarenessConfigured = false;
         if (setProcessDpiAwarenessContext) {
             // Failure is expected if the host has already selected an equal
             // or stronger awareness mode; SDL's hint below remains in place.
-            setProcessDpiAwarenessContext(
-                DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+            awarenessConfigured =
+                setProcessDpiAwarenessContext(
+                    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != FALSE;
         } else {
             using SetProcessDpiAwareFn = BOOL(WINAPI*)();
-            HMODULE user32 = GetModuleHandleW(L"user32.dll");
-            const auto setProcessDpiAware = user32
-                ? reinterpret_cast<SetProcessDpiAwareFn>(
-                    GetProcAddress(user32, "SetProcessDPIAware"))
-                : nullptr;
+            const auto setProcessDpiAware =
+                loadFunction<SetProcessDpiAwareFn>(
+                    GetModuleHandleW(L"user32.dll"),
+                    "SetProcessDPIAware");
             if (setProcessDpiAware) {
-                setProcessDpiAware();
+                awarenessConfigured = setProcessDpiAware() != FALSE;
             }
+        }
+
+        using GetThreadDpiAwarenessContextFn =
+            DPI_AWARENESS_CONTEXT(WINAPI*)();
+        using AreDpiAwarenessContextsEqualFn =
+            BOOL(WINAPI*)(DPI_AWARENESS_CONTEXT, DPI_AWARENESS_CONTEXT);
+        HMODULE user32 = GetModuleHandleW(L"user32.dll");
+        const auto getThreadDpiAwarenessContext =
+            loadFunction<GetThreadDpiAwarenessContextFn>(
+                user32,
+                "GetThreadDpiAwarenessContext");
+        const auto areDpiAwarenessContextsEqual =
+            loadFunction<AreDpiAwarenessContextsEqualFn>(
+                user32,
+                "AreDpiAwarenessContextsEqual");
+        if (getThreadDpiAwarenessContext &&
+            areDpiAwarenessContextsEqual) {
+            const DPI_AWARENESS_CONTEXT actual =
+                getThreadDpiAwarenessContext();
+            awarenessConfigured =
+                areDpiAwarenessContextsEqual(
+                    actual,
+                    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) ||
+                areDpiAwarenessContextsEqual(
+                    actual,
+                    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
         }
 
         SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
         SDL_SetHint(SDL_HINT_WINDOWS_DPI_SCALING, "0");
         SDL_SetHint(SDL_HINT_RENDER_VSYNC, "0");
         SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d");
+        dpiAwarenessReliable.store(
+            awarenessConfigured,
+            std::memory_order_relaxed);
+        return awarenessConfigured;
     }
 
     float getWindowDpiScale(HWND targetWindow)
     {
         using GetDpiForWindowFn = UINT(WINAPI*)(HWND);
         static GetDpiForWindowFn getDpiForWindowFn = []() {
-            HMODULE user32 = GetModuleHandleW(L"user32.dll");
-            return user32
-                ? reinterpret_cast<GetDpiForWindowFn>(
-                    GetProcAddress(user32, "GetDpiForWindow"))
-                : nullptr;
+            return loadFunction<GetDpiForWindowFn>(
+                GetModuleHandleW(L"user32.dll"),
+                "GetDpiForWindow");
         }();
 
         UINT dpi = 96;
@@ -558,11 +667,9 @@ namespace
             using GetDpiForMonitorFn =
                 HRESULT(WINAPI*)(HMONITOR, int, UINT*, UINT*);
             static GetDpiForMonitorFn getDpiForMonitorFn = []() {
-                HMODULE shcore = LoadLibraryW(L"shcore.dll");
-                return shcore
-                    ? reinterpret_cast<GetDpiForMonitorFn>(
-                        GetProcAddress(shcore, "GetDpiForMonitor"))
-                    : nullptr;
+                return loadFunction<GetDpiForMonitorFn>(
+                    LoadLibraryW(L"shcore.dll"),
+                    "GetDpiForMonitor");
             }();
             if (getDpiForMonitorFn) {
                 const HMONITOR monitor = MonitorFromWindow(
@@ -585,11 +692,9 @@ namespace
         if (!hasWindowDpi) {
             using GetDpiForSystemFn = UINT(WINAPI*)();
             static GetDpiForSystemFn getDpiForSystemFn = []() {
-                HMODULE user32 = GetModuleHandleW(L"user32.dll");
-                return user32
-                    ? reinterpret_cast<GetDpiForSystemFn>(
-                        GetProcAddress(user32, "GetDpiForSystem"))
-                    : nullptr;
+                return loadFunction<GetDpiForSystemFn>(
+                    GetModuleHandleW(L"user32.dll"),
+                    "GetDpiForSystem");
             }();
             if (getDpiForSystemFn) {
                 const UINT systemDpi = getDpiForSystemFn();
@@ -683,6 +788,67 @@ namespace
         return true;
     }
 
+    bool clientFitsMonitor(const GameDisplayGeometry& geometry)
+    {
+        return geometry.gameClient.left >= geometry.monitor.left &&
+            geometry.gameClient.top >= geometry.monitor.top &&
+            geometry.gameClient.right <= geometry.monitor.right &&
+            geometry.gameClient.bottom <= geometry.monitor.bottom;
+    }
+
+    int refreshRateForMonitor(HMONITOR monitor)
+    {
+        MONITORINFOEXW monitorInfo{};
+        monitorInfo.cbSize = sizeof(monitorInfo);
+        if (!monitor ||
+            !GetMonitorInfoW(
+                monitor,
+                reinterpret_cast<MONITORINFO*>(&monitorInfo))) {
+            return 144;
+        }
+
+        DEVMODEW displayMode{};
+        displayMode.dmSize = sizeof(displayMode);
+        if (!EnumDisplaySettingsW(
+                monitorInfo.szDevice,
+                ENUM_CURRENT_SETTINGS,
+                &displayMode) ||
+            displayMode.dmDisplayFrequency <= 1) {
+            return 144;
+        }
+        return std::clamp(
+            static_cast<int>(displayMode.dmDisplayFrequency),
+            60,
+            1000);
+    }
+
+    bool isGameClientForeground()
+    {
+        return sdl_renderer::gameHwnd &&
+            GetForegroundWindow() == sdl_renderer::gameHwnd;
+    }
+
+    bool foregroundBelongsToGameUi()
+    {
+        const HWND foreground = GetForegroundWindow();
+        if (!foreground) {
+            return false;
+        }
+        if (foreground == sdl_renderer::gameHwnd ||
+            foreground == sdl_renderer::overlayHwnd) {
+            return true;
+        }
+
+        DWORD foregroundProcessId = 0;
+        DWORD gameProcessId = 0;
+        GetWindowThreadProcessId(foreground, &foregroundProcessId);
+        GetWindowThreadProcessId(
+            sdl_renderer::gameHwnd,
+            &gameProcessId);
+        return gameProcessId != 0 &&
+            foregroundProcessId == gameProcessId;
+    }
+
     void updateRenderDimensions()
     {
         if (!sdl_renderer::window) {
@@ -717,6 +883,36 @@ namespace
         }
     }
 
+    LRESULT CALLBACK overlayWindowProc(
+        HWND hwnd,
+        UINT message,
+        WPARAM wParam,
+        LPARAM lParam)
+    {
+        if (message == WM_NCHITTEST) {
+            if (!sdl_renderer::menuVisible) {
+                return HTTRANSPARENT;
+            }
+
+            POINT cursor{};
+            if (GetCursorPos(&cursor) &&
+                ScreenToClient(hwnd, &cursor) &&
+                PtInRect(&interactiveRect, cursor)) {
+                return HTCLIENT;
+            }
+            return HTTRANSPARENT;
+        }
+
+        return originalWindowProc
+            ? CallWindowProcW(
+                originalWindowProc,
+                hwnd,
+                message,
+                wParam,
+                lParam)
+            : DefWindowProcW(hwnd, message, wParam, lParam);
+    }
+
     bool configureOverlayWindow(HWND hwnd)
     {
         if (!hwnd) {
@@ -738,6 +934,17 @@ namespace
             return false;
         }
 
+        SetLastError(0);
+        const LONG_PTR previousWindowProc = SetWindowLongPtrW(
+            hwnd,
+            GWLP_WNDPROC,
+            reinterpret_cast<LONG_PTR>(overlayWindowProc));
+        if (previousWindowProc == 0 && GetLastError() != 0) {
+            return false;
+        }
+        originalWindowProc =
+            reinterpret_cast<WNDPROC>(previousWindowProc);
+
         if (!SetLayeredWindowAttributes(
                 hwnd,
                 TRANSPARENCY_COLOR_KEY,
@@ -746,7 +953,7 @@ namespace
             return false;
         }
 
-        MARGINS margins = { -1 };
+        MARGINS margins = { -1, -1, -1, -1 };
         DwmExtendFrameIntoClientArea(hwnd, &margins);
         return SetWindowPos(
             hwnd,
@@ -783,6 +990,16 @@ namespace
         return previous != 0 || GetLastError() == 0;
     }
 
+    void discardOverlayWindow()
+    {
+        if (sdl_renderer::window) {
+            SDL_DestroyWindow(sdl_renderer::window);
+            sdl_renderer::window = nullptr;
+        }
+        sdl_renderer::overlayHwnd = nullptr;
+        originalWindowProc = nullptr;
+    }
+
     SDL_Renderer* createRenderer()
     {
         SDL_Renderer* newRenderer = SDL_CreateRenderer(
@@ -800,6 +1017,14 @@ namespace
             SDL_DestroyRenderer(newRenderer);
             return nullptr;
         }
+        SDL_RendererInfo rendererInfo{};
+        const bool accelerated =
+            newRenderer &&
+            SDL_GetRendererInfo(newRenderer, &rendererInfo) == 0 &&
+            (rendererInfo.flags & SDL_RENDERER_ACCELERATED) != 0;
+        acceleratedRenderer.store(
+            accelerated,
+            std::memory_order_relaxed);
         return newRenderer;
     }
 
@@ -849,7 +1074,9 @@ namespace
 // Initialize the waiting screen on the display the user is currently using.
 bool sdl_renderer::initWaiting()
 {
-    configureVideoHints();
+    if (!configureVideoHints()) {
+        return false;
+    }
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         return false;
@@ -914,16 +1141,12 @@ bool sdl_renderer::initWaiting()
     }
 
     if (!configureOverlayWindow(overlayHwnd)) {
-        SDL_DestroyWindow(window);
-        window = nullptr;
-        overlayHwnd = nullptr;
+        discardOverlayWindow();
         SDL_Quit();
         return false;
     }
     if (!setClickThrough(overlayHwnd, !menuVisible)) {
-        SDL_DestroyWindow(window);
-        window = nullptr;
-        overlayHwnd = nullptr;
+        discardOverlayWindow();
         SDL_Quit();
         return false;
     }
@@ -931,7 +1154,7 @@ bool sdl_renderer::initWaiting()
     renderer = createRenderer();
 
     if (!renderer) {
-        SDL_DestroyWindow(window);
+        discardOverlayWindow();
         SDL_Quit();
         return false;
     }
@@ -944,7 +1167,9 @@ bool sdl_renderer::init(
     const wchar_t* targetWindowName,
     DWORD targetProcessId)
 {
-    configureVideoHints();
+    if (!configureVideoHints()) {
+        return false;
+    }
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         return false;
@@ -959,6 +1184,13 @@ bool sdl_renderer::init(
     }
 
     currentGeometry = initialGeometry;
+    gameDisconnected.store(false, std::memory_order_relaxed);
+    gameOnSingleMonitor.store(
+        clientFitsMonitor(initialGeometry),
+        std::memory_order_relaxed);
+    targetRefreshRate.store(
+        refreshRateForMonitor(initialGeometry.monitorHandle),
+        std::memory_order_relaxed);
     WIDTH = static_cast<uint32_t>(rectWidth(initialGeometry.gameClient));
     HEIGHT = static_cast<uint32_t>(rectHeight(initialGeometry.gameClient));
     WINDOW_W = WIDTH;
@@ -971,11 +1203,10 @@ bool sdl_renderer::init(
                 appliedViewportMode,
                 rectWidth(initialGeometry.gameClient),
                 rectHeight(initialGeometry.gameClient)));
-    autoViewportDetectionPending = false;
-    autoViewportDetectionRequestedAt = 0;
-    autoViewportDetectionAttempts = 0;
-    pendingViewport = {};
-    pendingViewportSamples = 0;
+    ++viewportGeneration;
+    pendingViewport = currentViewport;
+    pendingViewportSamples = 1;
+    lastViewportQueueTime = GetTickCount();
 
     window = SDL_CreateWindow(
         "Overlay",
@@ -998,16 +1229,12 @@ bool sdl_renderer::init(
     }
 
     if (!configureOverlayWindow(overlayHwnd)) {
-        SDL_DestroyWindow(window);
-        window = nullptr;
-        overlayHwnd = nullptr;
+        discardOverlayWindow();
         SDL_Quit();
         return false;
     }
     if (!setClickThrough(overlayHwnd, !menuVisible)) {
-        SDL_DestroyWindow(window);
-        window = nullptr;
-        overlayHwnd = nullptr;
+        discardOverlayWindow();
         SDL_Quit();
         return false;
     }
@@ -1015,11 +1242,12 @@ bool sdl_renderer::init(
     renderer = createRenderer();
 
     if (!renderer) {
-        SDL_DestroyWindow(window);
+        discardOverlayWindow();
         SDL_Quit();
         return false;
     }
 
+    startViewportDetectionWorker();
     ShowWindow(overlayHwnd, SW_SHOWNOACTIVATE);
     updateWindowPosition();
     updateRenderDimensions();
@@ -1029,6 +1257,7 @@ bool sdl_renderer::init(
 
 void sdl_renderer::destroy()
 {
+    stopViewportDetectionWorker();
     if (renderer) {
         SDL_DestroyRenderer(renderer);
         renderer = nullptr;
@@ -1044,14 +1273,20 @@ void sdl_renderer::destroy()
     pendingViewport = {};
     pendingViewportSamples = 0;
     appliedViewportMode = -1;
-    autoViewportDetectionPending = false;
-    autoViewportDetectionRequestedAt = 0;
-    autoViewportDetectionAttempts = 0;
+    lastViewportQueueTime = 0;
+    ++viewportGeneration;
     VIEWPORT_X = 0;
     VIEWPORT_Y = 0;
     VIEWPORT_W = 0;
     VIEWPORT_H = 0;
     gameVisible = true;
+    mixedMonitorBlocked = false;
+    gameForeground.store(false, std::memory_order_relaxed);
+    inputAllowed.store(false, std::memory_order_relaxed);
+    acceleratedRenderer.store(false, std::memory_order_relaxed);
+    gameOnSingleMonitor.store(true, std::memory_order_relaxed);
+    interactiveRect = {};
+    originalWindowProc = nullptr;
     SDL_Quit();
 }
 
@@ -1106,26 +1341,61 @@ void sdl_renderer::pollEvents()
         }
     }
 
-    // Skip hotkey processing if we're binding a key
-    if (menu::isBindingKey) {
+    // Skip global hotkeys while binding, and until every configured key has
+    // been released after a bind. This prevents the newly assigned key from
+    // immediately hiding the menu, exiting, aiming, or firing.
+    if (menu::isBindingKey ||
+        menu::suppressHotkeysUntilRelease) {
         exitKeyTracker = {};
         menuKeyTracker = {};
+        if (!menu::isBindingKey &&
+            menu::ConfiguredHotkeysReleased()) {
+            menu::suppressHotkeysUntilRelease = false;
+            menu::publishRuntimeConfig();
+        }
         return;
     }
 
-    // Check exit key (configurable, default: F9)
-    if (consumeAsyncKeyPress(menu::exitKey, exitKeyTracker)) {
+    const bool gameOrOverlayForeground =
+        !gameHwnd || foregroundBelongsToGameUi();
+
+    // Always sample the keys so GetAsyncKeyState's low-order latch cannot
+    // replay a press made in another application when CS2 regains focus.
+    const bool exitPressed =
+        consumeAsyncKeyPress(menu::exitKey, exitKeyTracker);
+    const bool menuPressed =
+        consumeAsyncKeyPress(menu::menuToggleKey, menuKeyTracker);
+
+    // Check exit key (configurable, default: F9).
+    if (gameOrOverlayForeground && exitPressed) {
         running = false;
         return;
     }
 
     // The low-order GetAsyncKeyState bit records a short press that happened
     // between frames. This keeps F4 responsive even if a frame is delayed.
-    if (consumeAsyncKeyPress(menu::menuToggleKey, menuKeyTracker)) {
+    if (gameOrOverlayForeground && gameHwnd && menuPressed) {
         menuVisible = !menuVisible;
         if (!setClickThrough(overlayHwnd, !menuVisible)) {
+            inputAllowed.store(false, std::memory_order_relaxed);
             running = false;
+            return;
         }
+
+        // Clicking the menu can activate the overlay HWND. When hiding it,
+        // return focus to CS2 when Windows permits that transition. Injection
+        // stays blocked unless the game client itself is confirmed foreground.
+        if (!menuVisible &&
+            GetForegroundWindow() == overlayHwnd &&
+            IsWindow(gameHwnd)) {
+            SetForegroundWindow(gameHwnd);
+        }
+        inputAllowed.store(
+            !menuVisible &&
+                isGameClientForeground() &&
+                !menu::isBindingKey &&
+                !menu::suppressHotkeysUntilRelease,
+            std::memory_order_relaxed);
     }
 }
 
@@ -1134,7 +1404,10 @@ void sdl_renderer::updateWindowPosition()
     if (!gameHwnd || !overlayHwnd) return;
 
     if (!IsWindow(gameHwnd)) {
-        running = false;
+        gameDisconnected.store(true, std::memory_order_relaxed);
+        gameForeground.store(false, std::memory_order_relaxed);
+        inputAllowed.store(false, std::memory_order_relaxed);
+        ShowWindow(overlayHwnd, SW_HIDE);
         return;
     }
 
@@ -1145,20 +1418,55 @@ void sdl_renderer::updateWindowPosition()
     if (now - lastUpdate < 50) return;
     lastUpdate = now;
 
-    if (IsIconic(gameHwnd) || !IsWindowVisible(gameHwnd)) {
+    const bool uiForeground = foregroundBelongsToGameUi();
+    const bool gameClientForeground = isGameClientForeground();
+    gameForeground.store(
+        gameClientForeground,
+        std::memory_order_relaxed);
+    inputAllowed.store(
+        gameClientForeground &&
+            !menuVisible &&
+            !menu::isBindingKey &&
+            !menu::suppressHotkeysUntilRelease,
+        std::memory_order_relaxed);
+
+    if (IsIconic(gameHwnd) ||
+        !IsWindowVisible(gameHwnd) ||
+        !uiForeground) {
         gameVisible = false;
         ShowWindow(overlayHwnd, SW_HIDE);
         return;
+    }
+    GameDisplayGeometry geometry{};
+    if (!getGameDisplayGeometry(gameHwnd, geometry)) {
+        return;
+    }
+
+    const bool fitsOneMonitor = clientFitsMonitor(geometry);
+    gameOnSingleMonitor.store(
+        fitsOneMonitor,
+        std::memory_order_relaxed);
+    if (!fitsOneMonitor) {
+        if (!mixedMonitorBlocked) {
+            diagnostics::log(
+                L"Overlay paused: the CS2 client spans multiple monitors. "
+                L"Move it fully onto one monitor to preserve pixel mapping.");
+            mixedMonitorBlocked = true;
+        }
+        gameVisible = false;
+        inputAllowed.store(false, std::memory_order_relaxed);
+        ShowWindow(overlayHwnd, SW_HIDE);
+        return;
+    }
+    if (mixedMonitorBlocked) {
+        diagnostics::log(
+            L"Overlay resumed: the CS2 client is fully contained by one monitor.");
+        mixedMonitorBlocked = false;
     }
     if (!gameVisible) {
         ShowWindow(overlayHwnd, SW_SHOWNOACTIVATE);
     }
     gameVisible = true;
-
-    GameDisplayGeometry geometry{};
-    if (!getGameDisplayGeometry(gameHwnd, geometry)) {
-        return;
-    }
 
     const int x = geometry.gameClient.left;
     const int y = geometry.gameClient.top;
@@ -1185,14 +1493,16 @@ void sdl_renderer::updateWindowPosition()
             return;
         }
         currentGeometry = geometry;
+        targetRefreshRate.store(
+            refreshRateForMonitor(geometry.monitorHandle),
+            std::memory_order_relaxed);
         publishViewport(viewportForMode(
             menu::viewportMode,
             width,
             height));
         if (menu::viewportMode == 0) {
-            requestAutoViewportDetection(now);
+            resetAutoViewportDetection(geometry.gameClient);
         } else {
-            autoViewportDetectionPending = false;
             pendingViewport = {};
             pendingViewportSamples = 0;
         }
@@ -1228,38 +1538,37 @@ void sdl_renderer::updateWindowPosition()
         pendingViewport = {};
         pendingViewportSamples = 0;
         if (appliedViewportMode == 0) {
-            requestAutoViewportDetection(now);
-        } else {
-            autoViewportDetectionPending = false;
+            resetAutoViewportDetection(geometry.gameClient);
         }
     }
 
-    // The initial viewport is sampled before the overlay is shown. Re-sample
-    // only after a geometry/mode change, never continuously just because F4
-    // hid ImGui. Two small captures confirm the result without adding a
-    // permanent hidden-menu render-thread workload.
-    if (autoViewportDetectionPending &&
-        menu::viewportMode == 0 &&
+    // A low-cost desktop sample runs on a worker. Periodic confirmation catches
+    // loading-screen false negatives and internal resolution/aspect changes
+    // that do not resize the game HWND, without blocking the render thread.
+    if (menu::viewportMode == 0 &&
         !menuVisible &&
-        now - autoViewportDetectionRequestedAt >= 250) {
-        autoViewportDetectionRequestedAt = now;
-        ++autoViewportDetectionAttempts;
-        const ContentViewport detected =
-            detectContentViewport(geometry.gameClient);
-        if (sameViewport(detected, pendingViewport)) {
+        now - lastViewportQueueTime >= 2000) {
+        lastViewportQueueTime = now;
+        queueViewportDetection(
+            geometry.gameClient,
+            viewportGeneration);
+    }
+
+    ViewportDetectionResult detection{};
+    if (menu::viewportMode == 0 &&
+        consumeViewportDetection(detection) &&
+        detection.generation == viewportGeneration &&
+        sameRect(detection.rect, geometry.gameClient)) {
+        if (sameViewport(detection.viewport, pendingViewport)) {
             ++pendingViewportSamples;
         } else {
-            pendingViewport = detected;
+            pendingViewport = detection.viewport;
             pendingViewportSamples = 1;
         }
         if (pendingViewportSamples >= 2) {
-            if (!sameViewport(detected, currentViewport)) {
-                publishViewport(detected);
+            if (!sameViewport(detection.viewport, currentViewport)) {
+                publishViewport(detection.viewport);
             }
-            autoViewportDetectionPending = false;
-        } else if (autoViewportDetectionAttempts >= 4) {
-            // Avoid repeatedly sampling an animated/dark scene forever.
-            autoViewportDetectionPending = false;
         }
     }
 
@@ -1274,6 +1583,61 @@ float sdl_renderer::getDpiScale()
 bool sdl_renderer::isGameVisible()
 {
     return gameVisible;
+}
+
+bool sdl_renderer::isGameForeground()
+{
+    return gameForeground.load(std::memory_order_relaxed);
+}
+
+bool sdl_renderer::isInputAllowed()
+{
+    return inputAllowed.load(std::memory_order_relaxed) &&
+        isGameClientForeground();
+}
+
+bool sdl_renderer::isGameDisconnected()
+{
+    return gameDisconnected.load(std::memory_order_relaxed);
+}
+
+int sdl_renderer::getTargetRefreshRate()
+{
+    const int refreshRate =
+        targetRefreshRate.load(std::memory_order_relaxed);
+    if (!acceleratedRenderer.load(std::memory_order_relaxed)) {
+        return std::min(refreshRate, 60);
+    }
+    return refreshRate;
+}
+
+bool sdl_renderer::isAcceleratedRenderer()
+{
+    return acceleratedRenderer.load(std::memory_order_relaxed);
+}
+
+bool sdl_renderer::isDpiAwarenessReliable()
+{
+    return dpiAwarenessReliable.load(std::memory_order_relaxed);
+}
+
+bool sdl_renderer::isGameOnSingleMonitor()
+{
+    return gameOnSingleMonitor.load(std::memory_order_relaxed);
+}
+
+void sdl_renderer::setInteractiveRect(
+    float x,
+    float y,
+    float width,
+    float height)
+{
+    interactiveRect.left = static_cast<LONG>(std::floor(x));
+    interactiveRect.top = static_cast<LONG>(std::floor(y));
+    interactiveRect.right =
+        static_cast<LONG>(std::ceil(x + std::max(0.0f, width)));
+    interactiveRect.bottom =
+        static_cast<LONG>(std::ceil(y + std::max(0.0f, height)));
 }
 
 uint32_t sdl_renderer::getDpiRevision()
@@ -1304,10 +1668,6 @@ void sdl_renderer::draw::filledBox(int x, int y, int w, int h, uint8_t r, uint8_
     SDL_RenderFillRect(renderer, &rect);
 }
 
-void sdl_renderer::draw::text(int x, int y, const char* str, uint8_t r, uint8_t g, uint8_t b)
-{
-}
-
 bool sdl_renderer::initImGui()
 {
     IMGUI_CHECKVERSION();
@@ -1329,7 +1689,10 @@ bool sdl_renderer::initImGui()
     style.WindowRounding = 8.0f;
     style.FrameRounding = 4.0f;
     style.TabRounding = 4.0f;
-    style.Alpha = 0.95f;
+    // Color-keyed layered windows cannot preserve true per-pixel translucency.
+    // Keep the menu opaque so it does not blend against the reserved key and
+    // leave a dark halo over the game.
+    style.Alpha = 1.0f;
     style.FramePadding = ImVec2(6.0f, 4.0f);
     style.ItemSpacing = ImVec2(8.0f, 6.0f);
     style.TabBarBorderSize = 1.0f;

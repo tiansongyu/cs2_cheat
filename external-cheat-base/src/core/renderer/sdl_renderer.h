@@ -7,6 +7,7 @@
 #include <SDL.h>
 #include <SDL_syswm.h>
 #include <Windows.h>
+#include <atomic>
 #include <cstdint>
 
 extern uint32_t WIDTH;
@@ -35,6 +36,14 @@ namespace sdl_renderer
     void pollEvents();
     void updateWindowPosition();
     bool isGameVisible();
+    bool isGameForeground();
+    bool isInputAllowed();
+    bool isGameDisconnected();
+    int getTargetRefreshRate();
+    bool isAcceleratedRenderer();
+    bool isDpiAwarenessReliable();
+    bool isGameOnSingleMonitor();
+    void setInteractiveRect(float x, float y, float width, float height);
     float getDpiScale();
     uint32_t getDpiRevision();
 
@@ -49,6 +58,5 @@ namespace sdl_renderer
         void box(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255);
         void filledBox(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255);
         void filledEllipse(int cx, int cy, int rx, int ry, uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255);
-        void text(int x, int y, const char* str, uint8_t r, uint8_t g, uint8_t b);
     }
 }

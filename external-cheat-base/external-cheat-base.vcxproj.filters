@@ -24,6 +24,21 @@
     <ClInclude Include="generated\offsets.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\core\diagnostics.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\memory\game_layout.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\memory\memory.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\renderer\sdl_renderer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\renderer\viewport_math.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\features\esp.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -33,13 +48,7 @@
     <ClInclude Include="src\features\menu.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\utils\math\vector.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="src\core\memory\memory.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="src\core\renderer\sdl_renderer.h">
+    <ClInclude Include="src\utils\math\vector.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="vendor\imgui\imconfig.h">

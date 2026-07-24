@@ -10,10 +10,69 @@
 #include <cmath>
 #include <limits>
 #include <algorithm>
+#include <chrono>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+namespace
+{
+    using SteadyClock = std::chrono::steady_clock;
+
+    SteadyClock::time_point lastAimUpdate{};
+    SteadyClock::time_point lastTriggerUpdate{};
+    float aimResidualX = 0.0f;
+    float aimResidualY = 0.0f;
+    float triggerResidualX = 0.0f;
+    float triggerResidualY = 0.0f;
+
+    float timeBasedAlpha(
+        SteadyClock::time_point& previous,
+        float smoothing)
+    {
+        const auto now = SteadyClock::now();
+        float deltaSeconds = 1.0f / 144.0f;
+        if (previous.time_since_epoch().count() != 0) {
+            deltaSeconds = std::chrono::duration<float>(
+                now - previous).count();
+        }
+        previous = now;
+        deltaSeconds = std::clamp(
+            deltaSeconds,
+            1.0f / 1000.0f,
+            0.05f);
+        const float safeSmoothing =
+            std::max(1.0f, smoothing);
+        const float responsePerSecond =
+            60.0f / safeSmoothing;
+        return 1.0f -
+            std::exp(-responsePerSecond * deltaSeconds);
+    }
+
+    LONG consumeMouseDelta(float value, float& residual)
+    {
+        const float accumulated = value + residual;
+        const LONG whole = static_cast<LONG>(
+            std::trunc(accumulated));
+        residual = accumulated - static_cast<float>(whole);
+        return whole;
+    }
+
+    void resetAimState()
+    {
+        lastAimUpdate = {};
+        aimResidualX = 0.0f;
+        aimResidualY = 0.0f;
+    }
+
+    void resetTriggerState()
+    {
+        lastTriggerUpdate = {};
+        triggerResidualX = 0.0f;
+        triggerResidualY = 0.0f;
+    }
+}
 
 // Calculate head offset for side-facing enemies
 // When enemy is facing sideways (angle 45-135 degrees to player),
@@ -64,21 +123,12 @@ vec3 calculateHeadOffset(
 
 bool aimbot::init()
 {
-    // Get process info (shared with ESP)
-    pID = memory::GetProcID(L"cs2.exe");
-    if (!pID) {
-        std::cout << "Aimbot: Cannot find cs2.exe process!" << std::endl;
-        return false;
-    }
-
-    modBase = memory::GetModuleBaseAddress(pID, L"client.dll");
-    if (!modBase) {
-        std::cout << "Aimbot: Cannot find client.dll!" << std::endl;
-        return false;
-    }
-
-    std::cout << "Aimbot module initialized successfully" << std::endl;
-    return true;
+    // Reuse the already validated read-only process handle and module base.
+    // Reopening here could invalidate a working ESP handle on a transient
+    // OpenProcess failure.
+    pID = esp::pID;
+    modBase = esp::modBase;
+    return pID != 0 && modBase != 0;
 }
 
 float aimbot::normalizeAngle(float angle)
@@ -118,29 +168,45 @@ float aimbot::getFOV(const vec2& viewAngle, const vec2& aimAngle)
 
 void aimbot::update(const menu::RuntimeConfig& config)
 {
-    // Check if aimbot is enabled
-    if (!config.aimbotEnabled) return;
+    if (!config.aimbotEnabled ||
+        config.inputSuppressed ||
+        !sdl_renderer::isInputAllowed()) {
+        resetAimState();
+        return;
+    }
 
     // Check if aimbot key is held (Shift)
-    if (!(GetAsyncKeyState(config.aimbotKey) & 0x8000)) return;
+    if (!(GetAsyncKeyState(config.aimbotKey) & 0x8000)) {
+        resetAimState();
+        return;
+    }
 
     // Use cached local player data (updated once per frame in esp::updateEntities)
-    if (!esp::localPlayer.isValid) return;
+    if (!esp::localPlayer.isValid) {
+        resetAimState();
+        return;
+    }
 
     const vec2& currentViewAngle = esp::localPlayer.viewAngle;
     const vec3& eyePos = esp::localPlayer.eyePosition;
 
     vec2 bestAngle = { 0.0f, 0.0f };
     bool foundTarget = false;
+    const esp::EnemySnapshot enemies =
+        esp::getEnemySnapshot();
+    if (!enemies) {
+        resetAimState();
+        return;
+    }
 
     if (config.smartAimEnabled) {
-        // Smart Aim Mode: Ignore FOV, select best visible target by priority
+        // Smart Aim Mode: Ignore FOV, select the best spotted target.
         float bestScore = 999999.0f;  // Lower is better
 
-        for (const auto& enemy : esp::enemies)
+        for (const auto& enemy : *enemies)
         {
-            // Smart Aim ONLY targets visible enemies (not behind walls)
-            if (!enemy.isSpotted) continue;
+            // Unknown state never passes the conservative spotted filter.
+            if (!enemy.visibilityKnown || !enemy.isSpotted) continue;
 
             // Calculate priority score based on selected mode
             float score;
@@ -199,10 +265,13 @@ void aimbot::update(const menu::RuntimeConfig& config)
         // Normal Mode: Use FOV to find closest target to crosshair
         float bestFOV = config.aimbotFOV;
 
-        for (const auto& enemy : esp::enemies)
+        for (const auto& enemy : *enemies)
         {
-            // Skip if visible only mode and enemy is behind wall
-            if (config.aimbotVisibleOnly && !enemy.isSpotted) continue;
+            // The option is a spotted-state filter, not a ray-cast.
+            if (config.aimbotVisibleOnly &&
+                (!enemy.visibilityKnown || !enemy.isSpotted)) {
+                continue;
+            }
 
             // Get target position based on selected bone
             vec3 targetPos;
@@ -253,28 +322,39 @@ void aimbot::update(const menu::RuntimeConfig& config)
         }
     }
 
-    if (!foundTarget) return;
+    if (!foundTarget) {
+        resetAimState();
+        return;
+    }
 
-    // Apply smoothing using linear interpolation (Lerp)
-    float smoothing = config.aimbotSmoothing;
-    float deltaPitch = (bestAngle.x - currentViewAngle.x) / smoothing;
-    float deltaYaw = normalizeAngle(bestAngle.y - currentViewAngle.y) / smoothing;
+    // Exponential time-based smoothing is stable across worker rates.
+    const float alpha =
+        timeBasedAlpha(lastAimUpdate, config.aimbotSmoothing);
+    float deltaPitch =
+        normalizeAngle(bestAngle.x - currentViewAngle.x) * alpha;
+    float deltaYaw =
+        normalizeAngle(bestAngle.y - currentViewAngle.y) * alpha;
 
     // Convert angle delta to mouse movement
-    float mouseSensitivityFactor = config.mouseSensitivity * 0.022f;
+    const float mouseSensitivityFactor =
+        std::max(0.01f, config.mouseSensitivity) * 0.022f;
 
     // In CS2: Moving mouse RIGHT decreases Yaw, DOWN increases Pitch
     float moveX = -deltaYaw / mouseSensitivityFactor;
     float moveY = deltaPitch / mouseSensitivityFactor;
 
     // Move mouse if delta is significant
-    if (std::abs(moveX) > 0.1f || std::abs(moveY) > 0.1f)
+    const LONG moveWholeX =
+        consumeMouseDelta(moveX, aimResidualX);
+    const LONG moveWholeY =
+        consumeMouseDelta(moveY, aimResidualY);
+    if (moveWholeX != 0 || moveWholeY != 0)
     {
         INPUT input = {};
         input.type = INPUT_MOUSE;
         input.mi.dwFlags = MOUSEEVENTF_MOVE;
-        input.mi.dx = static_cast<LONG>(moveX);
-        input.mi.dy = static_cast<LONG>(moveY);
+        input.mi.dx = moveWholeX;
+        input.mi.dy = moveWholeY;
         SendInput(1, &input, sizeof(INPUT));
     }
 }
@@ -282,34 +362,46 @@ void aimbot::update(const menu::RuntimeConfig& config)
 void aimbot::updateTriggerbot(const menu::RuntimeConfig& config)
 {
     // Check if triggerbot is enabled
-    if (!config.triggerbotEnabled) {
+    if (!config.triggerbotEnabled ||
+        config.inputSuppressed ||
+        !sdl_renderer::isInputAllowed()) {
         triggerbotHasTarget = false;
+        resetTriggerState();
         return;
     }
 
     // Check if triggerbot key is held (Alt by default)
     if (!(GetAsyncKeyState(config.triggerbotKey) & 0x8000)) {
         triggerbotHasTarget = false;
+        resetTriggerState();
         return;
     }
 
     // Use cached local player data
     if (!esp::localPlayer.isValid) {
         triggerbotHasTarget = false;
+        resetTriggerState();
         return;
     }
 
     const vec2& currentViewAngle = esp::localPlayer.viewAngle;
     const vec3& eyePos = esp::localPlayer.eyePosition;
 
-    // Find any visible enemy that is very close to crosshair (within small FOV)
+    // Find a spotted enemy that is very close to the crosshair.
     const float triggerbotFOV = 1.5f;  // Very small FOV - only trigger when almost on target
     bool foundTarget = false;
+    const esp::EnemySnapshot enemies =
+        esp::getEnemySnapshot();
+    if (!enemies) {
+        triggerbotHasTarget = false;
+        resetTriggerState();
+        return;
+    }
 
-    for (const auto& enemy : esp::enemies)
+    for (const auto& enemy : *enemies)
     {
-        // Skip enemies behind walls (only target visible enemies)
-        if (!enemy.isSpotted) continue;
+        // Unknown state never passes the conservative spotted filter.
+        if (!enemy.visibilityKnown || !enemy.isSpotted) continue;
 
         // Target head position with offset compensation for side-facing enemies
         vec3 targetPos = calculateHeadOffset(
@@ -340,23 +432,35 @@ void aimbot::updateTriggerbot(const menu::RuntimeConfig& config)
             if (currentTime - triggerbotTargetTime >=
                 static_cast<DWORD>(config.triggerbotDelay))
             {
-                // Aim at head first (snap to target)
-                float deltaPitch = (aimAngle.x - currentViewAngle.x) / 2.0f;
-                float deltaYaw = normalizeAngle(aimAngle.y - currentViewAngle.y) / 2.0f;
+                const float alpha =
+                    timeBasedAlpha(lastTriggerUpdate, 2.0f);
+                float deltaPitch = normalizeAngle(
+                    aimAngle.x - currentViewAngle.x) * alpha;
+                float deltaYaw = normalizeAngle(
+                    aimAngle.y - currentViewAngle.y) * alpha;
 
-                float mouseSensitivityFactor = config.mouseSensitivity * 0.022f;
+                const float mouseSensitivityFactor =
+                    std::max(0.01f, config.mouseSensitivity) * 0.022f;
 
                 float moveX = -deltaYaw / mouseSensitivityFactor;
                 float moveY = deltaPitch / mouseSensitivityFactor;
 
                 // Move mouse to aim at head
-                if (std::abs(moveX) > 0.1f || std::abs(moveY) > 0.1f)
+                const LONG moveWholeX =
+                    consumeMouseDelta(
+                        moveX,
+                        triggerResidualX);
+                const LONG moveWholeY =
+                    consumeMouseDelta(
+                        moveY,
+                        triggerResidualY);
+                if (moveWholeX != 0 || moveWholeY != 0)
                 {
                     INPUT moveInput = {};
                     moveInput.type = INPUT_MOUSE;
                     moveInput.mi.dwFlags = MOUSEEVENTF_MOVE;
-                    moveInput.mi.dx = static_cast<LONG>(moveX);
-                    moveInput.mi.dy = static_cast<LONG>(moveY);
+                    moveInput.mi.dx = moveWholeX;
+                    moveInput.mi.dy = moveWholeY;
                     SendInput(1, &moveInput, sizeof(INPUT));
                 }
 
@@ -379,5 +483,6 @@ void aimbot::updateTriggerbot(const menu::RuntimeConfig& config)
 
     if (!foundTarget) {
         triggerbotHasTarget = false;
+        resetTriggerState();
     }
 }

@@ -2,6 +2,7 @@
 
 #include "imgui.h"
 #include "core/renderer/sdl_renderer.h"
+#include "core/memory/memory.hpp"
 #include <Windows.h>
 #include <algorithm>
 #include <mutex>
@@ -17,11 +18,10 @@ namespace menu
     {
         bool espWeapon = true;
         bool espFlashIndicator = false;
-        bool antiFlash = true;
+        bool antiFlash = false;
         bool espViewAngle = true;
         bool radarEnabled = false;
         bool espWallCheck = true;
-        float espWallCheckDistance = 2000.0f;
         bool espSkeleton = true;
         bool grenadeESP = false;
         bool droppedWeaponESP = false;
@@ -44,6 +44,7 @@ namespace menu
         bool triggerbotEnabled = false;
         int triggerbotDelay = 50;
         int triggerbotKey = 0x46;
+        bool inputSuppressed = false;
     };
 
     // Current tab index
@@ -58,8 +59,7 @@ namespace menu
     inline bool espViewAngle = true; // View angle indicator - Default ON
     inline bool espViewAngleText = false; // Show angle degree text
     inline bool espFlashIndicator = false; // Flashbang eye indicator - Default OFF
-    inline bool espWallCheck = true; // Wall occlusion check - Default ON
-    inline float espWallCheckDistance = 2000.0f; // Max distance for reliable wall check (game units)
+    inline bool espWallCheck = true; // CS2 spotted-state indicator
     inline bool espSnaplines = false;
 
     // Skeleton ESP
@@ -67,8 +67,8 @@ namespace menu
     inline float espSkeletonColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };  // White
 
     // Colors
-    inline float espBoxColor[4] = { 1.0f, 0.0f, 0.0f, 1.0f };          // Red - visible enemies (in direct line of sight)
-    inline float espWallColor[4] = { 0.0f, 1.0f, 0.0f, 1.0f };         // Green - enemies behind wall
+    inline float espBoxColor[4] = { 1.0f, 0.0f, 0.0f, 1.0f };          // Red - spotted state
+    inline float espWallColor[4] = { 0.0f, 1.0f, 0.0f, 1.0f };         // Green - not spotted or unknown
     inline float espDistanceColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
     inline float espWeaponColor[4] = { 0.0f, 1.0f, 1.0f, 1.0f };       // Cyan color for weapon
     inline float espFlashNormalColor[4] = { 1.0f, 0.0f, 0.0f, 1.0f };  // Red - normal eye state
@@ -83,10 +83,10 @@ namespace menu
     inline float aimbotFOV = 10.0f;        // Field of view for aimbot (degrees)
     inline float aimbotSmoothing = 5.0f;   // Smoothing factor (1.0 = instant, higher = smoother)
     inline int aimbotBone = 0;             // 0=Head, 1=Neck, 2=Chest
-    inline bool aimbotVisibleOnly = true;  // Only aim at visible enemies (not behind walls)
+    inline bool aimbotVisibleOnly = true;  // Only aim at enemies flagged as spotted
     inline int aimbotKey = VK_SHIFT;       // Aimbot activation key (default: Shift key)
     inline bool aimbotShowFOV = true;      // Show FOV circle on screen
-    inline float aimbotFOVColor[4] = { 1.0f, 1.0f, 0.0f, 0.5f };  // FOV circle color (yellow, 50% opacity)
+    inline float aimbotFOVColor[4] = { 1.0f, 1.0f, 0.0f, 1.0f };  // Color-key overlays use opaque primitives
 
     // Head Offset Settings (for side-facing enemies)
     inline bool headOffsetEnabled = true;      // Enable head offset compensation
@@ -94,7 +94,7 @@ namespace menu
     inline float headOffsetAngleMin = 45.0f;   // Minimum angle for offset (degrees)
     inline float headOffsetAngleMax = 135.0f;  // Maximum angle for offset (degrees)
 
-    // Smart Aim Settings (auto-lock visible enemies by priority)
+    // Smart Aim Settings (auto-lock spotted enemies by priority)
     inline bool smartAimEnabled = false;      // Smart aim mode (ignores FOV, auto-selects best target)
     inline int smartAimPriority = 0;          // 0=Distance first, 1=Health first
 
@@ -115,7 +115,7 @@ namespace menu
     inline bool radarShowCenter = true;      // Show radar center marker (for debugging)
 
     // Misc Settings
-    inline bool antiFlash = true;           // Anti-flash (remove flashbang effect)
+    inline bool antiFlash = false;          // Memory writes are opt-in
     inline bool bombTimer = true;            // Show bomb timer on screen
     inline bool grenadeESP = false;          // Show grenade positions
     inline bool droppedWeaponESP = false;    // Show dropped weapon positions
@@ -123,7 +123,7 @@ namespace menu
     inline float radarCenterY = 0.142f;      // Radar center Y as percentage of screen height (top area)
     inline float radarRadius = 0.117f;       // Radar radius as percentage of screen height
     inline float radarScale = 1.0f;          // Scale for enemy positions (adjust based on map size)
-    inline float radarBgColor[4] = { 1.0f, 1.0f, 1.0f, 0.6f };           // #FFFFFF99 - white with 60% opacity
+    inline float radarBgColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };           // Opaque to avoid color-key alpha artifacts
     inline float radarEnemyColor[4] = { 1.0f, 0.0f, 0.0f, 1.0f };        // Red - enemy dots on radar
     inline float radarEnemyArrowColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };   // White - enemy direction arrow
     inline float radarCenterColor[4] = { 0.0f, 1.0f, 0.0f, 1.0f };       // Green - radar center marker (you)
@@ -132,9 +132,16 @@ namespace menu
     inline int menuToggleKey = VK_F4;        // Menu toggle key (default: F4)
     inline int exitKey = VK_F9;              // Exit key (default: F9)
 
-    inline RuntimeConfig getRuntimeConfig()
+    // Hotkey binding state
+    inline bool isBindingKey = false;
+    inline int* bindingKeyTarget = nullptr;
+    inline const char* bindingKeyName = nullptr;
+    inline bool bindingWaitingForRelease = false;
+    inline std::string bindingError;
+    inline bool suppressHotkeysUntilRelease = false;
+
+    inline RuntimeConfig buildRuntimeConfig()
     {
-        std::lock_guard<std::mutex> lock(configMutex);
         RuntimeConfig config{};
         config.espWeapon = espWeapon;
         config.espFlashIndicator = espFlashIndicator;
@@ -142,7 +149,6 @@ namespace menu
         config.espViewAngle = espViewAngle;
         config.radarEnabled = radarEnabled;
         config.espWallCheck = espWallCheck;
-        config.espWallCheckDistance = espWallCheckDistance;
         config.espSkeleton = espSkeleton;
         config.grenadeESP = grenadeESP;
         config.droppedWeaponESP = droppedWeaponESP;
@@ -165,13 +171,25 @@ namespace menu
         config.triggerbotEnabled = triggerbotEnabled;
         config.triggerbotDelay = triggerbotDelay;
         config.triggerbotKey = triggerbotKey;
+        config.inputSuppressed =
+            isBindingKey || suppressHotkeysUntilRelease;
         return config;
     }
 
-    // Hotkey binding state
-    inline bool isBindingKey = false;
-    inline int* bindingKeyTarget = nullptr;
-    inline const char* bindingKeyName = nullptr;
+    inline RuntimeConfig runtimeConfigSnapshot = buildRuntimeConfig();
+
+    inline RuntimeConfig getRuntimeConfig()
+    {
+        std::lock_guard<std::mutex> lock(configMutex);
+        return runtimeConfigSnapshot;
+    }
+
+    inline void publishRuntimeConfig()
+    {
+        const RuntimeConfig updated = buildRuntimeConfig();
+        std::lock_guard<std::mutex> lock(configMutex);
+        runtimeConfigSnapshot = updated;
+    }
 
     // Convert virtual key code to key name
     inline const char* GetKeyName(int vkCode)
@@ -313,6 +331,56 @@ namespace menu
         return 0;
     }
 
+    inline bool AnyBindableKeyDown()
+    {
+        for (int key = 0x01; key <= 0xFE; ++key) {
+            if (GetAsyncKeyState(key) & 0x8000) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    inline bool ConfiguredHotkeysReleased()
+    {
+        const int keys[] = {
+            menuToggleKey,
+            exitKey,
+            aimbotKey,
+            triggerbotKey
+        };
+        for (int key : keys) {
+            if (key > 0 && key <= 0xFF &&
+                (GetAsyncKeyState(key) & 0x8000)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    inline const char* FindHotkeyConflict(
+        const int* target,
+        int candidate)
+    {
+        struct Binding
+        {
+            const char* name;
+            const int* key;
+        };
+        const Binding bindings[] = {
+            { "Menu Toggle", &menuToggleKey },
+            { "Exit Program", &exitKey },
+            { "Aimbot Key", &aimbotKey },
+            { "Triggerbot Key", &triggerbotKey }
+        };
+        for (const Binding& binding : bindings) {
+            if (binding.key != target && *binding.key == candidate) {
+                return binding.name;
+            }
+        }
+        return nullptr;
+    }
+
     // Render hotkey button
     inline void RenderHotkeyButton(const char* label, int* keyCode, const char* tooltip = nullptr)
     {
@@ -337,6 +405,9 @@ namespace menu
             isBindingKey = true;
             bindingKeyTarget = keyCode;
             bindingKeyName = label;
+            bindingWaitingForRelease = true;
+            bindingError.clear();
+            suppressHotkeysUntilRelease = true;
         }
 
         ImGui::PopStyleColor();
@@ -357,16 +428,37 @@ namespace menu
             isBindingKey = false;
             bindingKeyTarget = nullptr;
             bindingKeyName = nullptr;
+            bindingWaitingForRelease = false;
+            suppressHotkeysUntilRelease = true;
+            return;
+        }
+
+        // Do not capture the mouse click that opened the binding button, or
+        // any modifier that was already held at that moment.
+        if (bindingWaitingForRelease) {
+            if (!AnyBindableKeyDown()) {
+                bindingWaitingForRelease = false;
+            }
             return;
         }
 
         int pressedKey = GetPressedKey();
         if (pressedKey != 0)
         {
+            if (const char* conflict =
+                    FindHotkeyConflict(bindingKeyTarget, pressedKey)) {
+                bindingError =
+                    std::string("Already assigned to ") + conflict;
+                bindingWaitingForRelease = true;
+                return;
+            }
+
             *bindingKeyTarget = pressedKey;
             isBindingKey = false;
             bindingKeyTarget = nullptr;
             bindingKeyName = nullptr;
+            bindingWaitingForRelease = false;
+            suppressHotkeysUntilRelease = true;
         }
     }
 
@@ -383,7 +475,7 @@ namespace menu
 
             ImGui::Checkbox("Smart Aim (Auto-Lock)", &smartAimEnabled);
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Ignore FOV, auto-aim at best visible target\nPriority: Visible > Distance/Health");
+                ImGui::SetTooltip("Ignore FOV, auto-aim at best spotted target\nPriority: Spotted > Distance/Health");
 
             if (smartAimEnabled) {
                 ImGui::Indent();
@@ -408,15 +500,15 @@ namespace menu
             ImGui::Combo("Target Bone", &aimbotBone, boneItems, IM_ARRAYSIZE(boneItems));
 
             if (!smartAimEnabled) {
-                ImGui::Checkbox("Visible Only", &aimbotVisibleOnly);
+                ImGui::Checkbox("Spotted Only", &aimbotVisibleOnly);
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Only aim at enemies not behind walls");
+                    ImGui::SetTooltip("Uses CS2's spotted flag; this is not a geometric ray-cast");
             }
 
             ImGui::Checkbox("Show FOV Circle", &aimbotShowFOV);
             if (aimbotShowFOV) {
                 ImGui::SameLine();
-                ImGui::ColorEdit4("##FOVColor", aimbotFOVColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                ImGui::ColorEdit4("##FOVColor", aimbotFOVColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
             }
 
             ImGui::Spacing();
@@ -492,7 +584,7 @@ namespace menu
             ImGui::Checkbox("Box ESP", &espBox);
             if (espBox) {
                 ImGui::SameLine();
-                ImGui::ColorEdit4("##BoxColor", espBoxColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                ImGui::ColorEdit4("##BoxColor", espBoxColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
             }
 
             // Health Bar
@@ -502,7 +594,7 @@ namespace menu
             ImGui::Checkbox("Weapon", &espWeapon);
             if (espWeapon) {
                 ImGui::SameLine();
-                ImGui::ColorEdit4("##WeaponColor", espWeaponColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                ImGui::ColorEdit4("##WeaponColor", espWeaponColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
             }
 
             // View Direction
@@ -517,19 +609,20 @@ namespace menu
                 ImGui::Unindent();
             }
 
-            // Wall Occlusion Check
-            ImGui::Checkbox("Wall Check (Triangle)", &espWallCheck);
+            // CS2 spotted-state check. This is intentionally not described as
+            // a ray-cast: it is a conservative game-state signal.
+            ImGui::Checkbox("Spotted Check (Triangle)", &espWallCheck);
             if (espWallCheck) {
                 ImGui::Indent();
-                ImGui::Text("Visible Color:");
+                ImGui::Text("Spotted Color:");
                 ImGui::SameLine();
-                ImGui::ColorEdit4("##BoxColor2", espBoxColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
-                ImGui::Text("Behind Wall Color:");
+                ImGui::ColorEdit4("##BoxColor2", espBoxColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
+                ImGui::Text("Not Spotted / Unknown:");
                 ImGui::SameLine();
-                ImGui::ColorEdit4("##WallColor", espWallColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
-
-                ImGui::SliderFloat("Max Distance", &espWallCheckDistance, 500.0f, 5000.0f, "%.0f units");
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Beyond this: assume visible)");
+                ImGui::ColorEdit4("##WallColor", espWallColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
+                ImGui::TextColored(
+                    ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                    "Uses CS2 spotted state; never assumes distant targets visible.");
                 ImGui::Unindent();
             }
 
@@ -537,7 +630,7 @@ namespace menu
             ImGui::Checkbox("Distance", &espDistance);
             if (espDistance) {
                 ImGui::SameLine();
-                ImGui::ColorEdit4("##DistanceColor", espDistanceColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                ImGui::ColorEdit4("##DistanceColor", espDistanceColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
             }
 
             // Flashbang Eye Indicator
@@ -546,10 +639,10 @@ namespace menu
                 ImGui::Indent();
                 ImGui::Text("Normal Eye:");
                 ImGui::SameLine();
-                ImGui::ColorEdit4("##FlashNormalColor", espFlashNormalColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                ImGui::ColorEdit4("##FlashNormalColor", espFlashNormalColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
                 ImGui::Text("Flashed Eye:");
                 ImGui::SameLine();
-                ImGui::ColorEdit4("##FlashColor", espFlashColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                ImGui::ColorEdit4("##FlashColor", espFlashColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
                 ImGui::Unindent();
             }
 
@@ -557,7 +650,7 @@ namespace menu
             ImGui::Checkbox("Snaplines", &espSnaplines);
             if (espSnaplines) {
                 ImGui::SameLine();
-                ImGui::ColorEdit4("##SnaplinesColor", espSnaplinesColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                ImGui::ColorEdit4("##SnaplinesColor", espSnaplinesColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
                 ImGui::Indent();
                 const char* origins[] = { "Bottom", "Center", "Top" };
                 ImGui::Combo("Origin", &snaplinesOrigin, origins, IM_ARRAYSIZE(origins));
@@ -568,7 +661,7 @@ namespace menu
             ImGui::Checkbox("Skeleton", &espSkeleton);
             if (espSkeleton) {
                 ImGui::SameLine();
-                ImGui::ColorEdit4("##SkeletonColor", espSkeletonColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                ImGui::ColorEdit4("##SkeletonColor", espSkeletonColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
             }
         }
     }
@@ -587,7 +680,7 @@ namespace menu
             ImGui::Checkbox("Show Center Marker", &radarShowCenter);
             if (radarShowCenter) {
                 ImGui::SameLine();
-                ImGui::ColorEdit4("##RadarCenterColor", radarCenterColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                ImGui::ColorEdit4("##RadarCenterColor", radarCenterColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
                 ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Green dot = you, arrow = your direction)");
             }
 
@@ -595,15 +688,15 @@ namespace menu
             ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Colors");
             ImGui::Text("Background:");
             ImGui::SameLine();
-            ImGui::ColorEdit4("##RadarBgColor", radarBgColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+            ImGui::ColorEdit4("##RadarBgColor", radarBgColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
 
             ImGui::Text("Enemy Dot:");
             ImGui::SameLine();
-            ImGui::ColorEdit4("##RadarEnemyColor", radarEnemyColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+            ImGui::ColorEdit4("##RadarEnemyColor", radarEnemyColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
 
             ImGui::Text("Enemy Arrow:");
             ImGui::SameLine();
-            ImGui::ColorEdit4("##RadarEnemyArrowColor", radarEnemyArrowColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+            ImGui::ColorEdit4("##RadarEnemyArrowColor", radarEnemyArrowColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
 
             ImGui::Spacing();
             ImGui::Separator();
@@ -635,6 +728,12 @@ namespace menu
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Click button and press any key to bind");
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Press ESC to cancel binding");
+        if (!bindingError.empty()) {
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+                "%s",
+                bindingError.c_str());
+        }
     }
 
     // Render Settings tab content
@@ -644,7 +743,17 @@ namespace menu
         ImGui::Separator();
         ImGui::Spacing();
 
+        if (!memory::WritesAllowed()) {
+            ImGui::BeginDisabled();
+        }
         ImGui::Checkbox("Anti-Flash", &antiFlash);
+        if (!memory::WritesAllowed()) {
+            antiFlash = false;
+            ImGui::EndDisabled();
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.65f, 0.1f, 1.0f),
+                "Memory writes locked. Start with --allow-memory-writes to enable.");
+        }
         ImGui::Checkbox("Bomb Timer", &bombTimer);
 
         ImGui::Spacing();
@@ -664,7 +773,23 @@ namespace menu
 
         ImGui::TextColored(
             ImVec4(0.5f, 1.0f, 0.5f, 1.0f),
-            "Overlay capped at 144 FPS (VSync OFF)");
+            "Overlay target: %d FPS (display refresh, VSync OFF)",
+            sdl_renderer::getTargetRefreshRate());
+        ImGui::Text(
+            "Renderer: %s",
+            sdl_renderer::isAcceleratedRenderer()
+                ? "Hardware accelerated"
+                : "Software fallback (limited to 60 FPS)");
+        if (!sdl_renderer::isGameOnSingleMonitor()) {
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.5f, 0.1f, 1.0f),
+                "Move CS2 fully onto one monitor for reliable mixed-DPI mapping.");
+        }
+        if (!sdl_renderer::isDpiAwarenessReliable()) {
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.25f, 0.25f, 1.0f),
+                "Per-monitor DPI awareness is unavailable.");
+        }
         const char* viewportModes[] = {
             "Auto-detect black bars",
             "Full client (stretched)",
@@ -714,8 +839,6 @@ namespace menu
     inline void render()
     {
         if (!sdl_renderer::menuVisible) return;
-
-        std::lock_guard<std::mutex> configLock(configMutex);
 
         // Update key binding
         UpdateKeyBinding();
@@ -768,6 +891,15 @@ namespace menu
                 std::max(margin, static_cast<float>(HEIGHT) - windowSize.y - margin)));
         if (clampedPos.x != windowPos.x || clampedPos.y != windowPos.y) {
             ImGui::SetWindowPos(clampedPos);
+        }
+        {
+            const ImVec2 interactivePosition = ImGui::GetWindowPos();
+            const ImVec2 interactiveSize = ImGui::GetWindowSize();
+            sdl_renderer::setInteractiveRect(
+                interactivePosition.x,
+                interactivePosition.y,
+                interactiveSize.x,
+                interactiveSize.y);
         }
 
         // Header with controls info
@@ -833,5 +965,6 @@ namespace menu
         }
 
         ImGui::End();
+        publishRuntimeConfig();
     }
 }

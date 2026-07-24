@@ -2,6 +2,7 @@
 #include "features/aimbot.hpp"
 #include "core/renderer/sdl_renderer.h"
 #include "features/menu.hpp"
+#include "core/diagnostics.hpp"
 #include <algorithm>
 #include <thread>
 #include <atomic>
@@ -74,6 +75,15 @@ void renderWaitingScreen(int dotCount)
 
     ImGui::Begin("CS2 ESP Tool", nullptr,
         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+    {
+        const ImVec2 position = ImGui::GetWindowPos();
+        const ImVec2 size = ImGui::GetWindowSize();
+        sdl_renderer::setInteractiveRect(
+            position.x,
+            position.y,
+            size.x,
+            size.y);
+    }
 
     ImGui::Dummy(ImVec2(0.0f, 10.0f * dpiScale));
 
@@ -99,131 +109,207 @@ void renderWaitingScreen(int dotCount)
     ImGui::End();
 }
 
+namespace
+{
+    bool hasArgument(
+        int argc,
+        char* argv[],
+        const char* expected)
+    {
+        for (int index = 1; index < argc; ++index) {
+            if (_stricmp(argv[index], expected) == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void showFatalError(const wchar_t* message)
+    {
+        diagnostics::log(message);
+        MessageBoxW(
+            nullptr,
+            message,
+            L"CS2 ESP",
+            MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+    }
+}
+
 int main(int argc, char* argv[])
 {
     KillOtherInstances();
     Sleep(100);
+    memory::SetWritesAllowed(
+        hasArgument(
+            argc,
+            argv,
+            "--allow-memory-writes"));
 
 #ifndef SHOW_CONSOLE
     FreeConsole();
 #endif
 
-    // Initialize SDL2 for waiting screen (without game window)
-    if (!sdl_renderer::initWaiting()) {
-        return -1;
-    }
-    if (!sdl_renderer::initImGui()) {
-        sdl_renderer::destroy();
-        return -1;
-    }
-
-    // Wait for CS2 to start
-    int dotCount = 0;
-    DWORD lastCheckTime = 0;
-    bool gameFound = false;
-
-    while (sdl_renderer::running && !gameFound)
-    {
-        sdl_renderer::pollEvents();
-
-        // Check for CS2 every 3 seconds
-        DWORD currentTime = GetTickCount();
-        if (currentTime - lastCheckTime >= 3000 || lastCheckTime == 0) {
-            lastCheckTime = currentTime;
-            dotCount = (dotCount % 3) + 1;
-
-            if (esp::init()) {
-                aimbot::init();  // Initialize aimbot module
-                gameFound = true;
-                break;
-            }
-        }
-
-        if (!sdl_renderer::beginFrame()) {
-            break;
-        }
-        sdl_renderer::newFrameImGui();
-        renderWaitingScreen(dotCount);
-        sdl_renderer::renderImGui();
-        sdl_renderer::endFrame();
-
-        Sleep(16);
-    }
-
-    if (!sdl_renderer::running) {
-        sdl_renderer::shutdownImGui();
-        sdl_renderer::destroy();
-        return 0;
-    }
-
-    // Game found, reinitialize renderer to attach to game window
-    sdl_renderer::shutdownImGui();
-    sdl_renderer::destroy();
-
-    if (!sdl_renderer::init(
-            L"Counter-Strike 2",
-            static_cast<DWORD>(esp::pID))) {
-        return -1;
-    }
-    if (!sdl_renderer::initImGui()) {
-        sdl_renderer::destroy();
-        return -1;
-    }
-
-    // Data thread: consumes a coherent settings snapshot independently of render
-    std::atomic<bool> dataRunning{true};
-    std::thread dataThread([&dataRunning]() {
-        while (dataRunning.load(std::memory_order_relaxed)) {
-            const menu::RuntimeConfig config = menu::getRuntimeConfig();
-            esp::updateEntities(config);
-            aimbot::update(config);
-            aimbot::updateTriggerbot(config);
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
-    });
-
-    // Cap the overlay independently of the game. Rendering materially faster
-    // than a high-refresh monitor only consumes CPU/GPU and can make CS2 less
-    // consistent under load.
-    constexpr auto renderInterval = std::chrono::microseconds(6944); // ~144 Hz
-    auto nextRenderTime = std::chrono::steady_clock::now();
     while (sdl_renderer::running)
     {
-        sdl_renderer::pollEvents();
-        sdl_renderer::updateWindowPosition();
-        if (!sdl_renderer::isGameVisible()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            nextRenderTime = std::chrono::steady_clock::now();
+        sdl_renderer::menuVisible = true;
+        if (!sdl_renderer::initWaiting()) {
+            showFatalError(
+                L"Unable to initialize the overlay. Windows 10/11 with "
+                L"per-monitor DPI awareness and a working SDL2.dll are required.");
+            memory::Close();
+            return -1;
+        }
+        if (!sdl_renderer::initImGui()) {
+            showFatalError(L"Unable to initialize ImGui.");
+            sdl_renderer::destroy();
+            memory::Close();
+            return -1;
+        }
+
+        int dotCount = 0;
+        DWORD lastCheckTime = 0;
+        bool gameFound = false;
+        while (sdl_renderer::running && !gameFound)
+        {
+            sdl_renderer::pollEvents();
+
+            const DWORD currentTime = GetTickCount();
+            if (currentTime - lastCheckTime >= 3000 ||
+                lastCheckTime == 0) {
+                lastCheckTime = currentTime;
+                dotCount = (dotCount % 3) + 1;
+                if (esp::init()) {
+                    gameFound = true;
+                    break;
+                }
+            }
+
+            if (!sdl_renderer::beginFrame()) {
+                break;
+            }
+            sdl_renderer::newFrameImGui();
+            renderWaitingScreen(dotCount);
+            sdl_renderer::renderImGui();
+            sdl_renderer::endFrame();
+            Sleep(16);
+        }
+
+        sdl_renderer::shutdownImGui();
+        sdl_renderer::destroy();
+        if (!sdl_renderer::running) {
+            break;
+        }
+        if (!gameFound ||
+            !sdl_renderer::init(
+                L"Counter-Strike 2",
+                static_cast<DWORD>(esp::pID)) ||
+            !sdl_renderer::initImGui() ||
+            !aimbot::init()) {
+            diagnostics::log(
+                L"Game attach failed or raced with shutdown; retrying.");
+            sdl_renderer::shutdownImGui();
+            sdl_renderer::destroy();
+            esp::clearRuntimeState();
+            memory::Close();
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(500));
             continue;
         }
 
-        if (!sdl_renderer::beginFrame()) {
-            break;
+        // A 240 Hz time-based worker is fast enough for high-refresh ESP while
+        // bounding RPM/CPU usage. It pauses completely when CS2 is not active.
+        std::atomic<bool> dataRunning{true};
+        std::thread dataThread([&dataRunning]() {
+            constexpr auto dataInterval =
+                std::chrono::microseconds(4167);
+            auto nextDataTime = std::chrono::steady_clock::now();
+            bool stateClearedWhileInactive = false;
+            while (dataRunning.load(std::memory_order_relaxed)) {
+                if (!sdl_renderer::isGameForeground()) {
+                    if (!stateClearedWhileInactive) {
+                        esp::clearRuntimeState();
+                        stateClearedWhileInactive = true;
+                    }
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(25));
+                    nextDataTime = std::chrono::steady_clock::now();
+                    continue;
+                }
+                stateClearedWhileInactive = false;
+
+                const menu::RuntimeConfig config =
+                    menu::getRuntimeConfig();
+                esp::updateEntities(config);
+                aimbot::update(config);
+                aimbot::updateTriggerbot(config);
+
+                nextDataTime += dataInterval;
+                const auto now = std::chrono::steady_clock::now();
+                if (nextDataTime > now) {
+                    std::this_thread::sleep_until(nextDataTime);
+                } else {
+                    nextDataTime = now;
+                }
+            }
+        });
+
+        auto nextRenderTime = std::chrono::steady_clock::now();
+        while (sdl_renderer::running &&
+               !sdl_renderer::isGameDisconnected())
+        {
+            sdl_renderer::pollEvents();
+            sdl_renderer::updateWindowPosition();
+            if (!sdl_renderer::isGameVisible()) {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(25));
+                nextRenderTime = std::chrono::steady_clock::now();
+                continue;
+            }
+
+            if (!sdl_renderer::beginFrame()) {
+                break;
+            }
+            sdl_renderer::newFrameImGui();
+
+            if (menu::espEnabled) {
+                esp::render();
+            }
+            esp::renderBombTimer();
+            menu::render();
+
+            sdl_renderer::renderImGui();
+            sdl_renderer::endFrame();
+
+            const int refreshRate = std::max(
+                60,
+                sdl_renderer::getTargetRefreshRate());
+            const auto renderInterval =
+                std::chrono::nanoseconds(
+                    1000000000LL / refreshRate);
+            nextRenderTime += renderInterval;
+            const auto now = std::chrono::steady_clock::now();
+            if (nextRenderTime > now) {
+                std::this_thread::sleep_until(nextRenderTime);
+            } else {
+                nextRenderTime = now;
+            }
         }
-        sdl_renderer::newFrameImGui();
 
-        if (menu::espEnabled) {
-            esp::render();
-        }
-        esp::renderBombTimer();
-        menu::render();
+        dataRunning.store(false, std::memory_order_relaxed);
+        dataThread.join();
+        sdl_renderer::shutdownImGui();
+        sdl_renderer::destroy();
+        esp::clearRuntimeState();
+        memory::Close();
 
-        sdl_renderer::renderImGui();
-        sdl_renderer::endFrame();
-
-        nextRenderTime += renderInterval;
-        const auto now = std::chrono::steady_clock::now();
-        if (nextRenderTime > now) {
-            std::this_thread::sleep_until(nextRenderTime);
-        } else {
-            nextRenderTime = now;
+        if (sdl_renderer::running) {
+            diagnostics::log(
+                L"CS2 disconnected; returning to the waiting screen.");
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(500));
         }
     }
 
-    dataRunning.store(false, std::memory_order_relaxed);
-    dataThread.join();
-
-    sdl_renderer::shutdownImGui();
-    sdl_renderer::destroy();
+    memory::Close();
     return 0;
 }

@@ -19,7 +19,8 @@
 
 ## 🔄 自动偏移更新
 
-本项目通过 GitHub Actions **每小时自动检测** CS2 游戏更新，自动同步最新偏移量并编译发布，**无需手动更新，永不过期**。
+本项目通过 GitHub Actions **每小时自动检测** CS2 游戏更新。偏移头文件按
+`cs2-dumper` 的确切提交 SHA 下载并提交后再构建，避免同一次发布混入不同版本的偏移。
 
 ## 📥 下载
 
@@ -42,7 +43,7 @@
 
 | 分类 | 功能 |
 |------|------|
-| **ESP** | 方框透视、骨骼透视、血条、武器显示、距离、射线、墙后虚线提示 |
+| **ESP** | 方框透视、骨骼透视、血条、武器显示、距离、射线、CS2 spotted 状态提示 |
 | **Aimbot** | 自动瞄准、FOV 调节、平滑度|
 | **Triggerbot** | 自动扳机、延迟设置 |
 | **雷达** | 独立雷达覆盖、敌人位置/朝向显示 |
@@ -58,7 +59,10 @@
 ### 环境要求
 - Windows 10/11
 - CS2 使用 **全屏窗口化** 模式
+- 游戏窗口必须完整位于一台显示器内；跨显示器时覆盖层会暂停，移回后自动恢复
 - 使用 `-insecure` 参数启动 CS2
+
+> 独占全屏无法由外部顶层窗口可靠覆盖，不受支持。程序会在 CS2 重启后自动重新连接。
 
 ### 快捷键
 
@@ -74,6 +78,14 @@
 2. 运行程序，按 **F4** 打开菜单调整设置
 3. 按 **F4** 隐藏菜单后可正常操作游戏
 
+雷达和写内存的防闪光功能默认关闭。只有在明确需要离线测试防闪光时，才从命令行使用：
+
+```powershell
+.\external-cheat-base.exe --allow-memory-writes
+```
+
+运行诊断会写入 `%TEMP%\cs2-esp.log`。
+
 ## 🛠️ 编译
 
 ```bash
@@ -81,6 +93,9 @@ git clone https://github.com/tiansongyu/cs2_cheat.git
 cd cs2_cheat
 # 使用 Visual Studio 2022 打开 external-cheat-base.sln
 # 选择 Release | x64 配置编译
+
+# 或在安装 Docker 后运行与 CI 一致的单元测试和 Windows 交叉编译
+docker build --target artifacts -t cs2-cheat-build .
 ```
 
 

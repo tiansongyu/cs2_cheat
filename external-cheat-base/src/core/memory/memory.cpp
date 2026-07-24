@@ -1,5 +1,71 @@
 #include "memory.hpp"
 
+namespace
+{
+	void closeHandle(HANDLE& handle)
+	{
+		if (handle) {
+			CloseHandle(handle);
+			handle = nullptr;
+		}
+	}
+}
+
+void memory::Close()
+{
+	closeHandle(gWriteHandle);
+	closeHandle(gHandle);
+	pID = 0;
+}
+
+void memory::SetWritesAllowed(bool allowed)
+{
+	gWritesAllowed = allowed;
+	if (!allowed) {
+		closeHandle(gWriteHandle);
+	}
+}
+
+bool memory::WritesAllowed()
+{
+	return gWritesAllowed;
+}
+
+bool memory::TryWriteRaw(
+	uintptr_t address,
+	const void* buffer,
+	size_t size)
+{
+	if (!gWritesAllowed ||
+		pID == 0 ||
+		address == 0 ||
+		!buffer ||
+		size == 0) {
+		return false;
+	}
+
+	if (!gWriteHandle) {
+		gWriteHandle = OpenProcess(
+			PROCESS_QUERY_LIMITED_INFORMATION |
+			PROCESS_VM_WRITE |
+			PROCESS_VM_OPERATION,
+			FALSE,
+			static_cast<DWORD>(pID));
+		if (!gWriteHandle) {
+			return false;
+		}
+	}
+
+	SIZE_T bytesWritten = 0;
+	return WriteProcessMemory(
+			gWriteHandle,
+			reinterpret_cast<LPVOID>(address),
+			buffer,
+			size,
+			&bytesWritten) &&
+		bytesWritten == size;
+}
+
 uintptr_t memory::GetProcID(const wchar_t* process)
 {
 	HANDLE handle = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -17,21 +83,16 @@ uintptr_t memory::GetProcID(const wchar_t* process)
 	do
 	{
 		if (!_wcsicmp(process, proc.szExeFile))
-		{
-			CloseHandle(handle);
-			pID = proc.th32ProcessID;
-			if (gHandle) {
-				CloseHandle(gHandle);
-				gHandle = nullptr;
-			}
+			{
+				CloseHandle(handle);
+				Close();
+				pID = proc.th32ProcessID;
 
-			gHandle = OpenProcess(
-				PROCESS_QUERY_INFORMATION |
-				PROCESS_VM_READ |
-				PROCESS_VM_WRITE |
-				PROCESS_VM_OPERATION,
-				FALSE,
-				static_cast<DWORD>(pID));
+				gHandle = OpenProcess(
+					PROCESS_QUERY_LIMITED_INFORMATION |
+					PROCESS_VM_READ,
+					FALSE,
+					static_cast<DWORD>(pID));
 			if (!gHandle) {
 				pID = 0;
 				return 0;
@@ -41,7 +102,7 @@ uintptr_t memory::GetProcID(const wchar_t* process)
 	} while (Process32Next(handle, &proc));
 
 	CloseHandle(handle);
-	pID = 0;
+	Close();
 	return 0;
 }
 

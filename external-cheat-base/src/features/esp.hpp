@@ -7,6 +7,7 @@
 #include "offsets.hpp"
 #include "utils/math/vector.hpp"
 #include <string>
+#include <memory>
 
 extern uint32_t WIDTH;
 extern uint32_t HEIGHT;
@@ -60,6 +61,7 @@ struct EnemyInfo
     float flashDuration;
     bool isFlashed;
     bool isSpotted;
+    bool visibilityKnown;
     vec3 bonePositions[BoneIndex::BONE_COUNT];
     bool hasBones;
 };
@@ -115,8 +117,15 @@ namespace menu
 
 namespace esp
 {
-    inline std::vector<EnemyInfo> enemies;
-    inline std::vector<WorldEntityInfo> worldEntities;
+    using EnemySnapshot =
+        std::shared_ptr<const std::vector<EnemyInfo>>;
+    using WorldEntitySnapshot =
+        std::shared_ptr<const std::vector<WorldEntityInfo>>;
+
+    inline EnemySnapshot enemies =
+        std::make_shared<const std::vector<EnemyInfo>>();
+    inline WorldEntitySnapshot worldEntities =
+        std::make_shared<const std::vector<WorldEntityInfo>>();
     inline viewMatrix vm = {};
     inline vec3 player_position{};
     inline float player_yaw = 0.0f;
@@ -128,7 +137,6 @@ namespace esp
 
     // Cached pawn addresses (refreshed periodically)
     inline std::vector<CachedPawn> cachedPawns;
-    inline int slowUpdateFrame = 0;
 
     // Cached local player data - updated once per frame
     inline LocalPlayerCache localPlayer;
@@ -141,6 +149,8 @@ namespace esp
     void refreshEntityCache(const menu::RuntimeConfig& config);
     void render();
     void renderBombTimer();
+    void clearRuntimeState();
+    EnemySnapshot getEnemySnapshot();
     bool w2s(const vec3& world, vec2& screen, float m[16]);
     double player_distance(const vec3& a, const vec3& b);
     float normalizeAngle(float angle);

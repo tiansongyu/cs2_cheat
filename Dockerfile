@@ -7,6 +7,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         binutils-mingw-w64-x86-64 \
+        g++ \
         g++-mingw-w64-x86-64-posix \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -17,6 +18,52 @@ RUN ln -s windows.h /usr/x86_64-w64-mingw32/include/Windows.h \
 
 WORKDIR /workspace
 COPY external-cheat-base/ external-cheat-base/
+COPY tests/ tests/
+
+RUN g++ \
+        -std=c++20 \
+        -O2 \
+        -Wall \
+        -Wextra \
+        -Werror \
+        -Iexternal-cheat-base/src \
+        tests/viewport_math_tests.cpp \
+        -o /tmp/viewport_math_tests \
+    && /tmp/viewport_math_tests
+
+# Treat warnings in project-owned Windows sources as errors. Third-party SDL2
+# and ImGui sources are linked in the next step without inheriting that policy.
+RUN set -eu; \
+    mkdir -p /tmp/strict \
+    && for source in \
+        external-cheat-base/src/features/esp.cpp \
+        external-cheat-base/src/features/aimbot.cpp \
+        external-cheat-base/src/main.cpp \
+        external-cheat-base/src/core/memory/memory.cpp \
+        external-cheat-base/src/core/renderer/sdl_renderer.cpp; \
+    do \
+        x86_64-w64-mingw32-g++-posix \
+            -std=c++20 \
+            -O2 \
+            -DNDEBUG \
+            -DUNICODE \
+            -D_UNICODE \
+            -DSDL_MAIN_HANDLED \
+            -Wall \
+            -Wextra \
+            -Wpedantic \
+            -Werror \
+            -Wno-unknown-pragmas \
+            -Iexternal-cheat-base/vendor/SDL2/include \
+            -Iexternal-cheat-base/vendor/imgui \
+            -Iexternal-cheat-base/src \
+            -Iexternal-cheat-base/src/core \
+            -Iexternal-cheat-base/src/features \
+            -Iexternal-cheat-base/src/utils \
+            -Iexternal-cheat-base/generated \
+            -c "$source" \
+            -o "/tmp/strict/$(basename "$source").o"; \
+    done
 
 RUN mkdir -p /artifacts \
     && x86_64-w64-mingw32-g++-posix \

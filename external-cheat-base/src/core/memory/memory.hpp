@@ -11,13 +11,18 @@
 
 namespace memory
 {
-	inline HANDLE gHandle;
+	inline HANDLE gHandle = nullptr;
+	inline HANDLE gWriteHandle = nullptr;
 
-	inline uintptr_t pID;
-	
+	inline uintptr_t pID = 0;
+	inline bool gWritesAllowed = false;
 
 	uintptr_t GetProcID(const wchar_t* process);
 	uintptr_t GetModuleBaseAddress(uintptr_t procID, const wchar_t* module);
+	void Close();
+	void SetWritesAllowed(bool allowed);
+	bool WritesAllowed();
+	bool TryWriteRaw(uintptr_t address, const void* buffer, size_t size);
 
 	template <typename T> bool TryRead(uintptr_t address, T& value)
 	{
@@ -53,18 +58,9 @@ namespace memory
 
 	template <typename T> bool Write(uintptr_t address, T value)
 	{
-		if (!gHandle || address == 0) {
-			return false;
-		}
-
-		SIZE_T bytesWritten = 0;
-		return WriteProcessMemory(
-			gHandle,
-			reinterpret_cast<LPVOID>(address),
-			&value,
-			sizeof(T),
-			&bytesWritten) &&
-			bytesWritten == sizeof(T);
+		static_assert(std::is_trivially_copyable_v<T>,
+			"Remote memory writes require a trivially copyable type");
+		return TryWriteRaw(address, &value, sizeof(T));
 	}
 
 	inline bool ReadRaw(uintptr_t address, void* buffer, size_t size)

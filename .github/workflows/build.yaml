@@ -14,26 +14,37 @@ on:
     branches: [ main ]
     paths:
       - 'external-cheat-base/**'
+      - 'tests/**'
+      - 'Dockerfile'
+      - '.github/workflows/build.yaml'
       - '!external-cheat-base/generated/**'
 
+permissions:
+  contents: write
+
 jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - name: Build viewport regression tests
+      run: |
+        g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+          -Iexternal-cheat-base/src \
+          tests/viewport_math_tests.cpp \
+          -o viewport_math_tests
+    - name: Run viewport regression tests
+      run: ./viewport_math_tests
+
   build:
+    needs: unit-tests
     runs-on: windows-2022
 
     steps:
-    - uses: actions/checkout@v4
-
-    - name: Download latest offset files
-      shell: pwsh
-      run: |
-        Write-Host "Downloading latest offset files..."
-        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/client_dll.hpp" -OutFile "external-cheat-base/generated/client_dll.hpp"
-        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.hpp" -OutFile "external-cheat-base/generated/offsets.hpp"
-        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/buttons.hpp" -OutFile "external-cheat-base/generated/buttons.hpp"
-        Write-Host "Downloaded latest offset files"
+    - uses: actions/checkout@v5
 
     - name: Setup MSBuild
-      uses: microsoft/setup-msbuild@v2
+      uses: microsoft/setup-msbuild@v3
 
     - name: Build Solution
       shell: cmd
@@ -45,28 +56,19 @@ jobs:
         powershell Compress-Archive -Path x64/Release/* -DestinationPath x64/Release/Release-Binaries.zip
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: Release-Binaries
         path: x64/Release/Release-Binaries.zip
 
     - name: Create Release
-      id: create_release
-      uses: actions/create-release@v1
+      shell: pwsh
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: 'v2.0.${{ github.run_number }}'
-        release_name: 'Release v2.0.${{ github.run_number }} (SDL2 + ImGui)'
-        draft: false
-        prerelease: false
-
-    - name: Upload Release Asset
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: x64/Release/Release-Binaries.zip
-        asset_name: Release-Binaries.zip
-        asset_content_type: application/zip
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        $tag = "v2.0.${{ github.run_number }}"
+        gh release create $tag `
+          "x64/Release/Release-Binaries.zip#Release-Binaries.zip" `
+          --target "${{ github.sha }}" `
+          --title "Release $tag (SDL2 + ImGui)" `
+          --generate-notes
