@@ -58,7 +58,19 @@ namespace
 
     int consecutiveReadFailures = 0;
     std::chrono::steady_clock::time_point lastEntityCacheRefresh{};
-    std::chrono::steady_clock::time_point lastWorldRefresh{};
+    std::chrono::steady_clock::time_point lastWorldDiscovery{};
+    std::chrono::steady_clock::time_point lastWorldPositionRefresh{};
+    std::chrono::steady_clock::time_point lastBombRefresh{};
+
+    struct CachedWorldEntity
+    {
+        uint32_t entityIndex = 0;
+        uintptr_t entityAddress = 0;
+        int type = -1;
+        std::string displayName;
+    };
+
+    std::vector<CachedWorldEntity> cachedWorldEntities;
 
     void recordUpdateFailure()
     {
@@ -128,7 +140,10 @@ void esp::clearRuntimeState()
     cachedPawns.clear();
     consecutiveReadFailures = 0;
     lastEntityCacheRefresh = {};
-    lastWorldRefresh = {};
+    lastWorldDiscovery = {};
+    lastWorldPositionRefresh = {};
+    lastBombRefresh = {};
+    cachedWorldEntities.clear();
 }
 
 esp::EnemySnapshot esp::getEnemySnapshot()
@@ -156,15 +171,29 @@ void esp::refreshEntityCache(const menu::RuntimeConfig& config)
     std::vector<CachedPawn> newCache;
     newCache.reserve(16);
 
-    for (uint32_t i = 1;
-         i < game_layout::MAX_PLAYER_CONTROLLERS;
+    for (uint32_t i = game_layout::FIRST_PLAYER_CONTROLLER;
+         i <= game_layout::LAST_PLAYER_CONTROLLER;
          ++i)
     {
         const uintptr_t entityController =
             entityAddress(entity_list, i);
         if (!entityController) continue;
 
-        uint32_t pawnHandle = memory::Read<uint32_t>(entityController + cs2_dumper::schemas::client_dll::CBasePlayerController::m_hPawn);
+        bool pawnAlive = false;
+        uint32_t pawnHandle = 0;
+        if (!memory::TryRead(
+                entityController +
+                    cs2_dumper::schemas::client_dll::
+                        CCSPlayerController::m_bPawnIsAlive,
+                pawnAlive) ||
+            !pawnAlive ||
+            !memory::TryRead(
+                entityController +
+                    cs2_dumper::schemas::client_dll::
+                        CBasePlayerController::m_hPawn,
+                pawnHandle)) {
+            continue;
+        }
         if (!pawnHandle || pawnHandle == 0xFFFFFFFF) continue;
 
         const uint32_t pawnIndex =
@@ -177,11 +206,14 @@ void esp::refreshEntityCache(const menu::RuntimeConfig& config)
         if (!validTeam(team) || team == myTeam) continue;
 
         CachedPawn cp;
+        cp.controllerAddress = entityController;
         cp.pawnAddress = entity;
+        cp.pawnHandle = pawnHandle;
+        cp.entityIndex = pawnIndex;
         cp.team = team;
 
         // Read slow-changing data
-        if (config.espWeapon) {
+        if (config.espEnabled && config.espWeapon) {
             cp.weaponName = "Unknown";
             uintptr_t weaponServices = memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_pWeaponServices);
             if (weaponServices) {
@@ -201,7 +233,7 @@ void esp::refreshEntityCache(const menu::RuntimeConfig& config)
             }
         }
 
-        if (config.espFlashIndicator) {
+        if (config.espEnabled && config.espFlashIndicator) {
             cp.flashDuration = memory::Read<float>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawnBase::m_flFlashDuration);
             float flashMaxAlpha = memory::Read<float>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawnBase::m_flFlashMaxAlpha);
             cp.isFlashed = (cp.flashDuration > 0.0f) && (flashMaxAlpha >= 0.5f);
@@ -211,6 +243,315 @@ void esp::refreshEntityCache(const menu::RuntimeConfig& config)
     }
 
     cachedPawns = std::move(newCache);
+}
+
+namespace
+{
+    void publishWorldEntities(
+        std::vector<WorldEntityInfo>&& entities)
+    {
+        std::lock_guard<std::mutex> lock(esp::dataMutex);
+        esp::worldEntities = std::make_shared<
+            const std::vector<WorldEntityInfo>>(
+                std::move(entities));
+    }
+
+    void clearWorldEntities()
+    {
+        cachedWorldEntities.clear();
+        publishWorldEntities({});
+    }
+
+    void refreshWorldEntityCache(
+        const menu::RuntimeConfig& config)
+    {
+        std::vector<CachedWorldEntity> refreshed;
+        if (!config.grenadeESP && !config.droppedWeaponESP) {
+            cachedWorldEntities.clear();
+            return;
+        }
+
+        const uintptr_t entityList = memory::Read<uintptr_t>(
+            esp::modBase +
+                cs2_dumper::offsets::client_dll::dwEntityList);
+        if (!entityList) {
+            cachedWorldEntities.clear();
+            return;
+        }
+
+        uint32_t highestIndex = 512;
+        const uintptr_t gameEntitySystem =
+            memory::Read<uintptr_t>(
+                esp::modBase +
+                    cs2_dumper::offsets::client_dll::
+                        dwGameEntitySystem);
+        uint32_t sampledHighestIndex = 0;
+        if (gameEntitySystem &&
+            memory::TryRead(
+                gameEntitySystem +
+                    cs2_dumper::offsets::client_dll::
+                        dwGameEntitySystem_highestEntityIndex,
+                sampledHighestIndex) &&
+            sampledHighestIndex >=
+                game_layout::FIRST_WORLD_ENTITY &&
+            sampledHighestIndex <=
+                game_layout::MAX_WORLD_ENTITIES) {
+            highestIndex = sampledHighestIndex;
+        }
+
+        refreshed.reserve(64);
+        for (uint32_t index = game_layout::FIRST_WORLD_ENTITY;
+             index <= highestIndex;
+             ++index) {
+            const uintptr_t entity = entityAddress(
+                entityList,
+                index);
+            if (!entity) {
+                continue;
+            }
+
+            const uintptr_t identity = memory::Read<uintptr_t>(
+                entity +
+                    cs2_dumper::schemas::client_dll::
+                        CEntityInstance::m_pEntity);
+            if (!identity) {
+                continue;
+            }
+
+            const uintptr_t namePointer =
+                memory::Read<uintptr_t>(
+                    identity +
+                        cs2_dumper::schemas::client_dll::
+                            CEntityIdentity::m_designerName);
+            if (!namePointer) {
+                continue;
+            }
+
+            char className[64]{};
+            if (!memory::ReadRaw(
+                    namePointer,
+                    className,
+                    sizeof(className) - 1)) {
+                continue;
+            }
+
+            const std::string name(className);
+            int type = -1;
+            std::string displayName;
+            if (config.grenadeESP) {
+                if (name == "smokegrenade_projectile") {
+                    type = 0;
+                    displayName = "Smoke";
+                } else if (name == "flashbang_projectile") {
+                    type = 1;
+                    displayName = "Flash";
+                } else if (name == "hegrenade_projectile") {
+                    type = 2;
+                    displayName = "HE";
+                } else if (name == "molotov_projectile") {
+                    type = 3;
+                    displayName = "Molotov";
+                } else if (name == "decoy_projectile") {
+                    type = 4;
+                    displayName = "Decoy";
+                }
+            }
+
+            if (config.droppedWeaponESP && type < 0 &&
+                name.starts_with("weapon_")) {
+                const uint32_t ownerHandle = memory::Read<uint32_t>(
+                    entity +
+                        cs2_dumper::schemas::client_dll::
+                            C_BaseEntity::m_hOwnerEntity);
+                if (ownerHandle == 0 ||
+                    ownerHandle == 0xFFFFFFFF) {
+                    type = 5;
+                    displayName = name.substr(7);
+                }
+            }
+
+            if (type >= 0) {
+                refreshed.push_back(CachedWorldEntity{
+                    index,
+                    entity,
+                    type,
+                    std::move(displayName)
+                });
+            }
+        }
+
+        cachedWorldEntities = std::move(refreshed);
+    }
+
+    void updateWorldEntityPositions()
+    {
+        std::vector<WorldEntityInfo> positioned;
+        positioned.reserve(cachedWorldEntities.size());
+
+        const uintptr_t entityList = memory::Read<uintptr_t>(
+            esp::modBase +
+                cs2_dumper::offsets::client_dll::dwEntityList);
+        if (!entityList) {
+            publishWorldEntities({});
+            return;
+        }
+
+        for (const CachedWorldEntity& cached :
+             cachedWorldEntities) {
+            // Ensure this index still resolves to the same allocation before
+            // using the cached class/type.
+            if (entityAddress(
+                    entityList,
+                    cached.entityIndex) !=
+                cached.entityAddress) {
+                continue;
+            }
+
+            uintptr_t sceneNode = 0;
+            vec3 position{};
+            if (!memory::TryRead(
+                    cached.entityAddress +
+                        cs2_dumper::schemas::client_dll::
+                            C_BaseEntity::m_pGameSceneNode,
+                    sceneNode) ||
+                !sceneNode ||
+                !memory::TryRead(
+                    sceneNode +
+                        cs2_dumper::schemas::client_dll::
+                            CGameSceneNode::m_vecAbsOrigin,
+                    position) ||
+                !isFiniteVec3(position)) {
+                continue;
+            }
+
+            positioned.push_back(WorldEntityInfo{
+                position,
+                cached.type,
+                cached.displayName,
+                static_cast<float>(
+                    esp::player_distance(
+                        esp::player_position,
+                        position))
+            });
+        }
+
+        publishWorldEntities(std::move(positioned));
+    }
+
+    void publishBombInfo(const BombInfo& info)
+    {
+        std::lock_guard<std::mutex> lock(esp::dataMutex);
+        esp::bombInfo = info;
+    }
+
+    void clearBombInfo()
+    {
+        publishBombInfo(BombInfo{});
+    }
+
+    void updateBombInfo()
+    {
+        uintptr_t globalVars = 0;
+        uintptr_t plantedC4List = 0;
+        if (!memory::TryRead(
+                esp::modBase +
+                    cs2_dumper::offsets::client_dll::dwGlobalVars,
+                globalVars) ||
+            !memory::TryRead(
+                esp::modBase +
+                    cs2_dumper::offsets::client_dll::dwPlantedC4,
+                plantedC4List) ||
+            !globalVars ||
+            !plantedC4List) {
+            clearBombInfo();
+            return;
+        }
+
+        uintptr_t plantedC4 = 0;
+        if (!memory::TryRead(plantedC4List, plantedC4) ||
+            !plantedC4) {
+            clearBombInfo();
+            return;
+        }
+
+        bool ticking = false;
+        if (!memory::TryRead(
+                plantedC4 +
+                    cs2_dumper::schemas::client_dll::
+                        C_PlantedC4::m_bBombTicking,
+                ticking)) {
+            return;
+        }
+        if (!ticking) {
+            clearBombInfo();
+            return;
+        }
+
+        BombInfo sampled{};
+        sampled.isPlanted = true;
+        if (!memory::TryRead(
+                globalVars +
+                    game_layout::GLOBAL_VARS_CURRENT_TIME,
+                sampled.curtime) ||
+            !memory::TryRead(
+                plantedC4 +
+                    cs2_dumper::schemas::client_dll::
+                        C_PlantedC4::m_flC4Blow,
+                sampled.blowTime) ||
+            !memory::TryRead(
+                plantedC4 +
+                    cs2_dumper::schemas::client_dll::
+                        C_PlantedC4::m_bBeingDefused,
+                sampled.isDefusing) ||
+            !memory::TryRead(
+                plantedC4 +
+                    cs2_dumper::schemas::client_dll::
+                        C_PlantedC4::m_bHasExploded,
+                sampled.hasExploded) ||
+            !memory::TryRead(
+                plantedC4 +
+                    cs2_dumper::schemas::client_dll::
+                        C_PlantedC4::m_bBombDefused,
+                sampled.isDefused) ||
+            !memory::TryRead(
+                plantedC4 +
+                    cs2_dumper::schemas::client_dll::
+                        C_PlantedC4::m_nBombSite,
+                sampled.bombSite)) {
+            return;
+        }
+
+        if (sampled.isDefusing &&
+            !memory::TryRead(
+                plantedC4 +
+                    cs2_dumper::schemas::client_dll::
+                        C_PlantedC4::m_flDefuseCountDown,
+                sampled.defuseCountDown)) {
+            return;
+        }
+
+        const bool timesValid =
+            std::isfinite(sampled.curtime) &&
+            std::isfinite(sampled.blowTime) &&
+            sampled.curtime >= 0.0f &&
+            sampled.curtime < 1000000000.0f &&
+            sampled.blowTime >= sampled.curtime - 1.0f &&
+            sampled.blowTime <= sampled.curtime + 120.0f &&
+            (!sampled.isDefusing ||
+             (std::isfinite(sampled.defuseCountDown) &&
+              sampled.defuseCountDown >= sampled.curtime - 1.0f &&
+              sampled.defuseCountDown <=
+                  sampled.curtime + 30.0f));
+        if (!timesValid) {
+            return;
+        }
+
+        if (sampled.bombSite != 0 && sampled.bombSite != 1) {
+            sampled.bombSite = 0;
+        }
+        sampled.sampledAtMilliseconds = GetTickCount64();
+        publishBombInfo(sampled);
+    }
 }
 
 void esp::updateEntities(const menu::RuntimeConfig& config)
@@ -228,6 +569,7 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
     vec3 localPos{};
     vec3 viewOffset{};
     vec3 localEyeAngles{};
+    uint8_t localTeam = 0;
     if (!memory::TryRead(
             modBase + cs2_dumper::offsets::client_dll::dwViewMatrix,
             localVm) ||
@@ -240,10 +582,16 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         !memory::TryRead(
             localPlayerPawn + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles,
             localEyeAngles) ||
+        !memory::TryRead(
+            localPlayerPawn +
+                cs2_dumper::schemas::client_dll::
+                    C_BaseEntity::m_iTeamNum,
+            localTeam) ||
         !isUsableViewMatrix(localVm) ||
         !isFiniteVec3(localPos) ||
         !isFiniteVec3(viewOffset) ||
-        !isFiniteVec3(localEyeAngles)) {
+        !isFiniteVec3(localEyeAngles) ||
+        !validTeam(localTeam)) {
         recordUpdateFailure();
         return;
     }
@@ -251,6 +599,21 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
 
     // Get local player info and cache it for aimbot/triggerbot
     vec3 eyePos = { localPos.x + viewOffset.x, localPos.y + viewOffset.y, localPos.z + viewOffset.z };
+    int32_t crosshairEntityIndex = -1;
+    if (config.triggerbotEnabled) {
+        int32_t sampledCrosshairIndex = -1;
+        if (memory::TryRead(
+                localPlayerPawn +
+                    cs2_dumper::schemas::client_dll::
+                        C_CSPlayerPawn::m_iIDEntIndex,
+                sampledCrosshairIndex) &&
+            sampledCrosshairIndex > 0 &&
+            sampledCrosshairIndex <=
+                static_cast<int32_t>(
+                    game_layout::MAX_WORLD_ENTITIES)) {
+            crosshairEntityIndex = sampledCrosshairIndex;
+        }
+    }
 
     {
         std::lock_guard<std::mutex> lock(dataMutex);
@@ -259,6 +622,8 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         localPlayer.position = localPos;
         localPlayer.eyePosition = eyePos;
         localPlayer.viewAngle = { localEyeAngles.x, localEyeAngles.y };
+        localPlayer.crosshairEntityIndex = crosshairEntityIndex;
+        localPlayer.team = localTeam;
         localPlayer.isValid = true;
         player_position = eyePos;
         player_yaw = localEyeAngles.y;
@@ -286,8 +651,59 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
     {
         uintptr_t entity = cp.pawnAddress;
 
-        int32_t health = memory::Read<int32_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iHealth);
-        if (health <= 0 || health > 200) continue;
+        // A cached address is only a performance hint. Validate its owning
+        // controller and live state on every high-frequency pass so an address
+        // recycled during death/respawn cannot become a teammate or stale aim
+        // target for the remainder of the cache interval.
+        uint32_t livePawnHandle = 0;
+        int32_t health = 0;
+        uint8_t lifeState = 0xFF;
+        uint8_t liveTeam = 0;
+        if (!memory::TryRead(
+                cp.controllerAddress +
+                    cs2_dumper::schemas::client_dll::
+                        CBasePlayerController::m_hPawn,
+                livePawnHandle) ||
+            livePawnHandle != cp.pawnHandle ||
+            !memory::TryRead(
+                entity +
+                    cs2_dumper::schemas::client_dll::
+                        C_BaseEntity::m_iHealth,
+                health) ||
+            !memory::TryRead(
+                entity +
+                    cs2_dumper::schemas::client_dll::
+                        C_BaseEntity::m_lifeState,
+                lifeState) ||
+            !memory::TryRead(
+                entity +
+                    cs2_dumper::schemas::client_dll::
+                        C_BaseEntity::m_iTeamNum,
+                liveTeam) ||
+            health <= 0 ||
+            health > 200 ||
+            lifeState != 0 ||
+            liveTeam != cp.team ||
+            liveTeam == localTeam) {
+            continue;
+        }
+
+        uintptr_t gameSceneNode = 0;
+        bool dormant = true;
+        if (!memory::TryRead(
+                entity +
+                    cs2_dumper::schemas::client_dll::
+                        C_BaseEntity::m_pGameSceneNode,
+                gameSceneNode) ||
+            !gameSceneNode ||
+            !memory::TryRead(
+                gameSceneNode +
+                    cs2_dumper::schemas::client_dll::
+                        CGameSceneNode::m_bDormant,
+                dormant) ||
+            dormant) {
+            continue;
+        }
 
         vec3 feetPos{};
         vec3 vOffset{};
@@ -307,28 +723,33 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
 
         float enemyYaw = 0.0f;
         float angleToPlayer = 180.0f;
-        if (config.espViewAngle ||
+        bool viewAngleKnown = false;
+        if ((config.espEnabled && config.espViewAngle) ||
             config.radarEnabled ||
             (config.headOffsetEnabled &&
-                (config.aimbotEnabled ||
-                 config.triggerbotEnabled))) {
-            vec3 eyeAngles = memory::Read<vec3>(entity + cs2_dumper::schemas::client_dll::C_CSPlayerPawn::m_angEyeAngles);
-            if (isFiniteVec3(eyeAngles)) {
+                config.aimbotEnabled)) {
+            vec3 eyeAngles{};
+            if (memory::TryRead(
+                    entity +
+                        cs2_dumper::schemas::client_dll::
+                            C_CSPlayerPawn::m_angEyeAngles,
+                    eyeAngles) &&
+                isFiniteVec3(eyeAngles)) {
                 enemyYaw = eyeAngles.y;
                 angleToPlayer =
                     calculateAngleToPlayer(
                         enemyYaw,
                         feetPos,
                         eyePos);
+                viewAngleKnown = true;
             }
         }
 
         const bool needsSpottedState =
-            config.espWallCheck ||
+            (config.espEnabled && config.espWallCheck) ||
             (config.aimbotEnabled &&
                 (config.aimbotVisibleOnly ||
-                 config.smartAimEnabled)) ||
-            config.triggerbotEnabled;
+                 config.smartAimEnabled));
         bool isSpotted = false;
         bool visibilityKnown = false;
         if (needsSpottedState) {
@@ -340,6 +761,8 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         }
 
         EnemyInfo enemy;
+        enemy.pawnAddress = entity;
+        enemy.entityIndex = cp.entityIndex;
         enemy.position = feetPos;
         enemy.headPosition = headPos;
         enemy.health = health;
@@ -347,15 +770,20 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         enemy.weaponName = cp.weaponName;
         enemy.viewYaw = enemyYaw;
         enemy.angleToPlayer = angleToPlayer;
+        enemy.viewAngleKnown = viewAngleKnown;
         enemy.flashDuration = cp.flashDuration;
         enemy.isFlashed = cp.isFlashed;
         enemy.isSpotted = isSpotted;
         enemy.visibilityKnown = visibilityKnown;
         enemy.hasBones = false;
 
-        // Read bone positions for skeleton ESP
-        if (config.espSkeleton) {
-            uintptr_t gameSceneNode = memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_pGameSceneNode);
+        // Real bones are also the source of aimbot target positions. They are
+        // read even with skeleton drawing disabled whenever input features need
+        // them; the view-offset estimate remains a fail-safe fallback.
+        const bool needsBones =
+            (config.espEnabled && config.espSkeleton) ||
+            config.aimbotEnabled;
+        if (needsBones) {
             if (gameSceneNode) {
                 uintptr_t boneArray = memory::Read<uintptr_t>(
                     gameSceneNode +
@@ -393,6 +821,10 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
                             headToFeet > 10.0 &&
                             headToFeet < 200.0;
                         enemy.hasBones = bonesValid;
+                        if (bonesValid) {
+                            enemy.headPosition =
+                                enemy.bonePositions[BoneIndex::HEAD];
+                        }
                     }
                 }
             }
@@ -408,116 +840,44 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
                 std::move(buffer));
     }
 
-    // Expensive world/bomb scanning is time-based so changing the worker
-    // frequency does not accidentally multiply RPM overhead.
-    if (lastWorldRefresh.time_since_epoch().count() != 0 &&
-        updateNow - lastWorldRefresh <
-            std::chrono::milliseconds(250)) {
-        return;
-    }
-    lastWorldRefresh = updateNow;
-
-    // World entity scanning (grenades, dropped weapons)
-    std::vector<WorldEntityInfo> worldBuffer;
-    if (config.grenadeESP || config.droppedWeaponESP) {
-        uintptr_t entity_list = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwEntityList);
-        if (entity_list) {
-        uintptr_t gameEntitySystem = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwGameEntitySystem);
-        uint32_t highestIndex = 512;
-        if (gameEntitySystem) {
-            highestIndex = memory::Read<uint32_t>(gameEntitySystem + cs2_dumper::offsets::client_dll::dwGameEntitySystem_highestEntityIndex);
+    // Discovery is intentionally slow, but positions and bomb time are sampled
+    // at 60 Hz. This keeps moving grenades and countdown text smooth without
+    // rescanning thousands of entity identities every frame.
+    const bool worldEnabled =
+        config.grenadeESP || config.droppedWeaponESP;
+    if (!worldEnabled) {
+        if (!cachedWorldEntities.empty() ||
+            lastWorldDiscovery.time_since_epoch().count() != 0) {
+            clearWorldEntities();
+            lastWorldDiscovery = {};
+            lastWorldPositionRefresh = {};
         }
-        if (highestIndex > game_layout::MAX_WORLD_ENTITIES) {
-            highestIndex = game_layout::MAX_WORLD_ENTITIES;
+    } else {
+        if (lastWorldDiscovery.time_since_epoch().count() == 0 ||
+            updateNow - lastWorldDiscovery >=
+                std::chrono::milliseconds(250)) {
+            lastWorldDiscovery = updateNow;
+            refreshWorldEntityCache(config);
         }
-
-        for (uint32_t i = 64; i <= highestIndex; i++) {
-            const uintptr_t ent = entityAddress(entity_list, i);
-            if (!ent) continue;
-
-            uintptr_t identity = memory::Read<uintptr_t>(ent + cs2_dumper::schemas::client_dll::CEntityInstance::m_pEntity);
-            if (!identity) continue;
-
-            uintptr_t namePtr = memory::Read<uintptr_t>(identity + cs2_dumper::schemas::client_dll::CEntityIdentity::m_designerName);
-            if (!namePtr) continue;
-
-            char className[64] = {};
-            memory::ReadRaw(namePtr, className, 63);
-            className[63] = '\0';
-
-            std::string name(className);
-            int type = -1;
-            std::string displayName;
-
-            if (config.grenadeESP) {
-                if (name == "smokegrenade_projectile") { type = 0; displayName = "Smoke"; }
-                else if (name == "flashbang_projectile") { type = 1; displayName = "Flash"; }
-                else if (name == "hegrenade_projectile") { type = 2; displayName = "HE"; }
-                else if (name == "molotov_projectile") { type = 3; displayName = "Molotov"; }
-                else if (name == "decoy_projectile") { type = 4; displayName = "Decoy"; }
-            }
-
-            if (config.droppedWeaponESP && type == -1) {
-                if (name.find("weapon_") == 0) {
-                    uint32_t ownerHandle = memory::Read<uint32_t>(ent + cs2_dumper::schemas::client_dll::C_BaseEntity::m_hOwnerEntity);
-                    if (ownerHandle == 0xFFFFFFFF || ownerHandle == 0) {
-                        type = 5;
-                        displayName = name.substr(7);
-                    }
-                }
-            }
-
-            if (type >= 0) {
-                uintptr_t gameSceneNode = memory::Read<uintptr_t>(ent + cs2_dumper::schemas::client_dll::C_BaseEntity::m_pGameSceneNode);
-                if (!gameSceneNode) continue;
-                vec3 pos = memory::Read<vec3>(gameSceneNode + cs2_dumper::schemas::client_dll::CGameSceneNode::m_vecAbsOrigin);
-                if (!isFiniteVec3(pos)) continue;
-                float dist = static_cast<float>(player_distance(player_position, pos));
-                worldBuffer.push_back({ pos, type, displayName, dist });
-            }
-        }
-        } // if (entity_list)
-    }
-    {
-        std::lock_guard<std::mutex> lock(dataMutex);
-        worldEntities = std::make_shared<
-            const std::vector<WorldEntityInfo>>(
-                std::move(worldBuffer));
-    }
-
-    // Update bomb info
-    BombInfo localBombInfo;
-    localBombInfo.isPlanted = false;
-    if (config.bombTimer) {
-        uintptr_t globalVars = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwGlobalVars);
-        float curtime = 0.0f;
-        if (globalVars) {
-            curtime = memory::Read<float>(
-                globalVars +
-                game_layout::GLOBAL_VARS_CURRENT_TIME);
-        }
-
-        uintptr_t plantedC4List = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwPlantedC4);
-        if (plantedC4List) {
-            uintptr_t plantedC4 = memory::Read<uintptr_t>(plantedC4List);
-            if (plantedC4) {
-                bool ticking = memory::Read<bool>(plantedC4 + cs2_dumper::schemas::client_dll::C_PlantedC4::m_bBombTicking);
-                if (ticking) {
-                    localBombInfo.isPlanted = true;
-                    localBombInfo.curtime = curtime;
-                    localBombInfo.blowTime = memory::Read<float>(plantedC4 + cs2_dumper::schemas::client_dll::C_PlantedC4::m_flC4Blow);
-                    localBombInfo.isDefusing = memory::Read<bool>(plantedC4 + cs2_dumper::schemas::client_dll::C_PlantedC4::m_bBeingDefused);
-                    localBombInfo.defuseCountDown = memory::Read<float>(plantedC4 + cs2_dumper::schemas::client_dll::C_PlantedC4::m_flDefuseCountDown);
-                    localBombInfo.hasExploded = memory::Read<bool>(plantedC4 + cs2_dumper::schemas::client_dll::C_PlantedC4::m_bHasExploded);
-                    localBombInfo.isDefused = memory::Read<bool>(plantedC4 + cs2_dumper::schemas::client_dll::C_PlantedC4::m_bBombDefused);
-                    localBombInfo.bombSite = memory::Read<int>(plantedC4 + cs2_dumper::schemas::client_dll::C_PlantedC4::m_nBombSite);
-                }
-            }
+        if (lastWorldPositionRefresh.time_since_epoch().count() == 0 ||
+            updateNow - lastWorldPositionRefresh >=
+                std::chrono::milliseconds(16)) {
+            lastWorldPositionRefresh = updateNow;
+            updateWorldEntityPositions();
         }
     }
-    {
-        std::lock_guard<std::mutex> lock(dataMutex);
-        bombInfo = localBombInfo;
+
+    if (!config.bombTimer) {
+        if (lastBombRefresh.time_since_epoch().count() != 0) {
+            clearBombInfo();
+            lastBombRefresh = {};
+        }
+    } else if (
+        lastBombRefresh.time_since_epoch().count() == 0 ||
+        updateNow - lastBombRefresh >=
+            std::chrono::milliseconds(16)) {
+        lastBombRefresh = updateNow;
+        updateBombInfo();
     }
 }
 
@@ -612,8 +972,9 @@ void esp::render()
         }
     }
 
-    for (const auto& enemy : *snapEnemies)
-    {
+    if (menu::espEnabled) {
+        for (const auto& enemy : *snapEnemies)
+        {
         vec2 screenFeet, screenHead;
 
         if (!w2s(enemy.position, screenFeet, snapVm.m)) continue;
@@ -659,7 +1020,7 @@ void esp::render()
         // Red = enemy facing you (danger), Green = enemy facing away (safe)
         uint8_t r, g, b, a;
 
-        if (menu::espViewAngle) {
+        if (menu::espViewAngle && enemy.viewAngleKnown) {
             // Use angle-based color for box
             if (enemy.angleToPlayer < 45.0f) {
                 // Facing player (RED - DANGER!)
@@ -826,7 +1187,8 @@ void esp::render()
             }
 
             // Draw angle text (still shows angle degree)
-            if (menu::espViewAngleText) {
+            if (menu::espViewAngleText &&
+                enemy.viewAngleKnown) {
                 char angleText[16];
                 snprintf(angleText, sizeof(angleText), "%.0f deg", enemy.angleToPlayer);
                 ImVec2 angleTextSize = ImGui::CalcTextSize(angleText);
@@ -966,6 +1328,7 @@ void esp::render()
                 IM_COL32(sr, sg, sb, sa), 1.5f * overlayScale()
             );
         }
+        }
     }
 
     // ==================== RADAR OVERLAY ====================
@@ -1068,6 +1431,10 @@ void esp::render()
                     dotRadius,
                     IM_COL32(er, eg, eb, ea)
                 );
+
+                if (!enemy.viewAngleKnown) {
+                    continue;
+                }
 
                 // Get arrow color (white by default, separate from dot)
                 uint8_t ar = static_cast<uint8_t>(menu::radarEnemyArrowColor[0] * 255);
@@ -1222,12 +1589,30 @@ void esp::renderBombTimer()
         snapBomb = bombInfo;
     }
 
-    if (!menu::bombTimer || !snapBomb.isPlanted || snapBomb.hasExploded || snapBomb.isDefused)
+    if (!menu::bombTimer ||
+        !snapBomb.isPlanted ||
+        snapBomb.hasExploded ||
+        snapBomb.isDefused) {
         return;
+    }
 
+    const uint64_t nowMilliseconds = GetTickCount64();
+    if (snapBomb.sampledAtMilliseconds == 0 ||
+        nowMilliseconds < snapBomb.sampledAtMilliseconds ||
+        nowMilliseconds - snapBomb.sampledAtMilliseconds > 1000) {
+        return;
+    }
     ImDrawList* drawList = ImGui::GetBackgroundDrawList();
 
-    float timeLeft = snapBomb.blowTime - snapBomb.curtime;
+    const float elapsedSeconds =
+        static_cast<float>(
+            nowMilliseconds -
+            snapBomb.sampledAtMilliseconds) /
+        1000.0f;
+    const float interpolatedCurrentTime =
+        snapBomb.curtime + elapsedSeconds;
+    float timeLeft =
+        snapBomb.blowTime - interpolatedCurrentTime;
     if (timeLeft < 0.0f) timeLeft = 0.0f;
 
     const char* site = snapBomb.bombSite == 0 ? "A" : "B";
@@ -1252,7 +1637,9 @@ void esp::renderBombTimer()
     drawList->AddText(ImVec2(textX, textY), bombColor, bombText);
 
     if (snapBomb.isDefusing) {
-        float defuseLeft = snapBomb.defuseCountDown - snapBomb.curtime;
+        float defuseLeft =
+            snapBomb.defuseCountDown -
+            interpolatedCurrentTime;
         if (defuseLeft < 0.0f) defuseLeft = 0.0f;
 
         char defuseText[64];

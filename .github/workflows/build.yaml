@@ -9,6 +9,11 @@ on:
         required: false
         type: boolean
         default: true
+      source_sha:
+        description: 'Exact commit to build (used by the offset updater)'
+        required: false
+        type: string
+        default: ''
   # 当 push 到 main 分支时也触发（用于代码更新后的构建）
   push:
     branches: [ main ]
@@ -27,6 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v5
+      with:
+        ref: ${{ inputs.source_sha || github.sha }}
     - name: Build viewport regression tests
       run: |
         g++ -std=c++20 -O2 -Wall -Wextra -Werror \
@@ -42,6 +49,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+      with:
+        ref: ${{ inputs.source_sha || github.sha }}
 
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v3
@@ -66,9 +75,9 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        $tag = "v2.0.${{ github.run_number }}"
+        $tag = "v2.0.${{ github.run_number }}.${{ github.run_attempt }}"
         gh release create $tag `
           "x64/Release/Release-Binaries.zip#Release-Binaries.zip" `
-          --target "${{ github.sha }}" `
+          --target "${{ inputs.source_sha || github.sha }}" `
           --title "Release $tag (SDL2 + ImGui)" `
           --generate-notes

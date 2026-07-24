@@ -11,35 +11,9 @@
 #include <codecvt>
 #include <chrono>
 #include <Windows.h>
-#include <TlHelp32.h>
 #include "imgui.h"
 
 // #define SHOW_CONSOLE
-
-constexpr const wchar_t* PROCESS_NAME = L"external-cheat-base.exe";
-
-void KillOtherInstances()
-{
-    DWORD currentPid = GetCurrentProcessId();
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) return;
-
-    PROCESSENTRY32W pe32;
-    pe32.dwSize = sizeof(pe32);
-
-    if (Process32FirstW(snapshot, &pe32)) {
-        do {
-            if (_wcsicmp(pe32.szExeFile, PROCESS_NAME) == 0 && pe32.th32ProcessID != currentPid) {
-                HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pe32.th32ProcessID);
-                if (hProcess) {
-                    TerminateProcess(hProcess, 0);
-                    CloseHandle(hProcess);
-                }
-            }
-        } while (Process32NextW(snapshot, &pe32));
-    }
-    CloseHandle(snapshot);
-}
 
 uint32_t WIDTH;
 uint32_t HEIGHT;
@@ -56,10 +30,10 @@ void renderWaitingScreen(int dotCount)
     const float dpiScale = sdl_renderer::getDpiScale();
     const float margin = std::max(8.0f, 16.0f * dpiScale);
     const float windowWidth = std::min(
-        400.0f * dpiScale,
+        480.0f * dpiScale,
         std::max(1.0f, static_cast<float>(WIDTH) - margin * 2.0f));
     const float windowHeight = std::min(
-        200.0f * dpiScale,
+        270.0f * dpiScale,
         std::max(1.0f, static_cast<float>(HEIGHT) - margin * 2.0f));
     ImGui::SetNextWindowPos(
         ImVec2(
@@ -73,7 +47,7 @@ void renderWaitingScreen(int dotCount)
         ImGuiCond_Always
     );
 
-    ImGui::Begin("CS2 ESP Tool", nullptr,
+    ImGui::Begin("Aegis // Connection", nullptr,
         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
     {
         const ImVec2 position = ImGui::GetWindowPos();
@@ -85,32 +59,84 @@ void renderWaitingScreen(int dotCount)
             size.y);
     }
 
-    ImGui::Dummy(ImVec2(0.0f, 10.0f * dpiScale));
-
-    // Waiting message with animated dots
     char dots[4] = {0};
     for (int i = 0; i < dotCount; i++) dots[i] = '.';
 
-    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Waiting for CS2 to start%s", dots);
-    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Checking every 3 seconds...");
-
-    ImGui::Dummy(ImVec2(0.0f, 15.0f * dpiScale));
+    ImGui::TextColored(
+        ImVec4(0.330f, 0.800f, 1.000f, 1.0f),
+        "AEGIS");
+    ImGui::SameLine();
+    ImGui::TextColored(
+        ImVec4(0.500f, 0.570f, 0.670f, 1.0f),
+        "CS2 OVERLAY");
+    ImGui::Spacing();
     ImGui::Separator();
-    ImGui::Dummy(ImVec2(0.0f, 10.0f * dpiScale));
+    ImGui::Dummy(ImVec2(0.0f, 12.0f * dpiScale));
+    ImGui::TextColored(
+        ImVec4(0.930f, 0.960f, 1.000f, 1.0f),
+        "Waiting for Counter-Strike 2%s",
+        dots);
+    ImGui::TextColored(
+        ImVec4(0.500f, 0.570f, 0.670f, 1.0f),
+        "The client and its active monitor will be detected automatically.");
 
-    // Important notice
-    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "[!] IMPORTANT:");
-    ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "CS2 must use Fullscreen Windowed mode");
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Settings > Video > Display Mode)");
+    ImGui::Dummy(ImVec2(0.0f, 14.0f * dpiScale));
+    ImGui::PushStyleColor(
+        ImGuiCol_ChildBg,
+        ImVec4(0.070f, 0.090f, 0.125f, 1.0f));
+    ImGui::PushStyleColor(
+        ImGuiCol_Border,
+        ImVec4(0.145f, 0.185f, 0.240f, 1.0f));
+    ImGui::BeginChild(
+        "##WaitingHint",
+        ImVec2(0.0f, 90.0f * dpiScale),
+        true);
+    ImGui::TextColored(
+        ImVec4(0.930f, 0.650f, 0.260f, 1.0f),
+        "DISPLAY MODE");
+    ImGui::TextWrapped(
+        "Use Fullscreen Windowed in CS2. The overlay will then map "
+        "the game viewport to the correct monitor and aspect ratio.");
+    ImGui::EndChild();
+    ImGui::PopStyleColor(2);
 
-    ImGui::Dummy(ImVec2(0.0f, 10.0f * dpiScale));
-    ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Press F9 to exit");
+    ImGui::Dummy(ImVec2(0.0f, 8.0f * dpiScale));
+    ImGui::TextColored(
+        ImVec4(0.500f, 0.570f, 0.670f, 1.0f),
+        "Checking every 3 seconds  |  Press F9 to exit");
 
     ImGui::End();
 }
 
 namespace
 {
+    class ScopedHandle
+    {
+    public:
+        explicit ScopedHandle(HANDLE handle = nullptr)
+            : handle_(handle)
+        {
+        }
+
+        ~ScopedHandle()
+        {
+            if (handle_) {
+                CloseHandle(handle_);
+            }
+        }
+
+        ScopedHandle(const ScopedHandle&) = delete;
+        ScopedHandle& operator=(const ScopedHandle&) = delete;
+
+        HANDLE get() const
+        {
+            return handle_;
+        }
+
+    private:
+        HANDLE handle_ = nullptr;
+    };
+
     bool hasArgument(
         int argc,
         char* argv[],
@@ -137,8 +163,26 @@ namespace
 
 int main(int argc, char* argv[])
 {
-    KillOtherInstances();
-    Sleep(100);
+    SetLastError(ERROR_SUCCESS);
+    ScopedHandle instanceMutex(CreateMutexW(
+        nullptr,
+        FALSE,
+        L"Local\\CS2ExternalOverlay-76F5E6C2-235A-4AA0"));
+    const DWORD mutexError = GetLastError();
+    if (!instanceMutex.get()) {
+        showFatalError(
+            L"Unable to create the single-instance guard.");
+        return -1;
+    }
+    if (mutexError == ERROR_ALREADY_EXISTS) {
+        MessageBoxW(
+            nullptr,
+            L"CS2 ESP is already running.",
+            L"CS2 ESP",
+            MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND);
+        return 0;
+    }
+
     memory::SetWritesAllowed(
         hasArgument(
             argc,
@@ -248,7 +292,12 @@ int main(int argc, char* argv[])
                 if (nextDataTime > now) {
                     std::this_thread::sleep_until(nextDataTime);
                 } else {
-                    nextDataTime = now;
+                    // Never spin continuously when RPM work exceeds the 240 Hz
+                    // budget. A short backoff keeps one slow map/update from
+                    // monopolizing a CPU core.
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(1));
+                    nextDataTime = now + dataInterval;
                 }
             }
         });
@@ -271,7 +320,12 @@ int main(int argc, char* argv[])
             }
             sdl_renderer::newFrameImGui();
 
-            if (menu::espEnabled) {
+            if (menu::espEnabled ||
+                menu::radarEnabled ||
+                menu::grenadeESP ||
+                menu::droppedWeaponESP ||
+                (menu::aimbotEnabled &&
+                 menu::aimbotShowFOV)) {
                 esp::render();
             }
             esp::renderBombTimer();

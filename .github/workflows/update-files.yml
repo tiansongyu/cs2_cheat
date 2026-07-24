@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       pushed: ${{ steps.publish.outputs.pushed }}
+      published_sha: ${{ steps.publish.outputs.published_sha }}
 
     steps:
     - uses: actions/checkout@v5
@@ -69,6 +70,12 @@ jobs:
         curl --fail --location --retry 3 --output external-cheat-base/generated/buttons.hpp "${base_url}/buttons.hpp"
         printf '%s' "$REVISION" > last_commit.txt
 
+    - name: Validate generated headers before publishing
+      if: steps.revision.outputs.download == 'true'
+      run: |
+        set -euo pipefail
+        docker build --target artifacts .
+
     - name: Commit and push changes
       id: publish
       if: steps.revision.outputs.download == 'true'
@@ -87,6 +94,7 @@ jobs:
           git pull --rebase origin main
           if git push origin HEAD:main; then
             echo "pushed=true" >> "$GITHUB_OUTPUT"
+            echo "published_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "Push attempt $attempt failed; retrying after rebase"
@@ -102,5 +110,10 @@ jobs:
     - name: Trigger Build Workflow
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SOURCE_SHA: ${{ needs.update-files.outputs.published_sha }}
       run: |
-        gh workflow run build.yaml --repo "${{ github.repository }}" -f force_build=true
+        gh workflow run build.yaml \
+          --repo "${{ github.repository }}" \
+          --ref main \
+          -f force_build=true \
+          -f source_sha="$SOURCE_SHA"

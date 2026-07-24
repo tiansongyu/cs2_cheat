@@ -16,6 +16,7 @@ namespace menu
 
     struct RuntimeConfig
     {
+        bool espEnabled = true;
         bool espWeapon = true;
         bool espFlashIndicator = false;
         bool antiFlash = false;
@@ -143,6 +144,7 @@ namespace menu
     inline RuntimeConfig buildRuntimeConfig()
     {
         RuntimeConfig config{};
+        config.espEnabled = espEnabled;
         config.espWeapon = espWeapon;
         config.espFlashIndicator = espFlashIndicator;
         config.antiFlash = antiFlash;
@@ -462,6 +464,146 @@ namespace menu
         }
     }
 
+    inline void BeginCard(
+        const char* id,
+        const char* title,
+        const char* subtitle,
+        float height,
+        float width = 0.0f)
+    {
+        const float dpiScale = sdl_renderer::getDpiScale();
+        ImGui::PushStyleColor(
+            ImGuiCol_ChildBg,
+            ImVec4(0.070f, 0.090f, 0.125f, 1.0f));
+        ImGui::PushStyleColor(
+            ImGuiCol_Border,
+            ImVec4(0.145f, 0.185f, 0.240f, 1.0f));
+        ImGui::BeginChild(
+            id,
+            ImVec2(
+                width > 0.0f ? width * dpiScale : 0.0f,
+                height * dpiScale),
+            true);
+        ImGui::TextColored(
+            ImVec4(0.330f, 0.800f, 1.000f, 1.0f),
+            "%s",
+            title);
+        if (subtitle && subtitle[0] != '\0') {
+            ImGui::TextColored(
+                ImVec4(0.500f, 0.570f, 0.670f, 1.0f),
+                "%s",
+                subtitle);
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+    }
+
+    inline void EndCard()
+    {
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+    }
+
+    inline void StatusValue(
+        const char* label,
+        bool enabled,
+        const char* enabledText = "ON",
+        const char* disabledText = "OFF")
+    {
+        ImGui::TextColored(
+            ImVec4(0.610f, 0.665f, 0.750f, 1.0f),
+            "%s",
+            label);
+        ImGui::SameLine();
+        ImGui::TextColored(
+            enabled
+                ? ImVec4(0.250f, 0.900f, 0.600f, 1.0f)
+                : ImVec4(0.930f, 0.420f, 0.430f, 1.0f),
+            "%s",
+            enabled ? enabledText : disabledText);
+    }
+
+    inline void RenderOverview()
+    {
+        const float dpiScale = sdl_renderer::getDpiScale();
+        const float availableWidth =
+            ImGui::GetContentRegionAvail().x;
+        const float gap = 10.0f * dpiScale;
+        const float cardWidth =
+            std::max(180.0f * dpiScale,
+                (availableWidth - gap) * 0.5f);
+
+        ImGui::BeginGroup();
+        BeginCard(
+            "##QuickControls",
+            "Quick controls",
+            "The features you are most likely to toggle mid-session.",
+            240.0f,
+            cardWidth / dpiScale);
+        ImGui::Checkbox("Player ESP", &espEnabled);
+        ImGui::Checkbox("Aimbot", &aimbotEnabled);
+        ImGui::Checkbox("Triggerbot", &triggerbotEnabled);
+        ImGui::Checkbox("Radar", &radarEnabled);
+        ImGui::Checkbox("Bomb timer", &bombTimer);
+        EndCard();
+        ImGui::EndGroup();
+
+        if (availableWidth >= 430.0f * dpiScale) {
+            ImGui::SameLine(0.0f, gap);
+        }
+        ImGui::BeginGroup();
+        BeginCard(
+            "##SessionStatus",
+            "Session status",
+            "Live renderer and safety information.",
+            240.0f,
+            cardWidth / dpiScale);
+        StatusValue(
+            "Renderer",
+            sdl_renderer::isAcceleratedRenderer(),
+            "HARDWARE",
+            "SOFTWARE");
+        StatusValue(
+            "Game focus",
+            sdl_renderer::isGameForeground(),
+            "ACTIVE",
+            "PAUSED");
+        StatusValue(
+            "Single monitor",
+            sdl_renderer::isGameOnSingleMonitor(),
+            "VALID",
+            "MOVE GAME");
+        StatusValue(
+            "Memory writes",
+            memory::WritesAllowed(),
+            "UNLOCKED",
+            "LOCKED");
+        ImGui::Spacing();
+        ImGui::Text(
+            "%u x %u  |  %d Hz target",
+            VIEWPORT_W,
+            VIEWPORT_H,
+            sdl_renderer::getTargetRefreshRate());
+        ImGui::Text(
+            "Overlay %.0f FPS",
+            ImGui::GetIO().Framerate);
+        EndCard();
+        ImGui::EndGroup();
+
+        ImGui::Spacing();
+        BeginCard(
+            "##SafetySummary",
+            "Safe operating mode",
+            "Input is injected only while the CS2 client itself is foreground.",
+            130.0f);
+        ImGui::TextWrapped(
+            "The overlay pauses entity reads when CS2 loses focus. "
+            "Memory writes remain disabled unless the program was started "
+            "with --allow-memory-writes.");
+        EndCard();
+    }
+
     // Render Aimbot tab content
     inline void RenderAimbotTab()
     {
@@ -565,7 +707,9 @@ namespace menu
 
             ImGui::Spacing();
             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Hold %s to activate", GetKeyName(triggerbotKey));
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Auto-aims at head and fires!");
+            ImGui::TextColored(
+                ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                "Fires only when the crosshair is on a live enemy.");
         }
     }
 
@@ -835,6 +979,139 @@ namespace menu
         ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "github.com/tiansongyu/cs2_cheat");
     }
 
+    inline void RenderPageHeader(
+        const char* title,
+        const char* description)
+    {
+        ImGui::TextColored(
+            ImVec4(0.930f, 0.960f, 1.000f, 1.0f),
+            "%s",
+            title);
+        ImGui::TextColored(
+            ImVec4(0.500f, 0.570f, 0.670f, 1.0f),
+            "%s",
+            description);
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+    }
+
+    inline void RenderCombatPage()
+    {
+        RenderPageHeader(
+            "Combat assistance",
+            "Target selection and input automation. All input is focus-gated.");
+        BeginCard(
+            "##AimbotCard",
+            "Aimbot",
+            "Real bone targets with stable target retention.",
+            590.0f);
+        RenderAimbotTab();
+        EndCard();
+        ImGui::Spacing();
+        BeginCard(
+            "##TriggerCard",
+            "Triggerbot",
+            "Uses the actual entity under the crosshair; no angular guessing.",
+            190.0f);
+        RenderTriggerbotTab();
+        EndCard();
+    }
+
+    inline void RenderPlayerVisualsPage()
+    {
+        RenderPageHeader(
+            "Player visuals",
+            "Configure information drawn around validated live enemy pawns.");
+        BeginCard(
+            "##PlayerEspCard",
+            "Player ESP",
+            "Boxes, health, skeleton, equipment and threat direction.",
+            650.0f);
+        RenderESPTab();
+        EndCard();
+    }
+
+    inline void RenderWorldPage()
+    {
+        RenderPageHeader(
+            "World and match",
+            "Radar, bomb state and moving world entities.");
+        BeginCard(
+            "##RadarCard",
+            "Radar",
+            "A player-relative tactical view. Disabled by default.",
+            440.0f);
+        RenderRadarTab();
+        EndCard();
+        ImGui::Spacing();
+        BeginCard(
+            "##WorldUtilityCard",
+            "Match utilities",
+            "Bomb timer, projectiles, dropped equipment and anti-flash.",
+            255.0f);
+        RenderMiscTab();
+        EndCard();
+    }
+
+    inline void RenderSystemPage()
+    {
+        RenderPageHeader(
+            "System",
+            "Display mapping, performance diagnostics and key bindings.");
+        BeginCard(
+            "##DisplayCard",
+            "Display and renderer",
+            "Monitor-aware viewport mapping and live diagnostics.",
+            460.0f);
+        RenderSettingsTab();
+        EndCard();
+        ImGui::Spacing();
+        BeginCard(
+            "##HotkeyCard",
+            "Hotkeys",
+            "Bindings must be unique; input pauses while rebinding.",
+            330.0f);
+        RenderHotkeysTab();
+        EndCard();
+    }
+
+    inline bool NavigationButton(
+        const char* label,
+        int page,
+        const ImVec2& size)
+    {
+        const bool selected = currentTab == page;
+        if (selected) {
+            ImGui::PushStyleColor(
+                ImGuiCol_Button,
+                ImVec4(0.075f, 0.330f, 0.470f, 1.0f));
+            ImGui::PushStyleColor(
+                ImGuiCol_ButtonHovered,
+                ImVec4(0.085f, 0.390f, 0.540f, 1.0f));
+            ImGui::PushStyleColor(
+                ImGuiCol_ButtonActive,
+                ImVec4(0.100f, 0.440f, 0.600f, 1.0f));
+        } else {
+            ImGui::PushStyleColor(
+                ImGuiCol_Button,
+                ImVec4(0.055f, 0.072f, 0.100f, 1.0f));
+            ImGui::PushStyleColor(
+                ImGuiCol_ButtonHovered,
+                ImVec4(0.095f, 0.130f, 0.175f, 1.0f));
+            ImGui::PushStyleColor(
+                ImGuiCol_ButtonActive,
+                ImVec4(0.110f, 0.155f, 0.205f, 1.0f));
+        }
+
+        const bool pressed = ImGui::Button(label, size);
+        ImGui::PopStyleColor(3);
+        if (pressed) {
+            currentTab = page;
+        }
+        return pressed;
+    }
+
     // Main render function
     inline void render()
     {
@@ -850,16 +1127,14 @@ namespace menu
         const float availableHeight =
             std::max(1.0f, static_cast<float>(HEIGHT) - margin * 2.0f);
         const float defaultWidth =
-            std::min(600.0f * dpiScale, availableWidth);
+            std::min(920.0f * dpiScale, availableWidth);
         const float defaultHeight =
-            std::min(650.0f * dpiScale, availableHeight);
+            std::min(720.0f * dpiScale, availableHeight);
         const float minimumWidth =
-            std::min(360.0f * dpiScale, availableWidth);
+            std::min(680.0f * dpiScale, availableWidth);
         const float minimumHeight =
-            std::min(300.0f * dpiScale, availableHeight);
+            std::min(500.0f * dpiScale, availableHeight);
 
-        // Set window transparency
-        ImGui::SetNextWindowBgAlpha(0.90f);
         ImGui::SetNextWindowSizeConstraints(
             ImVec2(minimumWidth, minimumHeight),
             ImVec2(availableWidth, availableHeight));
@@ -874,7 +1149,10 @@ namespace menu
             ImGuiCond_FirstUseEver
         );
 
-        ImGui::Begin("CS2 ESP Menu", nullptr, ImGuiWindowFlags_NoCollapse);
+        ImGui::Begin(
+            "Aegis // CS2 Overlay",
+            nullptr,
+            ImGuiWindowFlags_NoCollapse);
 
         // Saved ImGui positions may belong to another monitor/resolution.
         // Clamp without resetting a valid user-selected position or size.
@@ -902,69 +1180,97 @@ namespace menu
                 interactiveSize.y);
         }
 
-        // Header with controls info
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s - Hide menu | %s - Exit", GetKeyName(menuToggleKey), GetKeyName(exitKey));
+        const float sidebarWidth = 184.0f * dpiScale;
+        const float navigationHeight = 42.0f * dpiScale;
 
+        ImGui::PushStyleColor(
+            ImGuiCol_ChildBg,
+            ImVec4(0.038f, 0.052f, 0.075f, 1.0f));
+        ImGui::BeginChild(
+            "##Navigation",
+            ImVec2(sidebarWidth, 0.0f),
+            true);
+        ImGui::TextColored(
+            ImVec4(0.330f, 0.800f, 1.000f, 1.0f),
+            "AEGIS");
+        ImGui::TextColored(
+            ImVec4(0.500f, 0.570f, 0.670f, 1.0f),
+            "CS2 OVERLAY");
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
-        // Tab Bar
-        if (ImGui::BeginTabBar("MainTabBar", ImGuiTabBarFlags_FittingPolicyResizeDown))
-        {
-            if (ImGui::BeginTabItem("Aimbot"))
-            {
-                ImGui::Spacing();
-                RenderAimbotTab();
-                ImGui::EndTabItem();
-            }
+        const ImVec2 navigationSize(
+            ImGui::GetContentRegionAvail().x,
+            navigationHeight);
+        NavigationButton("Overview", 0, navigationSize);
+        NavigationButton("Combat", 1, navigationSize);
+        NavigationButton("Player visuals", 2, navigationSize);
+        NavigationButton("World & radar", 3, navigationSize);
+        NavigationButton("System", 4, navigationSize);
 
-            if (ImGui::BeginTabItem("Triggerbot"))
-            {
-                ImGui::Spacing();
-                RenderTriggerbotTab();
-                ImGui::EndTabItem();
-            }
-
-            if (ImGui::BeginTabItem("ESP"))
-            {
-                ImGui::Spacing();
-                RenderESPTab();
-                ImGui::EndTabItem();
-            }
-
-            if (ImGui::BeginTabItem("Radar"))
-            {
-                ImGui::Spacing();
-                RenderRadarTab();
-                ImGui::EndTabItem();
-            }
-
-            if (ImGui::BeginTabItem("Misc"))
-            {
-                ImGui::Spacing();
-                RenderMiscTab();
-                ImGui::EndTabItem();
-            }
-
-            if (ImGui::BeginTabItem("Hotkeys"))
-            {
-                ImGui::Spacing();
-                RenderHotkeysTab();
-                ImGui::EndTabItem();
-            }
-
-            if (ImGui::BeginTabItem("Settings"))
-            {
-                ImGui::Spacing();
-                RenderSettingsTab();
-                ImGui::EndTabItem();
-            }
-
-            ImGui::EndTabBar();
+        const float footerHeight = 104.0f * dpiScale;
+        if (ImGui::GetContentRegionAvail().y > footerHeight) {
+            ImGui::SetCursorPosY(
+                ImGui::GetWindowHeight() - footerHeight);
         }
+        ImGui::Separator();
+        ImGui::TextColored(
+            sdl_renderer::isGameForeground()
+                ? ImVec4(0.250f, 0.900f, 0.600f, 1.0f)
+                : ImVec4(0.930f, 0.650f, 0.260f, 1.0f),
+            sdl_renderer::isGameForeground()
+                ? "GAME ACTIVE"
+                : "INPUT PAUSED");
+        ImGui::TextColored(
+            ImVec4(0.500f, 0.570f, 0.670f, 1.0f),
+            "%s menu  |  %s exit",
+            GetKeyName(menuToggleKey),
+            GetKeyName(exitKey));
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+
+        ImGui::SameLine(0.0f, 12.0f * dpiScale);
+        ImGui::BeginChild(
+            "##PageContent",
+            ImVec2(0.0f, 0.0f),
+            false);
+        switch (currentTab) {
+        case 1:
+            RenderCombatPage();
+            break;
+        case 2:
+            RenderPlayerVisualsPage();
+            break;
+        case 3:
+            RenderWorldPage();
+            break;
+        case 4:
+            RenderSystemPage();
+            break;
+        default:
+            currentTab = 0;
+            RenderPageHeader(
+                "Overview",
+                "Quick controls and a live view of the current session.");
+            RenderOverview();
+            break;
+        }
+        ImGui::EndChild();
 
         ImGui::End();
+        if (ImGui::IsPopupOpen(
+                nullptr,
+                ImGuiPopupFlags_AnyPopup)) {
+            // Popups may extend beyond the main menu rectangle. Keep the whole
+            // overlay interactive while one is open so their first click cannot
+            // pass through to CS2.
+            sdl_renderer::setInteractiveRect(
+                0.0f,
+                0.0f,
+                static_cast<float>(WIDTH),
+                static_cast<float>(HEIGHT));
+        }
         publishRuntimeConfig();
     }
 }

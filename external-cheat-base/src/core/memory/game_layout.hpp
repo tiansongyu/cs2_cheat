@@ -14,8 +14,11 @@ namespace game_layout
     constexpr uint32_t ENTITY_CHUNK_SHIFT = 9;
     constexpr uint32_t ENTITY_CHUNK_MASK = 0x1FF;
     constexpr uint32_t ENTITY_HANDLE_MASK = 0x7FFF;
-    constexpr uint32_t MAX_PLAYER_CONTROLLERS = 64;
-    constexpr uint32_t MAX_WORLD_ENTITIES = 1024;
+    constexpr uint32_t FIRST_PLAYER_CONTROLLER = 1;
+    constexpr uint32_t LAST_PLAYER_CONTROLLER = 64;
+    constexpr uint32_t FIRST_WORLD_ENTITY =
+        LAST_PLAYER_CONTROLLER + 1;
+    constexpr uint32_t MAX_WORLD_ENTITIES = ENTITY_HANDLE_MASK;
 
     constexpr uintptr_t BONE_ARRAY_IN_MODEL_STATE = 0x80;
     constexpr size_t BONE_STRIDE = 0x20;

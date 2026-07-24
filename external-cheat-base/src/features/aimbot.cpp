@@ -21,11 +21,12 @@ namespace
     using SteadyClock = std::chrono::steady_clock;
 
     SteadyClock::time_point lastAimUpdate{};
-    SteadyClock::time_point lastTriggerUpdate{};
+    SteadyClock::time_point triggerTargetAcquired{};
+    SteadyClock::time_point lastTriggerShot{};
     float aimResidualX = 0.0f;
     float aimResidualY = 0.0f;
-    float triggerResidualX = 0.0f;
-    float triggerResidualY = 0.0f;
+    int32_t currentAimTargetIndex = -1;
+    int32_t currentTriggerTargetIndex = -1;
 
     float timeBasedAlpha(
         SteadyClock::time_point& previous,
@@ -44,6 +45,9 @@ namespace
             0.05f);
         const float safeSmoothing =
             std::max(1.0f, smoothing);
+        if (safeSmoothing <= 1.01f) {
+            return 1.0f;
+        }
         const float responsePerSecond =
             60.0f / safeSmoothing;
         return 1.0f -
@@ -64,13 +68,13 @@ namespace
         lastAimUpdate = {};
         aimResidualX = 0.0f;
         aimResidualY = 0.0f;
+        currentAimTargetIndex = -1;
     }
 
     void resetTriggerState()
     {
-        lastTriggerUpdate = {};
-        triggerResidualX = 0.0f;
-        triggerResidualY = 0.0f;
+        triggerTargetAcquired = {};
+        currentTriggerTargetIndex = -1;
     }
 }
 
@@ -119,6 +123,57 @@ vec3 calculateHeadOffset(
     // Z offset is typically not needed as head height stays same
 
     return adjustedHead;
+}
+
+namespace
+{
+    vec3 targetPosition(
+        const EnemyInfo& enemy,
+        int selectedBone,
+        const menu::RuntimeConfig& config)
+    {
+        vec3 position{};
+        switch (selectedBone) {
+            case 1:
+                position = enemy.hasBones
+                    ? enemy.bonePositions[BoneIndex::NECK]
+                    : vec3{
+                        enemy.headPosition.x,
+                        enemy.headPosition.y,
+                        enemy.headPosition.z - 5.0f
+                    };
+                break;
+            case 2:
+                if (enemy.hasBones) {
+                    position =
+                        enemy.bonePositions[BoneIndex::SPINE_2];
+                } else {
+                    position = {
+                        (enemy.headPosition.x + enemy.position.x) /
+                            2.0f,
+                        (enemy.headPosition.y + enemy.position.y) /
+                            2.0f,
+                        (enemy.headPosition.z + enemy.position.z) /
+                            2.0f
+                    };
+                }
+                return position;
+            case 0:
+            default:
+                position = enemy.hasBones
+                    ? enemy.bonePositions[BoneIndex::HEAD]
+                    : enemy.headPosition;
+                break;
+        }
+
+        return enemy.viewAngleKnown
+            ? calculateHeadOffset(
+                position,
+                enemy.viewYaw,
+                enemy.angleToPlayer,
+                config)
+            : position;
+    }
 }
 
 bool aimbot::init()
@@ -190,8 +245,6 @@ void aimbot::update(const menu::RuntimeConfig& config)
     const vec2& currentViewAngle = esp::localPlayer.viewAngle;
     const vec3& eyePos = esp::localPlayer.eyePosition;
 
-    vec2 bestAngle = { 0.0f, 0.0f };
-    bool foundTarget = false;
     const esp::EnemySnapshot enemies =
         esp::getEnemySnapshot();
     if (!enemies) {
@@ -199,141 +252,91 @@ void aimbot::update(const menu::RuntimeConfig& config)
         return;
     }
 
-    if (config.smartAimEnabled) {
-        // Smart Aim Mode: Ignore FOV, select the best spotted target.
-        float bestScore = 999999.0f;  // Lower is better
+    struct Candidate
+    {
+        bool valid = false;
+        int32_t entityIndex = -1;
+        vec2 angle{};
+        float metric = std::numeric_limits<float>::infinity();
+    };
+    Candidate best{};
+    Candidate retained{};
 
-        for (const auto& enemy : *enemies)
-        {
-            // Unknown state never passes the conservative spotted filter.
-            if (!enemy.visibilityKnown || !enemy.isSpotted) continue;
-
-            // Calculate priority score based on selected mode
-            float score;
-            if (config.smartAimPriority == 0) {
-                // Distance first: closer enemies have lower score
-                score = enemy.distance;
-            } else {
-                // Health first: lower HP enemies have lower score
-                // Use distance as tiebreaker (add small distance factor)
-                score = static_cast<float>(enemy.health) + enemy.distance * 0.001f;
-            }
-
-            if (score < bestScore)
-            {
-                bestScore = score;
-
-                // Get target position based on selected bone
-                vec3 targetPos;
-                switch (config.aimbotBone)
-                {
-                    case 0: // Head
-                        targetPos = calculateHeadOffset(
-                            enemy.headPosition,
-                            enemy.viewYaw,
-                            enemy.angleToPlayer,
-                            config);
-                        break;
-                    case 1: // Neck
-                        targetPos = calculateHeadOffset(
-                            enemy.headPosition,
-                            enemy.viewYaw,
-                            enemy.angleToPlayer,
-                            config);
-                        targetPos.z -= 5.0f;
-                        break;
-                    case 2: // Chest
-                        targetPos.x = (enemy.headPosition.x + enemy.position.x) / 2.0f;
-                        targetPos.y = (enemy.headPosition.y + enemy.position.y) / 2.0f;
-                        targetPos.z = (enemy.headPosition.z + enemy.position.z) / 2.0f;
-                        break;
-                    default:
-                        targetPos = calculateHeadOffset(
-                            enemy.headPosition,
-                            enemy.viewYaw,
-                            enemy.angleToPlayer,
-                            config);
-                        break;
-                }
-
-                bestAngle = calcAngle(eyePos, targetPos);
-                foundTarget = true;
-            }
-        }
-    }
-    else {
-        // Normal Mode: Use FOV to find closest target to crosshair
-        float bestFOV = config.aimbotFOV;
-
-        for (const auto& enemy : *enemies)
-        {
-            // The option is a spotted-state filter, not a ray-cast.
-            if (config.aimbotVisibleOnly &&
-                (!enemy.visibilityKnown || !enemy.isSpotted)) {
+    for (const EnemyInfo& enemy : *enemies) {
+        if (config.smartAimEnabled) {
+            if (!enemy.visibilityKnown || !enemy.isSpotted) {
                 continue;
             }
+        } else if (
+            config.aimbotVisibleOnly &&
+            (!enemy.visibilityKnown || !enemy.isSpotted)) {
+            continue;
+        }
 
-            // Get target position based on selected bone
-            vec3 targetPos;
-            switch (config.aimbotBone)
-            {
-                case 0: // Head
-                    targetPos = calculateHeadOffset(
-                        enemy.headPosition,
-                        enemy.viewYaw,
-                        enemy.angleToPlayer,
-                        config);
-                    break;
-                case 1: // Neck
-                    targetPos = calculateHeadOffset(
-                        enemy.headPosition,
-                        enemy.viewYaw,
-                        enemy.angleToPlayer,
-                        config);
-                    targetPos.z -= 5.0f;
-                    break;
-                case 2: // Chest
-                    targetPos.x = (enemy.headPosition.x + enemy.position.x) / 2.0f;
-                    targetPos.y = (enemy.headPosition.y + enemy.position.y) / 2.0f;
-                    targetPos.z = (enemy.headPosition.z + enemy.position.z) / 2.0f;
-                    break;
-                default:
-                    targetPos = calculateHeadOffset(
-                        enemy.headPosition,
-                        enemy.viewYaw,
-                        enemy.angleToPlayer,
-                        config);
-                    break;
-            }
+        const vec2 candidateAngle = calcAngle(
+            eyePos,
+            targetPosition(
+                enemy,
+                config.aimbotBone,
+                config));
+        const float fov = getFOV(
+            currentViewAngle,
+            candidateAngle);
+        if (!std::isfinite(fov)) {
+            continue;
+        }
 
-            // Calculate angle to target
-            vec2 aimAngle = calcAngle(eyePos, targetPos);
+        float metric = fov;
+        if (config.smartAimEnabled) {
+            metric = config.smartAimPriority == 0
+                ? enemy.distance
+                : static_cast<float>(enemy.health) +
+                    enemy.distance * 0.001f;
+        } else if (fov >= config.aimbotFOV) {
+            continue;
+        }
 
-            // Get FOV distance
-            float fov = getFOV(currentViewAngle, aimAngle);
-
-            // Check if this target is closer to crosshair
-            if (fov < bestFOV)
-            {
-                bestFOV = fov;
-                bestAngle = aimAngle;
-                foundTarget = true;
-            }
+        const Candidate candidate{
+            true,
+            static_cast<int32_t>(enemy.entityIndex),
+            candidateAngle,
+            metric
+        };
+        if (!best.valid || metric < best.metric) {
+            best = candidate;
+        }
+        if (candidate.entityIndex == currentAimTargetIndex) {
+            retained = candidate;
         }
     }
 
-    if (!foundTarget) {
+    if (!best.valid) {
         resetAimState();
         return;
     }
+
+    // Keep a still-valid target unless a replacement is materially better.
+    // This prevents frame-to-frame oscillation between nearly equal players.
+    Candidate selected = best;
+    if (retained.valid) {
+        const float hysteresis = config.smartAimEnabled
+            ? std::max(1.0f, std::abs(best.metric) * 0.10f)
+            : std::max(0.35f, config.aimbotFOV * 0.05f);
+        if (retained.metric <= best.metric + hysteresis) {
+            selected = retained;
+        }
+    }
+    currentAimTargetIndex = selected.entityIndex;
 
     // Exponential time-based smoothing is stable across worker rates.
     const float alpha =
         timeBasedAlpha(lastAimUpdate, config.aimbotSmoothing);
     float deltaPitch =
-        normalizeAngle(bestAngle.x - currentViewAngle.x) * alpha;
+        normalizeAngle(
+            selected.angle.x - currentViewAngle.x) * alpha;
     float deltaYaw =
-        normalizeAngle(bestAngle.y - currentViewAngle.y) * alpha;
+        normalizeAngle(
+            selected.angle.y - currentViewAngle.y) * alpha;
 
     // Convert angle delta to mouse movement
     const float mouseSensitivityFactor =
@@ -355,134 +358,94 @@ void aimbot::update(const menu::RuntimeConfig& config)
         input.mi.dwFlags = MOUSEEVENTF_MOVE;
         input.mi.dx = moveWholeX;
         input.mi.dy = moveWholeY;
-        SendInput(1, &input, sizeof(INPUT));
+        if (SendInput(1, &input, sizeof(INPUT)) != 1) {
+            aimResidualX = 0.0f;
+            aimResidualY = 0.0f;
+        }
     }
 }
 
 void aimbot::updateTriggerbot(const menu::RuntimeConfig& config)
 {
-    // Check if triggerbot is enabled
     if (!config.triggerbotEnabled ||
         config.inputSuppressed ||
         !sdl_renderer::isInputAllowed()) {
-        triggerbotHasTarget = false;
         resetTriggerState();
         return;
     }
 
-    // Check if triggerbot key is held (Alt by default)
     if (!(GetAsyncKeyState(config.triggerbotKey) & 0x8000)) {
-        triggerbotHasTarget = false;
         resetTriggerState();
         return;
     }
 
-    // Use cached local player data
     if (!esp::localPlayer.isValid) {
-        triggerbotHasTarget = false;
         resetTriggerState();
         return;
     }
 
-    const vec2& currentViewAngle = esp::localPlayer.viewAngle;
-    const vec3& eyePos = esp::localPlayer.eyePosition;
+    const int32_t crosshairEntityIndex =
+        esp::localPlayer.crosshairEntityIndex;
+    if (crosshairEntityIndex <= 0) {
+        resetTriggerState();
+        return;
+    }
 
-    // Find a spotted enemy that is very close to the crosshair.
-    const float triggerbotFOV = 1.5f;  // Very small FOV - only trigger when almost on target
-    bool foundTarget = false;
     const esp::EnemySnapshot enemies =
         esp::getEnemySnapshot();
     if (!enemies) {
-        triggerbotHasTarget = false;
         resetTriggerState();
         return;
     }
 
-    for (const auto& enemy : *enemies)
-    {
-        // Unknown state never passes the conservative spotted filter.
-        if (!enemy.visibilityKnown || !enemy.isSpotted) continue;
-
-        // Target head position with offset compensation for side-facing enemies
-        vec3 targetPos = calculateHeadOffset(
-            enemy.headPosition,
-            enemy.viewYaw,
-            enemy.angleToPlayer,
-            config);
-
-        // Calculate angle to target
-        vec2 aimAngle = calcAngle(eyePos, targetPos);
-
-        // Get FOV distance
-        float fov = getFOV(currentViewAngle, aimAngle);
-
-        // Check if crosshair is on enemy head
-        if (fov < triggerbotFOV)
-        {
-            foundTarget = true;
-
-            // If this is a new target, record the time
-            if (!triggerbotHasTarget) {
-                triggerbotTargetTime = GetTickCount();
-                triggerbotHasTarget = true;
-            }
-
-            // Check if delay has passed
-            DWORD currentTime = GetTickCount();
-            if (currentTime - triggerbotTargetTime >=
-                static_cast<DWORD>(config.triggerbotDelay))
-            {
-                const float alpha =
-                    timeBasedAlpha(lastTriggerUpdate, 2.0f);
-                float deltaPitch = normalizeAngle(
-                    aimAngle.x - currentViewAngle.x) * alpha;
-                float deltaYaw = normalizeAngle(
-                    aimAngle.y - currentViewAngle.y) * alpha;
-
-                const float mouseSensitivityFactor =
-                    std::max(0.01f, config.mouseSensitivity) * 0.022f;
-
-                float moveX = -deltaYaw / mouseSensitivityFactor;
-                float moveY = deltaPitch / mouseSensitivityFactor;
-
-                // Move mouse to aim at head
-                const LONG moveWholeX =
-                    consumeMouseDelta(
-                        moveX,
-                        triggerResidualX);
-                const LONG moveWholeY =
-                    consumeMouseDelta(
-                        moveY,
-                        triggerResidualY);
-                if (moveWholeX != 0 || moveWholeY != 0)
-                {
-                    INPUT moveInput = {};
-                    moveInput.type = INPUT_MOUSE;
-                    moveInput.mi.dwFlags = MOUSEEVENTF_MOVE;
-                    moveInput.mi.dx = moveWholeX;
-                    moveInput.mi.dy = moveWholeY;
-                    SendInput(1, &moveInput, sizeof(INPUT));
-                }
-
-                // Fire! (left mouse click)
-                INPUT clickInput = {};
-                clickInput.type = INPUT_MOUSE;
-                clickInput.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-                SendInput(1, &clickInput, sizeof(INPUT));
-
-                // Release click
-                clickInput.mi.dwFlags = MOUSEEVENTF_LEFTUP;
-                SendInput(1, &clickInput, sizeof(INPUT));
-
-                // Reset to allow next shot with delay
-                triggerbotTargetTime = currentTime;
-            }
-            break;  // Only process first found target
+    bool liveEnemyUnderCrosshair = false;
+    for (const EnemyInfo& enemy : *enemies) {
+        if (static_cast<int32_t>(enemy.entityIndex) ==
+            crosshairEntityIndex) {
+            liveEnemyUnderCrosshair = true;
+            break;
         }
     }
+    if (!liveEnemyUnderCrosshair) {
+        resetTriggerState();
+        return;
+    }
 
-    if (!foundTarget) {
-        triggerbotHasTarget = false;
+    const auto now = SteadyClock::now();
+    if (currentTriggerTargetIndex != crosshairEntityIndex) {
+        currentTriggerTargetIndex = crosshairEntityIndex;
+        triggerTargetAcquired = now;
+    }
+
+    const auto acquisitionDelay = std::chrono::milliseconds(
+        std::max(0, config.triggerbotDelay));
+    if (now - triggerTargetAcquired < acquisitionDelay) {
+        return;
+    }
+
+    // The configured delay controls initial reaction time. A separate minimum
+    // shot interval prevents a zero-delay setting from injecting hundreds of
+    // clicks per second while the crosshair remains on one entity.
+    constexpr auto MINIMUM_SHOT_INTERVAL =
+        std::chrono::milliseconds(50);
+    if (lastTriggerShot.time_since_epoch().count() != 0 &&
+        now - lastTriggerShot < MINIMUM_SHOT_INTERVAL) {
+        return;
+    }
+
+    if (!sdl_renderer::isInputAllowed()) {
+        resetTriggerState();
+        return;
+    }
+
+    INPUT clicks[2]{};
+    clicks[0].type = INPUT_MOUSE;
+    clicks[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+    clicks[1].type = INPUT_MOUSE;
+    clicks[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
+    if (SendInput(2, clicks, sizeof(INPUT)) == 2) {
+        lastTriggerShot = now;
+    } else {
         resetTriggerState();
     }
 }

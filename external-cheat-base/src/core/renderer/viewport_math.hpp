@@ -77,6 +77,74 @@ namespace viewport_math
         }
     }
 
+    inline Viewport remap(
+        const Viewport& viewport,
+        int oldClientWidth,
+        int oldClientHeight,
+        int newClientWidth,
+        int newClientHeight)
+    {
+        if (oldClientWidth <= 0 ||
+            oldClientHeight <= 0 ||
+            newClientWidth <= 0 ||
+            newClientHeight <= 0 ||
+            viewport.width <= 0 ||
+            viewport.height <= 0) {
+            return Viewport{
+                0,
+                0,
+                newClientWidth,
+                newClientHeight
+            };
+        }
+
+        const auto scaleCoordinate = [](
+            int value,
+            int oldExtent,
+            int newExtent) {
+            return static_cast<int>(std::lround(
+                static_cast<double>(value) *
+                static_cast<double>(newExtent) /
+                static_cast<double>(oldExtent)));
+        };
+
+        Viewport result{
+            scaleCoordinate(
+                viewport.x,
+                oldClientWidth,
+                newClientWidth),
+            scaleCoordinate(
+                viewport.y,
+                oldClientHeight,
+                newClientHeight),
+            scaleCoordinate(
+                viewport.width,
+                oldClientWidth,
+                newClientWidth),
+            scaleCoordinate(
+                viewport.height,
+                oldClientHeight,
+                newClientHeight)
+        };
+        result.x = std::clamp(
+            result.x,
+            0,
+            newClientWidth);
+        result.y = std::clamp(
+            result.y,
+            0,
+            newClientHeight);
+        result.width = std::clamp(
+            result.width,
+            0,
+            newClientWidth - result.x);
+        result.height = std::clamp(
+            result.height,
+            0,
+            newClientHeight - result.y);
+        return result;
+    }
+
     inline bool validProjectedBox(
         float height,
         float viewportHeight)

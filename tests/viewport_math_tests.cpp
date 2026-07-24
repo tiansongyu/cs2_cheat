@@ -49,6 +49,28 @@ int main()
         invalidAspect,
         Viewport{ 0, 0, 1600, 900 }));
 
+    const Viewport remappedPillarbox =
+        viewport_math::remap(
+            Viewport{ 240, 0, 1440, 1080 },
+            1920,
+            1080,
+            2560,
+            1440);
+    assert(viewport_math::same(
+        remappedPillarbox,
+        Viewport{ 320, 0, 1920, 1440 }));
+
+    const Viewport remappedInvalid =
+        viewport_math::remap(
+            Viewport{},
+            0,
+            0,
+            1280,
+            720);
+    assert(viewport_math::same(
+        remappedInvalid,
+        Viewport{ 0, 0, 1280, 720 }));
+
     assert(viewport_math::validProjectedBox(1.0f, 1080.0f));
     assert(viewport_math::validProjectedBox(1080.0f, 1080.0f));
     assert(!viewport_math::validProjectedBox(-1.0f, 1080.0f));

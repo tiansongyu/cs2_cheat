@@ -51,19 +51,22 @@ struct BoneConnection
 // Enemy info structure
 struct EnemyInfo
 {
-    vec3 position;
-    vec3 headPosition;
-    int32_t health;
-    float distance;
+    uintptr_t pawnAddress = 0;
+    uint32_t entityIndex = 0;
+    vec3 position{};
+    vec3 headPosition{};
+    int32_t health = 0;
+    float distance = 0.0f;
     std::string weaponName;
-    float viewYaw;
-    float angleToPlayer;
-    float flashDuration;
-    bool isFlashed;
-    bool isSpotted;
-    bool visibilityKnown;
-    vec3 bonePositions[BoneIndex::BONE_COUNT];
-    bool hasBones;
+    float viewYaw = 0.0f;
+    float angleToPlayer = 180.0f;
+    float flashDuration = 0.0f;
+    bool viewAngleKnown = false;
+    bool isFlashed = false;
+    bool isSpotted = false;
+    bool visibilityKnown = false;
+    vec3 bonePositions[BoneIndex::BONE_COUNT]{};
+    bool hasBones = false;
 };
 
 // Cached local player info (updated once per frame, shared by aimbot/triggerbot)
@@ -73,6 +76,8 @@ struct LocalPlayerCache
     vec3 position{};              // Local player position
     vec3 eyePosition{};           // Local player eye position
     vec2 viewAngle{};             // Current view angles (pitch, yaw)
+    int32_t crosshairEntityIndex = -1;
+    uint8_t team = 0;
     bool isValid = false;         // Is cache valid this frame
 };
 
@@ -87,6 +92,7 @@ struct BombInfo
     float defuseCountDown = 0.0f;
     float curtime = 0.0f;
     int bombSite = 0; // 0=A, 1=B
+    uint64_t sampledAtMilliseconds = 0;
 };
 
 // World entity info (grenades, dropped weapons)
@@ -101,7 +107,10 @@ struct WorldEntityInfo
 // Cached entity pawn address for fast-path updates
 struct CachedPawn
 {
+    uintptr_t controllerAddress = 0;
     uintptr_t pawnAddress = 0;
+    uint32_t pawnHandle = 0;
+    uint32_t entityIndex = 0;
     uint8_t team = 0;
     std::string weaponName;
     float flashDuration = 0.0f;

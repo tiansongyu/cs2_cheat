@@ -56,6 +56,7 @@ namespace
     bool imguiInitialized = false;
     bool gameVisible = true;
     bool mixedMonitorBlocked = false;
+    bool overlayPositionFailed = false;
     std::atomic<bool> gameForeground{ false };
     std::atomic<bool> inputAllowed{ false };
     std::atomic<bool> gameDisconnected{ false };
@@ -562,8 +563,8 @@ namespace
     void resetAutoViewportDetection(const RECT& rect)
     {
         ++viewportGeneration;
-        pendingViewport = {};
-        pendingViewportSamples = 0;
+        pendingViewport = currentViewport;
+        pendingViewportSamples = 1;
         lastViewportQueueTime = GetTickCount();
         queueViewportDetection(rect, viewportGeneration);
     }
@@ -1281,6 +1282,7 @@ void sdl_renderer::destroy()
     VIEWPORT_H = 0;
     gameVisible = true;
     mixedMonitorBlocked = false;
+    overlayPositionFailed = false;
     gameForeground.store(false, std::memory_order_relaxed);
     inputAllowed.store(false, std::memory_order_relaxed);
     acceleratedRenderer.store(false, std::memory_order_relaxed);
@@ -1327,6 +1329,7 @@ void sdl_renderer::pollEvents()
     static AsyncKeyTracker exitKeyTracker{};
     static AsyncKeyTracker menuKeyTracker{};
 
+    bool rendererResetRequested = false;
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         ImGui_ImplSDL2_ProcessEvent(&event);
@@ -1336,9 +1339,14 @@ void sdl_renderer::pollEvents()
         } else if (
             event.type == SDL_RENDER_DEVICE_RESET ||
             event.type == SDL_RENDER_TARGETS_RESET) {
-            ImGui_ImplSDLRenderer2_DestroyDeviceObjects();
-            ImGui_ImplSDLRenderer2_CreateDeviceObjects();
+            rendererResetRequested = true;
         }
+    }
+    if (rendererResetRequested && !recoverRenderer()) {
+        diagnostics::log(
+            L"SDL render device recovery failed.");
+        running = false;
+        return;
     }
 
     // Skip global hotkeys while binding, and until every configured key has
@@ -1357,7 +1365,9 @@ void sdl_renderer::pollEvents()
     }
 
     const bool gameOrOverlayForeground =
-        !gameHwnd || foregroundBelongsToGameUi();
+        gameHwnd
+            ? foregroundBelongsToGameUi()
+            : GetForegroundWindow() == overlayHwnd;
 
     // Always sample the keys so GetAsyncKeyState's low-order latch cannot
     // replay a press made in another application when CS2 regains focus.
@@ -1377,8 +1387,11 @@ void sdl_renderer::pollEvents()
     if (gameOrOverlayForeground && gameHwnd && menuPressed) {
         menuVisible = !menuVisible;
         if (!setClickThrough(overlayHwnd, !menuVisible)) {
+            menuVisible = !menuVisible;
             inputAllowed.store(false, std::memory_order_relaxed);
-            running = false;
+            diagnostics::log(
+                L"Unable to change overlay click-through state; "
+                L"the previous menu state was restored.");
             return;
         }
 
@@ -1480,6 +1493,10 @@ void sdl_renderer::updateWindowPosition()
     if (!sameRect(geometry.gameClient, currentGeometry.gameClient) ||
         !sameRect(geometry.monitor, currentGeometry.monitor) ||
         geometry.monitorHandle != currentGeometry.monitorHandle) {
+        const int previousWidth =
+            rectWidth(currentGeometry.gameClient);
+        const int previousHeight =
+            rectHeight(currentGeometry.gameClient);
         if (!SetWindowPos(
             overlayHwnd,
             HWND_TOPMOST,
@@ -1489,17 +1506,42 @@ void sdl_renderer::updateWindowPosition()
             height,
             SWP_NOACTIVATE | SWP_SHOWWINDOW
         )) {
-            running = false;
+            if (!overlayPositionFailed) {
+                diagnostics::log(
+                    L"Overlay positioning failed; hiding it and retrying.");
+            }
+            overlayPositionFailed = true;
+            gameVisible = false;
+            inputAllowed.store(false, std::memory_order_relaxed);
+            ShowWindow(overlayHwnd, SW_HIDE);
             return;
+        }
+        if (overlayPositionFailed) {
+            diagnostics::log(
+                L"Overlay positioning recovered.");
+            overlayPositionFailed = false;
         }
         currentGeometry = geometry;
         targetRefreshRate.store(
             refreshRateForMonitor(geometry.monitorHandle),
             std::memory_order_relaxed);
-        publishViewport(viewportForMode(
-            menu::viewportMode,
-            width,
-            height));
+        if (menu::viewportMode == 0) {
+            publishViewport(viewport_math::remap(
+                currentViewport,
+                previousWidth,
+                previousHeight,
+                width,
+                height));
+        } else {
+            publishViewport(viewportForMode(
+                menu::viewportMode,
+                width,
+                height));
+        }
+        WIDTH = static_cast<uint32_t>(width);
+        HEIGHT = static_cast<uint32_t>(height);
+        WINDOW_W = WIDTH;
+        WINDOW_H = HEIGHT;
         if (menu::viewportMode == 0) {
             resetAutoViewportDetection(geometry.gameClient);
         } else {
@@ -1521,7 +1563,8 @@ void sdl_renderer::updateWindowPosition()
                     0,
                     SWP_NOMOVE | SWP_NOSIZE |
                         SWP_NOACTIVATE | SWP_SHOWWINDOW)) {
-                running = false;
+                diagnostics::log(
+                    L"Unable to reassert overlay top-most state; will retry.");
                 return;
             }
         }
@@ -1531,14 +1574,15 @@ void sdl_renderer::updateWindowPosition()
 
     if (menu::viewportMode != appliedViewportMode) {
         appliedViewportMode = menu::viewportMode;
-        publishViewport(viewportForMode(
-            appliedViewportMode,
-            width,
-            height));
-        pendingViewport = {};
-        pendingViewportSamples = 0;
         if (appliedViewportMode == 0) {
             resetAutoViewportDetection(geometry.gameClient);
+        } else {
+            publishViewport(viewportForMode(
+                appliedViewportMode,
+                width,
+                height));
+            pendingViewport = {};
+            pendingViewportSamples = 0;
         }
     }
 
@@ -1564,6 +1608,12 @@ void sdl_renderer::updateWindowPosition()
         } else {
             pendingViewport = detection.viewport;
             pendingViewportSamples = 1;
+            // Confirm a changed viewport immediately instead of leaving a
+            // stretched/stale mapping visible until the normal 2-second probe.
+            lastViewportQueueTime = now;
+            queueViewportDetection(
+                geometry.gameClient,
+                viewportGeneration);
         }
         if (pendingViewportSamples >= 2) {
             if (!sameViewport(detection.viewport, currentViewport)) {
@@ -1683,18 +1733,74 @@ bool sdl_renderer::initImGui()
 
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
+    style.Colors[ImGuiCol_WindowBg] =
+        ImVec4(0.045f, 0.060f, 0.085f, 1.0f);
+    style.Colors[ImGuiCol_ChildBg] =
+        ImVec4(0.070f, 0.090f, 0.125f, 1.0f);
+    style.Colors[ImGuiCol_PopupBg] =
+        ImVec4(0.060f, 0.078f, 0.108f, 1.0f);
+    style.Colors[ImGuiCol_Border] =
+        ImVec4(0.145f, 0.185f, 0.240f, 1.0f);
+    style.Colors[ImGuiCol_Separator] =
+        ImVec4(0.135f, 0.180f, 0.235f, 1.0f);
+    style.Colors[ImGuiCol_Text] =
+        ImVec4(0.920f, 0.945f, 0.980f, 1.0f);
+    style.Colors[ImGuiCol_TextDisabled] =
+        ImVec4(0.500f, 0.555f, 0.640f, 1.0f);
+    style.Colors[ImGuiCol_FrameBg] =
+        ImVec4(0.095f, 0.125f, 0.170f, 1.0f);
+    style.Colors[ImGuiCol_FrameBgHovered] =
+        ImVec4(0.125f, 0.175f, 0.235f, 1.0f);
+    style.Colors[ImGuiCol_FrameBgActive] =
+        ImVec4(0.145f, 0.215f, 0.300f, 1.0f);
+    style.Colors[ImGuiCol_Button] =
+        ImVec4(0.100f, 0.310f, 0.510f, 1.0f);
+    style.Colors[ImGuiCol_ButtonHovered] =
+        ImVec4(0.120f, 0.410f, 0.670f, 1.0f);
+    style.Colors[ImGuiCol_ButtonActive] =
+        ImVec4(0.090f, 0.260f, 0.440f, 1.0f);
+    style.Colors[ImGuiCol_Header] =
+        ImVec4(0.090f, 0.255f, 0.410f, 1.0f);
+    style.Colors[ImGuiCol_HeaderHovered] =
+        ImVec4(0.110f, 0.350f, 0.565f, 1.0f);
+    style.Colors[ImGuiCol_HeaderActive] =
+        ImVec4(0.100f, 0.300f, 0.490f, 1.0f);
+    style.Colors[ImGuiCol_CheckMark] =
+        ImVec4(0.250f, 0.790f, 1.000f, 1.0f);
+    style.Colors[ImGuiCol_SliderGrab] =
+        ImVec4(0.250f, 0.730f, 0.980f, 1.0f);
+    style.Colors[ImGuiCol_SliderGrabActive] =
+        ImVec4(0.390f, 0.840f, 1.000f, 1.0f);
+    style.Colors[ImGuiCol_Tab] =
+        ImVec4(0.075f, 0.115f, 0.165f, 1.0f);
+    style.Colors[ImGuiCol_TabHovered] =
+        ImVec4(0.110f, 0.350f, 0.565f, 1.0f);
+    style.Colors[ImGuiCol_TabSelected] =
+        ImVec4(0.100f, 0.300f, 0.490f, 1.0f);
+    for (ImVec4& color : style.Colors) {
+        color.w = 1.0f;
+    }
     style.FontSizeBase = BASE_FONT_SIZE;
     style.FontScaleMain = 1.0f;
     style.FontScaleDpi = 1.0f;
-    style.WindowRounding = 8.0f;
-    style.FrameRounding = 4.0f;
-    style.TabRounding = 4.0f;
+    style.WindowRounding = 12.0f;
+    style.ChildRounding = 10.0f;
+    style.FrameRounding = 7.0f;
+    style.PopupRounding = 9.0f;
+    style.ScrollbarRounding = 9.0f;
+    style.GrabRounding = 7.0f;
+    style.TabRounding = 7.0f;
+    style.WindowBorderSize = 1.0f;
+    style.ChildBorderSize = 1.0f;
     // Color-keyed layered windows cannot preserve true per-pixel translucency.
     // Keep the menu opaque so it does not blend against the reserved key and
     // leave a dark halo over the game.
     style.Alpha = 1.0f;
-    style.FramePadding = ImVec2(6.0f, 4.0f);
-    style.ItemSpacing = ImVec2(8.0f, 6.0f);
+    style.WindowPadding = ImVec2(16.0f, 14.0f);
+    style.FramePadding = ImVec2(9.0f, 6.0f);
+    style.ItemSpacing = ImVec2(9.0f, 8.0f);
+    style.ItemInnerSpacing = ImVec2(7.0f, 6.0f);
+    style.ScrollbarSize = 13.0f;
     style.TabBarBorderSize = 1.0f;
 
     baseImGuiStyle = style;
