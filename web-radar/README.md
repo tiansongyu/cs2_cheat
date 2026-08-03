@@ -17,12 +17,13 @@ npm run build
 ## Endpoints
 
 - Page and assets are loaded from the current HTTP(S) origin.
-- A page URL containing `token` selects embedded mode. Only that query parameter is forwarded to the embedded WebSocket URL.
+- A page URL containing a non-empty `token` selects embedded mode. Only that query parameter is forwarded to the embedded WebSocket URL.
 - A page URL without `token` probes `GET /api/v1/session`. A `404` is treated as an embedded link missing its access token; a `401`/`403` shows the Relay login screen.
 - Relay login sends `{room, inviteToken}` to `POST /api/v1/session`. The server returns `{authenticated:true, room, expiresAtMs}` and owns the `Secure; HttpOnly` session cookie.
 - Relay streaming always uses the query-free, same-origin `ws(s)://<current-host>/api/v1/stream`; browsers attach the session cookie during the handshake.
-- Relay logout uses `DELETE /api/v1/session`. Neither invite credentials nor session credentials are stored in `localStorage` or a URL.
-- The map manifest is loaded once from `/maps/manifest.json`.
+- Relay logout uses `DELETE /api/v1/session`. Neither invite credentials nor session credentials are stored in `localStorage` or a URL; credential-shaped Relay query parameters are removed from browser history.
+- Session requests and WebSocket handshakes have explicit timeouts. Offline/online, foreground, BFCache, stale-frame, and superseded-connection transitions recover without accumulating sockets.
+- The map manifest is conditionally revalidated from `/maps/manifest.json` and retried with bounded backoff. Missing manifests and map images also expose manual retry actions.
 
 ## WebSocket v1
 

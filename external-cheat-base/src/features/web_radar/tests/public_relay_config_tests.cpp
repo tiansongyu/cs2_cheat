@@ -73,6 +73,18 @@ int main()
         !web_radar::parsePublicRelayEndpoint(
             "wss://radar.example.com:/api/v1/publish"),
         "An empty explicit port must be rejected");
+    require(
+        !web_radar::parsePublicRelayEndpoint(
+            "wss://bad..example.com/api/v1/publish"),
+        "Empty DNS labels must be rejected");
+    require(
+        !web_radar::parsePublicRelayEndpoint(
+            "wss://-bad.example.com/api/v1/publish"),
+        "DNS labels may not begin with a hyphen");
+    require(
+        !web_radar::parsePublicRelayEndpoint(
+            "wss://[not-an-ip]/api/v1/publish"),
+        "Bracketed non-IPv6 hosts must be rejected");
 
     config = validConfig();
     config.room = "bad room";
@@ -85,10 +97,54 @@ int main()
         !web_radar::validatePublicRelayConfig(config).empty(),
         "Header injection in token must be rejected");
     config = validConfig();
+    config.token = "visible-token!#$%&'*+-.^_`|~:value";
+    require(
+        web_radar::validatePublicRelayConfig(config).empty(),
+        "Visible ASCII tokens accepted by the Relay must remain compatible");
+    config = validConfig();
     config.connectTimeoutMilliseconds = 31'000;
     require(
         !web_radar::validatePublicRelayConfig(config).empty(),
         "Unbounded timeout configuration must be rejected");
+    config = validConfig();
+    config.maxSnapshotBytes = 4095;
+    require(
+        !web_radar::validatePublicRelayConfig(config).empty(),
+        "Snapshot limits below the Relay minimum must be rejected");
+    config = validConfig();
+    config.maxSnapshotBytes = 4U * 1024U * 1024U + 1U;
+    require(
+        !web_radar::validatePublicRelayConfig(config).empty(),
+        "Snapshot limits above the Relay maximum must be rejected");
+    config = validConfig();
+    config.maximumQueuedSnapshotAgeMilliseconds = 249;
+    require(
+        !web_radar::validatePublicRelayConfig(config).empty(),
+        "Unreasonably short queued snapshot ages must be rejected");
+
+    require(
+        web_radar::publicRelaySnapshotFits(4096, 4096) &&
+        !web_radar::publicRelaySnapshotFits(4097, 4096) &&
+        !web_radar::publicRelaySnapshotFits(0, 4096),
+        "Snapshot size admission boundaries are incorrect");
+    require(
+        !web_radar::publicRelayQueuedSnapshotExpired(5s, 5000) &&
+        web_radar::publicRelayQueuedSnapshotExpired(5001ms, 5000),
+        "Queued snapshot expiration boundary is incorrect");
+
+    require(
+        web_radar::publicRelayHttpFailureIsPermanent(400) &&
+        web_radar::publicRelayHttpFailureIsPermanent(401) &&
+        !web_radar::publicRelayHttpFailureIsPermanent(408) &&
+        !web_radar::publicRelayHttpFailureIsPermanent(409) &&
+        !web_radar::publicRelayHttpFailureIsPermanent(425) &&
+        !web_radar::publicRelayHttpFailureIsPermanent(429) &&
+        !web_radar::publicRelayHttpFailureIsPermanent(503),
+        "HTTP retry classification is incorrect");
+    require(
+        !web_radar::publicRelayConnectionWasHealthy(9999ms) &&
+        web_radar::publicRelayConnectionWasHealthy(10s),
+        "Healthy connection duration boundary is incorrect");
 
     require(
         web_radar::publicRelayBackoffDelay(0, 20) == 1s,

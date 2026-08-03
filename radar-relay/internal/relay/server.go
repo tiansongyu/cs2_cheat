@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"compress/flate"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -28,6 +29,7 @@ type Server struct {
 	config       config.Config
 	logger       *slog.Logger
 	rooms        map[string]*room
+	staticRoot   string
 	dummyHash    [sha256.Size]byte
 	sessionsMu   sync.Mutex
 	sessions     map[[sha256.Size]byte]*session
@@ -36,6 +38,8 @@ type Server struct {
 	ready        atomic.Bool
 	closeOnce    sync.Once
 	stopJanitor  context.CancelFunc
+	janitorDone  chan struct{}
+	metrics      relayMetrics
 	handler      http.Handler
 }
 
@@ -43,14 +47,24 @@ func New(cfg config.Config, logger *slog.Logger) (*Server, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+	staticRoot := ""
 	if cfg.StaticDir != "" {
-		info, err := os.Stat(cfg.StaticDir)
+		root, err := filepath.Abs(cfg.StaticDir)
+		if err != nil {
+			return nil, fmt.Errorf("staticDir: %w", err)
+		}
+		root, err = filepath.EvalSymlinks(root)
+		if err != nil {
+			return nil, fmt.Errorf("staticDir: %w", err)
+		}
+		info, err := os.Stat(root)
 		if err != nil {
 			return nil, fmt.Errorf("staticDir: %w", err)
 		}
 		if !info.IsDir() {
 			return nil, errors.New("staticDir must name a directory")
 		}
+		staticRoot = root
 	}
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -59,10 +73,12 @@ func New(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		config:       cfg,
 		logger:       logger,
 		rooms:        make(map[string]*room, len(cfg.Rooms)),
+		staticRoot:   staticRoot,
 		dummyHash:    auth.Sum("radar-relay-invalid-room-dummy-token"),
 		sessions:     make(map[[sha256.Size]byte]*session),
 		loginLimiter: newIPLimiter(cfg.LoginAttemptsPerMinute, cfg.LoginBurst, cfg.MaxTrackedIPs),
 		ipResolver:   newClientIPResolver(cfg.TrustedProxyCIDRs),
+		janitorDone:  make(chan struct{}),
 	}
 	for _, roomConfig := range cfg.Rooms {
 		producerHash, _ := auth.ParseHexSum(roomConfig.ProducerTokenSHA256)
@@ -83,6 +99,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", server.handleHealth)
 	mux.HandleFunc("/readyz", server.handleReady)
+	mux.HandleFunc("/metrics", server.handleMetrics)
 	mux.HandleFunc("/api/v1/session", server.handleSession)
 	mux.HandleFunc("/api/v1/publish", server.handleProducer)
 	mux.HandleFunc("/api/v1/stream", server.handleViewer)
@@ -92,7 +109,10 @@ func New(cfg config.Config, logger *slog.Logger) (*Server, error) {
 
 	janitorContext, cancel := context.WithCancel(context.Background())
 	server.stopJanitor = cancel
-	go server.runJanitor(janitorContext)
+	go func() {
+		defer close(server.janitorDone)
+		server.runJanitor(janitorContext)
+	}()
 	return server, nil
 }
 
@@ -109,6 +129,9 @@ func (s *Server) Close() {
 		s.ready.Store(false)
 		if s.stopJanitor != nil {
 			s.stopJanitor()
+		}
+		if s.janitorDone != nil {
+			<-s.janitorDone
 		}
 		s.sessionsMu.Lock()
 		activeSessions := make([]*session, 0, len(s.sessions))
@@ -158,7 +181,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		header.Set("X-Content-Type-Options", "nosniff")
 		header.Set("X-Frame-Options", "DENY")
 		header.Set("Strict-Transport-Security", "max-age=31536000")
-		if strings.HasPrefix(request.URL.Path, "/api/") || request.URL.Path == "/healthz" || request.URL.Path == "/readyz" {
+		if strings.HasPrefix(request.URL.Path, "/api/") || request.URL.Path == "/healthz" || request.URL.Path == "/readyz" || request.URL.Path == "/metrics" {
 			header.Set("Cache-Control", "no-store")
 		}
 		if strings.HasPrefix(request.URL.Path, "/api/") && request.URL.RawQuery != "" {
@@ -225,9 +248,14 @@ func (s *Server) handleGetSession(writer http.ResponseWriter, request *http.Requ
 }
 
 func (s *Server) handleCreateSession(writer http.ResponseWriter, request *http.Request) {
+	if !s.ready.Load() {
+		writeError(writer, http.StatusServiceUnavailable, "not_ready")
+		return
+	}
 	now := time.Now()
 	clientIP := s.ipResolver.resolve(request)
 	if !s.loginLimiter.allow(clientIP, now) {
+		s.metrics.loginRateLimited.Add(1)
 		writer.Header().Set("Retry-After", "60")
 		writeError(writer, http.StatusTooManyRequests, "rate_limited")
 		return
@@ -256,6 +284,7 @@ func (s *Server) handleCreateSession(writer http.ResponseWriter, request *http.R
 	tokenValid := auth.ValidPresentedToken(body.InviteToken)
 	tokenMatches := auth.MatchesAny(body.InviteToken, inviteHashes)
 	if !exists || !tokenValid || !tokenMatches {
+		s.metrics.loginAuthFailures.Add(1)
 		writeError(writer, http.StatusUnauthorized, "invalid_credentials")
 		return
 	}
@@ -286,6 +315,7 @@ func (s *Server) handleCreateSession(writer http.ResponseWriter, request *http.R
 		return
 	}
 	s.sessions[hash] = newSession(currentRoom, expiresAt)
+	s.metrics.sessionsCreated.Add(1)
 	s.sessionsMu.Unlock()
 	revokeSessions(expiredSessions, 4401, "session expired")
 	if replaced != nil {
@@ -392,12 +422,14 @@ func (s *Server) handleProducer(writer http.ResponseWriter, request *http.Reques
 	}
 	currentRoom, ok := s.authenticateProducer(request)
 	if !ok {
+		s.metrics.producerAuthFailures.Add(1)
 		writer.Header().Set("WWW-Authenticate", "Bearer")
 		writeError(writer, http.StatusUnauthorized, "invalid_credentials")
 		return
 	}
 	generation, err := currentRoom.claimProducer()
 	if err != nil {
+		s.metrics.producerConflicts.Add(1)
 		writeError(writer, http.StatusConflict, "producer_already_connected")
 		return
 	}
@@ -423,6 +455,7 @@ func (s *Server) handleProducer(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	attached = true
+	s.metrics.producerConnections.Add(1)
 	defer currentRoom.releaseProducer(generation)
 	defer conn.Close()
 
@@ -432,28 +465,43 @@ func (s *Server) handleProducer(writer http.ResponseWriter, request *http.Reques
 	for {
 		messageType, payload, readErr := conn.ReadMessage()
 		if readErr != nil {
+			if errors.Is(readErr, websocket.ErrReadLimit) {
+				s.metrics.snapshotsRejected.Add(1)
+			}
 			return
 		}
 		now := time.Now()
 		if messageType != websocket.TextMessage {
+			s.metrics.snapshotsRejected.Add(1)
 			closeWebSocket(conn, websocket.CloseUnsupportedData, "text snapshots only")
 			return
 		}
 		if !limiter.allow(now) {
+			s.metrics.snapshotsRejected.Add(1)
 			closeWebSocket(conn, websocket.ClosePolicyViolation, "publish rate exceeded")
 			return
 		}
 		capturedAt, validationErr := validateSnapshot(payload)
 		if validationErr != nil {
+			s.metrics.snapshotsRejected.Add(1)
 			closeWebSocket(conn, websocket.CloseInvalidFramePayloadData, "invalid snapshot")
 			return
 		}
 		if capturedAt.Before(now.Add(-s.config.MaxSnapshotAge())) || capturedAt.After(now.Add(s.config.MaxFutureSkew())) {
+			s.metrics.snapshotsRejected.Add(1)
 			closeWebSocket(conn, websocket.ClosePolicyViolation, "snapshot capture time outside allowed window")
 			return
 		}
 		_ = conn.SetReadDeadline(now.Add(s.config.ProducerIdleTimeout()))
-		currentRoom.publish(append([]byte(nil), payload...), now)
+		dropped, publishErr := currentRoom.publish(payload, now)
+		if publishErr != nil {
+			s.metrics.snapshotsRejected.Add(1)
+			closeWebSocket(conn, websocket.CloseInternalServerErr, "snapshot preparation failed")
+			return
+		}
+		s.metrics.snapshotsPublished.Add(1)
+		s.metrics.snapshotBytes.Add(uint64(len(payload)))
+		s.metrics.viewerFramesDropped.Add(uint64(dropped))
 	}
 }
 
@@ -494,11 +542,13 @@ func (s *Server) handleViewer(writer http.ResponseWriter, request *http.Request)
 	}
 	currentSession, ok := s.authenticateSession(request, time.Now())
 	if !ok {
+		s.metrics.viewerAuthFailures.Add(1)
 		writeError(writer, http.StatusUnauthorized, "authentication_required")
 		return
 	}
 	sessionReservation, ok := currentSession.reserveViewer(time.Now(), s.config.MaxViewersPerSession)
 	if !ok {
+		s.metrics.viewerCapacityRejected.Add(1)
 		writeError(writer, http.StatusTooManyRequests, "session_viewer_capacity")
 		return
 	}
@@ -507,20 +557,29 @@ func (s *Server) handleViewer(writer http.ResponseWriter, request *http.Request)
 	currentViewer := newViewer()
 	latest, err := currentSession.room.addViewer(currentViewer, time.Now(), s.config.SnapshotTTL())
 	if err != nil {
+		s.metrics.viewerCapacityRejected.Add(1)
 		writeError(writer, http.StatusServiceUnavailable, "viewer_capacity")
 		return
 	}
 	defer currentSession.room.removeViewer(currentViewer)
 	upgrader := websocket.Upgrader{
-		HandshakeTimeout: 5 * time.Second,
-		ReadBufferSize:   1024,
-		WriteBufferSize:  16 * 1024,
+		HandshakeTimeout:  5 * time.Second,
+		ReadBufferSize:    1024,
+		WriteBufferSize:   16 * 1024,
+		EnableCompression: true,
 		CheckOrigin: func(request *http.Request) bool {
 			return s.validOrigin(request)
 		},
 	}
 	conn, err := upgrader.Upgrade(writer, request, nil)
 	if err != nil {
+		return
+	}
+	// BestSpeed keeps producer-to-viewer latency and CPU bounded. Gorilla uses
+	// no-context-takeover, and clients which do not offer permessage-deflate
+	// transparently continue on the uncompressed representation.
+	if err := conn.SetCompressionLevel(flate.BestSpeed); err != nil {
+		_ = conn.Close()
 		return
 	}
 	if !currentSession.room.attachViewer(currentViewer, conn) {
@@ -532,8 +591,9 @@ func (s *Server) handleViewer(writer http.ResponseWriter, request *http.Request)
 		_ = conn.Close()
 		return
 	}
+	s.metrics.viewerConnections.Add(1)
 	defer conn.Close()
-	if len(latest.payload) != 0 {
+	if latest.prepared != nil {
 		currentViewer.offer(latest)
 	}
 
@@ -587,13 +647,17 @@ func (s *Server) writeViewer(conn *websocket.Conn, currentViewer *viewer, curren
 				writeDeadline = expiresAt
 			}
 			_ = conn.SetWriteDeadline(writeDeadline)
-			if err := conn.WriteMessage(websocket.TextMessage, update.payload); err != nil {
+			if err := conn.WritePreparedMessage(update.prepared); err != nil {
+				s.metrics.websocketWriteErrors.Add(1)
 				notifyFailure(failed)
 				_ = conn.Close()
 				return
 			}
+			s.metrics.viewerFramesSent.Add(1)
+			s.metrics.viewerPayloadBytes.Add(uint64(update.payloadSize))
 		case <-ping.C:
 			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
+				s.metrics.websocketWriteErrors.Add(1)
 				notifyFailure(failed)
 				_ = conn.Close()
 				return
@@ -635,50 +699,84 @@ func (s *Server) handleStatic(writer http.ResponseWriter, request *http.Request)
 		methodNotAllowed(writer, "GET, HEAD")
 		return
 	}
-	if s.config.StaticDir == "" {
-		http.NotFound(writer, request)
+	if s.staticRoot == "" {
+		staticNotFound(writer, request)
 		return
 	}
 	if strings.HasPrefix(request.URL.Path, "/api/") || hasHiddenPathSegment(request.URL.Path) {
-		http.NotFound(writer, request)
+		staticNotFound(writer, request)
 		return
 	}
 	requested := filepath.Clean(filepath.FromSlash(strings.TrimPrefix(request.URL.Path, "/")))
 	if requested == "." {
 		requested = "index.html"
 	}
-	root, err := filepath.Abs(s.config.StaticDir)
-	if err != nil {
-		http.NotFound(writer, request)
-		return
-	}
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
-		http.NotFound(writer, request)
-		return
-	}
-	target, err := filepath.Abs(filepath.Join(root, requested))
-	if err != nil || !pathWithinRoot(root, target) {
-		http.NotFound(writer, request)
+	target, err := filepath.Abs(filepath.Join(s.staticRoot, requested))
+	if err != nil || !pathWithinRoot(s.staticRoot, target) {
+		staticNotFound(writer, request)
 		return
 	}
 	info, statErr := os.Stat(target)
-	if statErr != nil || info.IsDir() {
-		target = filepath.Join(root, "index.html")
-		if info, statErr = os.Stat(target); statErr != nil || info.IsDir() {
-			http.NotFound(writer, request)
+	if statErr != nil || info.IsDir() || !info.Mode().IsRegular() {
+		if !shouldFallbackToIndex(requested) {
+			staticNotFound(writer, request)
+			return
+		}
+		target = filepath.Join(s.staticRoot, "index.html")
+		if info, statErr = os.Stat(target); statErr != nil || !info.Mode().IsRegular() {
+			staticNotFound(writer, request)
 			return
 		}
 	}
 	target, err = filepath.EvalSymlinks(target)
-	if err != nil || !pathWithinRoot(root, target) {
-		http.NotFound(writer, request)
+	if err != nil || !pathWithinRoot(s.staticRoot, target) {
+		staticNotFound(writer, request)
 		return
 	}
 	if filepath.Base(target) == "index.html" {
 		writer.Header().Set("Cache-Control", "no-store")
+	} else if isHashedAssetPath(requested) {
+		writer.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	}
 	http.ServeFile(writer, request, target)
+}
+
+func staticNotFound(writer http.ResponseWriter, request *http.Request) {
+	// Error responses must not outlive a deployment which later restores the
+	// referenced hashed asset.
+	writer.Header().Set("Cache-Control", "no-store")
+	http.NotFound(writer, request)
+}
+
+func shouldFallbackToIndex(requested string) bool {
+	normalized := filepath.ToSlash(requested)
+	first, _, _ := strings.Cut(normalized, "/")
+	if first == "assets" || first == "maps" {
+		return false
+	}
+	return filepath.Ext(normalized) == ""
+}
+
+func isHashedAssetPath(requested string) bool {
+	normalized := filepath.ToSlash(requested)
+	if !strings.HasPrefix(normalized, "assets/") {
+		return false
+	}
+	base := filepath.Base(normalized)
+	extension := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, extension)
+	dash := strings.LastIndexByte(stem, '-')
+	if extension == "" || dash < 0 || len(stem)-dash-1 < 8 {
+		return false
+	}
+	for _, character := range stem[dash+1:] {
+		if (character < 'a' || character > 'z') &&
+			(character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') && character != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 func hasHiddenPathSegment(path string) bool {

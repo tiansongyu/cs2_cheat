@@ -20,6 +20,7 @@
   "maxSessions": 10000,
   "maxViewersPerSession": 2,
   "shutdownTimeoutSeconds": 10,
+  "enableMetrics": false,
   "rooms": [
     {
       "id": "match_one",

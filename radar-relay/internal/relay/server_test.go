@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -569,6 +571,158 @@ func TestServerCloseGracefullyClosesWebSockets(t *testing.T) {
 			t.Fatalf("%s shutdown close=%v, want 1001", name, err)
 		}
 	}
+}
+
+func TestViewerCompressionNegotiationAndLegacyFallback(t *testing.T) {
+	fixture := newRelayFixture(t, nil)
+	cookie := fixture.createSession(t)
+
+	compressedDialer := *fixture.dialer
+	compressedDialer.EnableCompression = true
+	header := http.Header{"Origin": []string{testOrigin}, "Cookie": []string{cookie.String()}}
+	compressed, response, err := compressedDialer.Dial(fixture.wsURL("/api/v1/stream"), header)
+	if err != nil {
+		if response != nil {
+			response.Body.Close()
+		}
+		t.Fatal(err)
+	}
+	defer compressed.Close()
+	if extension := response.Header.Get("Sec-WebSocket-Extensions"); !strings.Contains(extension, "permessage-deflate") ||
+		!strings.Contains(extension, "server_no_context_takeover") {
+		t.Fatalf("compression was not safely negotiated: %q", extension)
+	}
+
+	// The fixture's default dialer does not offer compression. Its successful
+	// connection proves old clients retain the uncompressed fallback path.
+	legacy := fixture.dialViewer(t, fixture.createSession(t))
+	producer := fixture.dialProducer(t)
+	snapshot := snapshotAt(time.Now(), 88)
+	if err := producer.WriteMessage(websocket.TextMessage, []byte(snapshot)); err != nil {
+		t.Fatal(err)
+	}
+	for name, viewer := range map[string]*websocket.Conn{"compressed": compressed, "legacy": legacy} {
+		_ = viewer.SetReadDeadline(time.Now().Add(time.Second))
+		_, payload, readErr := viewer.ReadMessage()
+		if readErr != nil || string(payload) != snapshot {
+			t.Fatalf("%s viewer received %q, %v", name, payload, readErr)
+		}
+	}
+}
+
+func TestMetricsAreAggregateAndTrackTraffic(t *testing.T) {
+	fixture := newRelayFixture(t, func(cfg *config.Config) { cfg.EnableMetrics = true })
+	cookie := fixture.createSession(t)
+	viewer := fixture.dialViewer(t, cookie)
+	producer := fixture.dialProducer(t)
+	snapshot := snapshotAt(time.Now(), 99)
+	if err := producer.WriteMessage(websocket.TextMessage, []byte(snapshot)); err != nil {
+		t.Fatal(err)
+	}
+	_ = viewer.SetReadDeadline(time.Now().Add(time.Second))
+	if _, _, err := viewer.ReadMessage(); err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := fixture.http.Client().Get(fixture.http.URL + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	payload, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusOK || !strings.HasPrefix(response.Header.Get("Content-Type"), "text/plain; version=0.0.4") {
+		t.Fatalf("metrics response status=%d content-type=%q", response.StatusCode, response.Header.Get("Content-Type"))
+	}
+	for _, expected := range []string{
+		"radar_relay_sessions_active 1",
+		"radar_relay_producers_active 1",
+		"radar_relay_viewers_active 1",
+		"radar_relay_snapshots_published_total 1",
+		"radar_relay_viewer_frames_sent_total 1",
+	} {
+		if !strings.Contains(string(payload), expected) {
+			t.Fatalf("metrics do not contain %q:\n%s", expected, payload)
+		}
+	}
+	for _, sensitive := range []string{testRoom, testProducerToken, testInviteToken, "127.0.0.1"} {
+		if strings.Contains(string(payload), sensitive) {
+			t.Fatalf("metrics exposed sensitive or identifying value %q", sensitive)
+		}
+	}
+	if response.Header.Get("Cache-Control") != "no-store" {
+		t.Fatal("metrics response is cacheable")
+	}
+}
+
+func TestMetricsAreDisabledByDefault(t *testing.T) {
+	fixture := newRelayFixture(t, nil)
+	response, err := fixture.http.Client().Get(fixture.http.URL + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("disabled metrics returned %d, want 404", response.StatusCode)
+	}
+}
+
+func TestNotReadyRejectsNewSession(t *testing.T) {
+	fixture := newRelayFixture(t, nil)
+	fixture.server.SetReady(false)
+	payload := []byte(`{"room":"test_room","inviteToken":"invite-token-with-at-least-32-characters"}`)
+	request, _ := http.NewRequest(http.MethodPost, fixture.http.URL+"/api/v1/session", bytes.NewReader(payload))
+	request.Header.Set("Origin", testOrigin)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := fixture.http.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("not-ready login got %d, want 503", response.StatusCode)
+	}
+}
+
+func TestStaticCachingAndMissingAssetBehavior(t *testing.T) {
+	root := t.TempDir()
+	for _, directory := range []string{"assets", "maps/de_test"} {
+		if err := os.MkdirAll(filepath.Join(root, directory), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, contents := range map[string]string{
+		"index.html":                   "<html>radar shell</html>",
+		"assets/index-Ab12_cd9.js":     "console.log('hashed')",
+		"assets/unversioned-helper.js": "console.log('plain')",
+		"maps/de_test/radar.png":       "map",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(contents), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fixture := newRelayFixture(t, func(cfg *config.Config) { cfg.StaticDir = root })
+
+	assertResponse := func(path string, status int, body, cacheControl string) {
+		t.Helper()
+		response, err := fixture.http.Client().Get(fixture.http.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		payload, _ := io.ReadAll(response.Body)
+		if response.StatusCode != status || (body != "" && !strings.Contains(string(payload), body)) {
+			t.Fatalf("GET %s returned status=%d body=%q", path, response.StatusCode, payload)
+		}
+		if response.Header.Get("Cache-Control") != cacheControl {
+			t.Fatalf("GET %s cache-control=%q, want %q", path, response.Header.Get("Cache-Control"), cacheControl)
+		}
+	}
+
+	assertResponse("/assets/index-Ab12_cd9.js", http.StatusOK, "hashed", "public, max-age=31536000, immutable")
+	assertResponse("/assets/missing-Ab12_cd9.js", http.StatusNotFound, "404", "no-store")
+	assertResponse("/maps/de_test/missing.png", http.StatusNotFound, "404", "no-store")
+	assertResponse("/missing.css", http.StatusNotFound, "404", "no-store")
+	assertResponse("/dashboard", http.StatusOK, "radar shell", "no-store")
 }
 
 func responseStatus(response *http.Response) any {

@@ -17,6 +17,7 @@ const statusLabels: Record<StreamStatus, string> = {
   connecting: '正在连接',
   connected: '实时连接',
   reconnecting: '正在重连',
+  offline: '设备离线',
   disconnected: '已断开',
 };
 
@@ -50,7 +51,7 @@ export function StatusHeader({
       </div>
 
       <div className="match-meta" aria-label="比赛状态">
-        <span className={`connection-pill ${stateClass}`}>
+        <span className={`connection-pill ${stateClass}`} role="status" aria-live="polite">
           <i aria-hidden="true" />
           {displayStatus}
         </span>
@@ -59,7 +60,7 @@ export function StatusHeader({
       </div>
 
       <div className="header-actions">
-        {error && <span className="compact-error" title={error}>连接异常</span>}
+        {error && <span className="compact-error" title={error} aria-label={`连接异常：${error}`}>连接异常</span>}
         <span className="deployment-label" title={deploymentLabel}>{deploymentLabel}</span>
         <button
           type="button"
@@ -77,6 +78,7 @@ export function StatusHeader({
             className="icon-button logout-button"
             onClick={onLogout}
             disabled={logoutPending}
+            aria-label={logoutPending ? '正在退出 Radar Relay' : '退出 Radar Relay 会话'}
           >
             {logoutPending ? '退出中…' : '退出'}
           </button>

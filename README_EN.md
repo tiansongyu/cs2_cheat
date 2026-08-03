@@ -95,7 +95,9 @@ Public mode is an independent path and never exposes CivetWeb or an inbound port
 on the game PC. The Windows process makes an outbound-only `wss://` connection;
 Caddy provides automatic HTTPS at the server, and the Go relay provides room
 isolation, separate Producer/Viewer credentials, short-lived HttpOnly sessions,
-rate limits, and bounded latest-frame fan-out.
+rate limits, and bounded latest-frame fan-out. Viewers share one prepared,
+optionally compressed frame; the browser handles weak-network/offline/background
+recovery, while aggregate metrics and deployment verification remain internal.
 
 1. Follow the [production deployment guide](deploy/public-relay/README.md) on a
    Linux server with a domain, generate the room credentials, and start Caddy +

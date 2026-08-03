@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useId, useState, type FormEvent, type ReactNode } from 'react';
 import type { RelayAccessState } from '../hooks/useRelaySession';
 import type { RelayLogin } from '../lib/session';
 
@@ -19,6 +19,9 @@ export function RelayAccessGate({
 }: RelayAccessGateProps) {
   const [room, setRoom] = useState('');
   const [inviteToken, setInviteToken] = useState('');
+  const titleId = useId();
+  const loginDescriptionId = useId();
+  const loginErrorId = useId();
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -41,10 +44,10 @@ export function RelayAccessGate({
     );
   } else if (access.status === 'unavailable') {
     content = (
-      <div className="access-message">
+      <div className="access-message" role="alert">
         <span className="access-symbol" aria-hidden="true">!</span>
-        <strong>链接缺少访问 token</strong>
-        <p>这是本地内嵌 Radar 页面，但当前链接没有携带访问 token。请从程序菜单重新复制完整链接。</p>
+        <strong>访问入口不可用</strong>
+        <p>当前站点没有提供 Relay 会话接口。若这是本地内嵌 Radar，请从程序菜单重新复制带 token 的完整链接。</p>
       </div>
     );
   } else if (access.status === 'error') {
@@ -58,12 +61,12 @@ export function RelayAccessGate({
     );
   } else if (access.status === 'anonymous') {
     content = (
-      <form className="relay-login" onSubmit={submit} autoComplete="off">
+      <form className="relay-login" onSubmit={submit} autoComplete="off" aria-busy={submitting}>
         <div className="login-heading">
           <span className="access-symbol is-secure" aria-hidden="true">◆</span>
           <div>
             <strong>加入共享 Radar</strong>
-            <p>凭据仅用于换取当前站点的安全会话，页面不会将其写入 URL 或 Web Storage。</p>
+            <p id={loginDescriptionId}>凭据仅用于换取当前站点的安全会话，页面不会将其写入 URL 或 Web Storage。</p>
           </div>
         </div>
 
@@ -73,7 +76,7 @@ export function RelayAccessGate({
             name="room"
             value={room}
             onChange={(event) => setRoom(event.target.value)}
-            autoComplete="off"
+            autoComplete="username"
             autoCapitalize="none"
             spellCheck={false}
             maxLength={64}
@@ -90,15 +93,17 @@ export function RelayAccessGate({
             type="password"
             value={inviteToken}
             onChange={(event) => setInviteToken(event.target.value)}
-            autoComplete="off"
+            autoComplete="one-time-code"
             maxLength={512}
             required
             disabled={submitting}
             placeholder="输入该房间的 Viewer 邀请凭据"
+            aria-invalid={actionError !== null}
+            aria-describedby={`${loginDescriptionId}${actionError ? ` ${loginErrorId}` : ''}`}
           />
         </label>
 
-        {actionError && <p className="login-error" role="alert">{actionError}</p>}
+        {actionError && <p id={loginErrorId} className="login-error" role="alert">{actionError}</p>}
 
         <button
           type="submit"
@@ -115,10 +120,10 @@ export function RelayAccessGate({
 
   return (
     <main className="access-shell">
-      <section className="access-card" aria-label="Radar Relay 访问控制">
+      <section className="access-card" aria-labelledby={titleId}>
         <div className="access-brand">
           <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
-          <div><strong>TACTICAL MAP</strong><span>SECURE RADAR RELAY</span></div>
+          <div><h1 id={titleId}>TACTICAL MAP</h1><span>SECURE RADAR RELAY</span></div>
         </div>
         {content}
         <footer>固定北向地图 · 只读实时数据 · HTTPS/WSS</footer>

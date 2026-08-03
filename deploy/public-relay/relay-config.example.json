@@ -5,6 +5,7 @@
   "trustedProxyCIDRs": [
     "172.30.67.2/32"
   ],
+  "enableMetrics": true,
   "sessionTTLSeconds": 3600,
   "snapshotTTLMillis": 3000,
   "maxSnapshotAgeMillis": 10000,

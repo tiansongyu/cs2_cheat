@@ -25,6 +25,7 @@ not distribute one room across replicas.
 |---|---|---|
 | `GET /healthz` | none | Process liveness |
 | `GET /readyz` | none | Accepting new sessions/connections |
+| `GET /metrics` | none | Optional internal aggregate Prometheus metrics; disabled by default |
 | `POST /api/v1/session` | exact configured `Origin`; JSON invite | Creates session cookie |
 | `GET /api/v1/session` | session cookie | Returns `{authenticated,room,expiresAtMs}` |
 | `DELETE /api/v1/session` | cookie + exact `Origin` | Revokes current session |
@@ -55,6 +56,13 @@ Viewer WebSockets reject application data. Sessions are `Secure`, `HttpOnly`,
 code `4401` when their session expires. Browser session mutations and viewer
 upgrades use exact string Origin matching; the GET session probe does not
 require an Origin because browsers normally omit it on same-origin GET.
+
+Viewer upgrades negotiate `permessage-deflate` with
+`server_no_context_takeover` and `client_no_context_takeover` when the browser
+offers it. One immutable Gorilla `PreparedMessage` is shared by every viewer of
+a snapshot, so framing and BestSpeed deflate work are performed once rather
+than once per connection. Clients which do not offer the extension continue to
+receive ordinary uncompressed WebSocket text messages.
 
 ## Create configuration and secrets
 
@@ -116,6 +124,10 @@ Important fields:
   routes fall back to `index.html`; hidden paths, symlink escapes, and unknown
   `/api/` routes are not served.
 - `tlsCertFile` and `tlsKeyFile`: optional direct TLS. Configure both or neither.
+- `enableMetrics`: exposes aggregate Prometheus text metrics at `/metrics` on
+  the Relay listener. It is `false` by default. Enable it only on a private
+  backend network and make the public reverse proxy return `404` for
+  `/metrics`. Metrics contain no room, token, or client-IP labels.
 
 Plain HTTP is accepted on the backend only so TLS can terminate at a same-host
 reverse proxy. The example binds the container port, which must remain on a
@@ -126,6 +138,12 @@ The proxy must preserve `Host`, `Origin`, `Cookie`, `Authorization`, and
 `X-Radar-Room`, pass WebSocket `Upgrade`/`Connection`, overwrite `X-Real-IP`,
 disable proxy buffering for both WebSocket paths, and avoid logging request
 headers, bodies, or query strings. There is no token in the normal viewer URL.
+
+Static Vite assets with a filename hash receive a one-year `immutable` cache
+policy. `index.html` remains `no-store`, and missing `/assets`, `/maps`, or
+file-extension paths return `404` instead of incorrectly returning the SPA
+shell. These error responses are `no-store`; extensionless frontend routes
+still fall back to `index.html`.
 
 ## Run
 
@@ -143,6 +161,15 @@ shell or package manager, and includes an internal health checker:
 
 ```bash
 /radar-relay healthcheck -url http://127.0.0.1:8080/healthz
+```
+
+Validate configuration during deployment without printing token hashes or
+other credentials. Supplying `-origin` also catches a mismatch between the
+Relay config and reverse-proxy hostname before the service starts:
+
+```bash
+/radar-relay check-config -config /run/secrets/relay-config.json \
+  -origin https://radar.example.com
 ```
 
 SIGTERM first makes readiness fail, gracefully stops HTTP, closes producer and

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cctype>
 #include <cstdint>
 #include <limits>
@@ -31,6 +32,13 @@ namespace web_radar
         std::uint32_t connectTimeoutMilliseconds = 5000;
         std::uint32_t sendTimeoutMilliseconds = 5000;
         std::uint32_t receiveTimeoutMilliseconds = 5000;
+
+        // These defaults mirror the production Relay. Keeping both limits
+        // explicit prevents a stale or unexpectedly large snapshot from
+        // turning a weak connection into a reconnect loop. Deployments that
+        // deliberately tune the Relay may tune the producer to match.
+        std::uint32_t maxSnapshotBytes = 512U * 1024U;
+        std::uint32_t maximumQueuedSnapshotAgeMilliseconds = 5000;
     };
 
     enum class PublicRelayState : std::uint8_t
@@ -48,6 +56,7 @@ namespace web_radar
         PublicRelayState state = PublicRelayState::disabled;
         std::uint64_t framesSent = 0;
         std::uint64_t replacedFrames = 0;
+        std::uint64_t droppedFrames = 0;
         std::uint64_t reconnects = 0;
         std::string lastError;
     };
@@ -60,6 +69,45 @@ namespace web_radar
             return (character >= 'a' && character <= 'z') ||
                 (character >= 'A' && character <= 'Z') ||
                 (character >= '0' && character <= '9');
+        }
+
+        [[nodiscard]] inline bool validRelayDnsHost(
+            const std::string_view host) noexcept
+        {
+            if (host.empty() || host.size() > 253) {
+                return false;
+            }
+            std::size_t labelStart = 0;
+            while (labelStart < host.size()) {
+                const std::size_t separator = host.find('.', labelStart);
+                const std::size_t labelEnd =
+                    separator == std::string_view::npos
+                        ? host.size()
+                        : separator;
+                const std::size_t labelSize = labelEnd - labelStart;
+                if (labelSize == 0 || labelSize > 63 ||
+                    !relayAsciiAlphaNumeric(
+                        static_cast<unsigned char>(host[labelStart])) ||
+                    !relayAsciiAlphaNumeric(
+                        static_cast<unsigned char>(host[labelEnd - 1]))) {
+                    return false;
+                }
+                for (std::size_t index = labelStart;
+                     index < labelEnd;
+                     ++index) {
+                    const auto character =
+                        static_cast<unsigned char>(host[index]);
+                    if (!relayAsciiAlphaNumeric(character) &&
+                        character != '-') {
+                        return false;
+                    }
+                }
+                if (separator == std::string_view::npos) {
+                    return true;
+                }
+                labelStart = separator + 1;
+            }
+            return false;
         }
 
         [[nodiscard]] inline bool relayStartsWithWss(
@@ -166,10 +214,17 @@ namespace web_radar
                 explicitPort = true;
                 portText = suffix.substr(1);
             }
+            if (host.size() > 45 ||
+                host.find(':') == std::string_view::npos) {
+                return reject("Relay URL contains an invalid IPv6 host.");
+            }
             for (const char rawCharacter : host) {
                 const auto character = static_cast<unsigned char>(rawCharacter);
-                if (!detail::relayAsciiAlphaNumeric(character) &&
-                    character != ':' && character != '.' && character != '-') {
+                const bool hexadecimal =
+                    (character >= 'a' && character <= 'f') ||
+                    (character >= 'A' && character <= 'F') ||
+                    (character >= '0' && character <= '9');
+                if (!hexadecimal && character != ':' && character != '.') {
                     return reject("Relay URL contains an invalid IPv6 host.");
                 }
             }
@@ -188,12 +243,8 @@ namespace web_radar
             if (host.empty()) {
                 return reject("Relay URL is missing a host.");
             }
-            for (const char rawCharacter : host) {
-                const auto character = static_cast<unsigned char>(rawCharacter);
-                if (!detail::relayAsciiAlphaNumeric(character) &&
-                    character != '.' && character != '-') {
-                    return reject("Relay URL contains an invalid host.");
-                }
+            if (!detail::validRelayDnsHost(host)) {
+                return reject("Relay URL contains an invalid host.");
             }
         }
 
@@ -230,11 +281,8 @@ namespace web_radar
         }
         for (const char rawCharacter : config.token) {
             const auto character = static_cast<unsigned char>(rawCharacter);
-            if (!detail::relayAsciiAlphaNumeric(character) &&
-                character != '-' && character != '.' && character != '_' &&
-                character != '~' && character != '+' && character != '/' &&
-                character != '=') {
-                return "Relay producer token contains an unsupported character.";
+            if (character < 0x21U || character > 0x7eU) {
+                return "Relay producer token must contain visible ASCII characters only.";
             }
         }
         const auto validTimeout = [](const std::uint32_t value) {
@@ -246,7 +294,50 @@ namespace web_radar
             !validTimeout(config.receiveTimeoutMilliseconds)) {
             return "Relay network timeouts must be between 100 and 30000 ms.";
         }
+        if (config.maxSnapshotBytes < 4096U ||
+            config.maxSnapshotBytes > 4U * 1024U * 1024U) {
+            return "Relay snapshot limit must be between 4096 and 4194304 bytes.";
+        }
+        if (config.maximumQueuedSnapshotAgeMilliseconds < 250U ||
+            config.maximumQueuedSnapshotAgeMilliseconds > 30000U) {
+            return "Relay queued snapshot age must be between 250 and 30000 ms.";
+        }
         return {};
+    }
+
+    [[nodiscard]] inline bool publicRelaySnapshotFits(
+        const std::size_t snapshotBytes,
+        const std::uint32_t maximumBytes) noexcept
+    {
+        return snapshotBytes != 0 && snapshotBytes <= maximumBytes;
+    }
+
+    [[nodiscard]] inline bool publicRelayQueuedSnapshotExpired(
+        const std::chrono::milliseconds queuedFor,
+        const std::uint32_t maximumAgeMilliseconds) noexcept
+    {
+        return queuedFor >
+            std::chrono::milliseconds(maximumAgeMilliseconds);
+    }
+
+    // Authentication/configuration errors require user action. Capacity and
+    // transient request statuses stay retryable so a producer can recover
+    // without exposing transport-specific policy to the WinHTTP worker.
+    [[nodiscard]] inline bool publicRelayHttpFailureIsPermanent(
+        const std::uint32_t statusCode) noexcept
+    {
+        return statusCode >= 400U && statusCode < 500U &&
+            statusCode != 408U && statusCode != 409U &&
+            statusCode != 425U && statusCode != 429U;
+    }
+
+    inline constexpr auto publicRelayHealthyConnectionDuration =
+        std::chrono::seconds(10);
+
+    [[nodiscard]] inline bool publicRelayConnectionWasHealthy(
+        const std::chrono::milliseconds connectedFor) noexcept
+    {
+        return connectedFor >= publicRelayHealthyConnectionDuration;
     }
 
     // Exponential retry: 1, 2, 4, 8, 16 and 30 seconds, with deterministic

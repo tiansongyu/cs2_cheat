@@ -28,7 +28,8 @@ Windows Producer ──WSS──> Caddy :443 ──HTTP/WS──> Radar Relay :8
 - Session、最新快照只存在 Relay 内存中；容器重启后浏览器需要重新登录。
 - 每个 Session 最多建立 2 个 Viewer 连接；Relay 拒绝过旧或明显来自未来的
   快照，避免 Producer 重连后把陈旧数据重新广播。
-- `/healthz` 和 `/readyz` 不通过公网域名暴露；Compose 和 Caddy 在内部使用。
+- `/healthz`、`/readyz` 和 `/metrics` 不通过公网域名暴露；Compose、Caddy 和
+  管理员监控在容器内网使用。
 
 ## 准备条件
 
@@ -120,8 +121,8 @@ curl --fail --silent --show-error https://radar.example.com/ >/dev/null
 ```
 
 预期两个容器均为 `healthy`，HTTPS 页面可以打开。公网请求
-`https://radar.example.com/healthz` 应返回 404。检查宿主机监听端口时只应看到
-80/443，不应看到 8080：
+`https://radar.example.com/healthz`、`/readyz` 和 `/metrics` 应返回 404。检查宿主机
+监听端口时只应看到 80/443，不应看到 8080：
 
 ```bash
 docker compose port caddy 8080
@@ -131,6 +132,29 @@ docker compose port radar-relay 8080
 
 最后一条应为空。再完成一次端到端验收：Producer 显示 connected、观看者成功
 登录、Radar 收到实时帧；停掉 Producer 后约 3 秒出现 stale 提示。
+
+也可以运行无凭证的自动验收脚本。它会检查容器健康、配置 Origin 与公网域名
+一致、Relay 未发布 8080、HTTPS 安全响应头、内部端点未暴露以及 HTTP 到 HTTPS
+的永久重定向。公网探测显式忽略宿主机代理环境，确保验证的是从服务器到目标
+域名的直接连接：
+
+```bash
+./verify-deployment.sh radar.example.com
+```
+
+若脚本发现仍有 `secrets/*-credentials.txt`，会给出明文凭证残留警告；确认原始
+token 已进入密码管理器后应删除这些文件。
+
+生成的生产配置会启用无房间名、token 或 IP 标签的聚合 Prometheus 指标。公网
+Caddy 会对 `/metrics` 固定返回 404；管理员可从容器内网按需查看：
+
+```bash
+docker compose exec -T caddy \
+  wget -qO- http://radar-relay:8080/metrics
+```
+
+如需接入 Prometheus，应将采集器加入 `relay_internal` 网络，不要发布 Relay 的
+8080，也不要通过公网 Caddy 转发指标。
 
 ## 多房间与凭证轮换
 
@@ -164,8 +188,11 @@ docker compose up -d --force-recreate radar-relay
   必须加密并限制访问。
 - `secrets/relay-config.json` 只含凭证哈希，但仍应按 secret 管理。原始 token
   只应存在于密码管理器和对应客户端内存中。
-- 更新时先备份，然后运行 `docker compose build --pull radar-relay` 和
-  `docker compose up -d`。Caddy 镜像固定为 2.11.4，不会自动漂移到其他版本。
+- 从早期版本升级时，在已有 hash-only 配置顶层加入 `"enableMetrics": true`，
+  然后运行 `docker compose build --pull` 与
+  `docker compose up -d --force-recreate radar-relay caddy`。强制重建可确保新的
+  Caddyfile 被加载；Relay 重启会使现有 Viewer Session 失效。Caddy 镜像固定为
+  2.11.4，不会自动漂移到其他版本。
 - Relay 是单节点内存服务，不要横向扩容多个副本；当前协议没有共享 Session
   或房间状态。需要高可用时必须先引入共享会话和消息层。
 

@@ -418,11 +418,10 @@ namespace
         {
             const Settings desired{
                 config.publicRelayEnabled,
-                config.publicRelayUrl,
-                config.publicRelayRoom,
                 config.publicRelayEnabled
-                    ? config.publicRelayToken
-                    : std::string{}
+                    ? config.publicRelayConnection
+                    : std::shared_ptr<
+                        const menu::PublicRelayConnectionSettings>{}
             };
             const bool settingsChanged =
                 !settings_ || *settings_ != desired;
@@ -454,9 +453,23 @@ namespace
 
             try {
                 web_radar::PublicRelayConfig relayConfig;
-                relayConfig.endpointUrl = settings_->endpointUrl;
-                relayConfig.room = settings_->room;
-                relayConfig.token = settings_->token;
+                if (settings_->connection) {
+                    const std::string_view endpointUrl =
+                        settings_->connection->endpointUrl();
+                    relayConfig.endpointUrl.assign(
+                        endpointUrl.data(),
+                        endpointUrl.size());
+                    const std::string_view room =
+                        settings_->connection->room();
+                    relayConfig.room.assign(
+                        room.data(),
+                        room.size());
+                    const std::string_view token =
+                        settings_->connection->token();
+                    relayConfig.token.assign(
+                        token.data(),
+                        token.size());
+                }
                 auto producer = std::make_shared<
                     web_radar::PublicRelayProducer>(
                         std::move(relayConfig));
@@ -485,9 +498,14 @@ namespace
                 std::lock_guard<std::mutex> lock(producerMutex_);
                 producer = producer_;
             }
-            if (!producer ||
-                producer->status().state ==
-                    web_radar::PublicRelayState::failed) {
+            if (!producer) {
+                return;
+            }
+            const web_radar::PublicRelayState state =
+                producer->status().state;
+            if (state == web_radar::PublicRelayState::disabled ||
+                state == web_radar::PublicRelayState::retiring ||
+                state == web_radar::PublicRelayState::failed) {
                 return;
             }
 
@@ -513,9 +531,8 @@ namespace
         struct Settings
         {
             bool enabled = false;
-            std::string endpointUrl;
-            std::string room;
-            std::string token;
+            std::shared_ptr<const menu::PublicRelayConnectionSettings>
+                connection;
 
             bool operator==(const Settings&) const = default;
         };
@@ -600,6 +617,7 @@ namespace
             ui.state = status.state;
             ui.framesSent = status.framesSent;
             ui.replacedFrames = status.replacedFrames;
+            ui.droppedFrames = status.droppedFrames;
             ui.reconnects = status.reconnects;
             ui.error = status.lastError.empty()
                 ? lastError_
@@ -632,6 +650,7 @@ namespace
                 ui.state = status.state;
                 ui.framesSent = status.framesSent;
                 ui.replacedFrames = status.replacedFrames;
+                ui.droppedFrames = status.droppedFrames;
                 ui.reconnects = status.reconnects;
                 if (!status.lastError.empty()) {
                     ui.error = status.lastError;

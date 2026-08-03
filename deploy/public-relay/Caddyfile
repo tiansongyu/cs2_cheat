@@ -5,6 +5,10 @@
 	https_port 8443
 	servers {
 		protocols h1 h2
+		max_header_size 16KB
+		timeouts {
+			read_header 10s
+		}
 	}
 }
 
@@ -13,8 +17,18 @@
 # automatically. Access logging is intentionally not enabled: Authorization,
 # Cookie headers, query strings and request bodies must never enter access logs.
 {$RADAR_DOMAIN} {
-	@internal_health path /healthz /readyz
-	respond @internal_health 404
+	@internal_endpoints path /healthz /healthz/* /readyz /readyz/* /metrics /metrics/*
+	respond @internal_endpoints 404
+
+	# Bound login request bodies before proxying them. WebSocket upgrade requests
+	# do not carry an HTTP body, and frames are unaffected after the upgrade.
+	request_body {
+		max_size 8KB
+	}
+
+	# Compress static assets and JSON responses. WebSocket
+	# frames keep their own negotiated compression and are not transformed here.
+	encode zstd gzip
 
 	header {
 		-Server
@@ -26,6 +40,7 @@
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
+		X-Robots-Tag "noindex, nofollow, noarchive"
 	}
 
 	reverse_proxy radar-relay:8080 {

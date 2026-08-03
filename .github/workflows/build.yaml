@@ -122,6 +122,13 @@ jobs:
       with:
         go-version-file: radar-relay/go.mod
         cache-dependency-path: radar-relay/go.sum
+    - name: Test public deployment credential generator
+      working-directory: radar-relay
+      run: |
+        go build -mod=vendor -trimpath -o "$RUNNER_TEMP/radar-relay" ./cmd/radar-relay
+        RADAR_RELAY_BIN="$RUNNER_TEMP/radar-relay" \
+          ../deploy/public-relay/tests/generate-room-config_test.sh \
+          ../deploy/public-relay/generate-room-config.sh
     - name: Test Radar Relay with race detector
       working-directory: radar-relay
       run: go test -mod=vendor -race ./...
@@ -152,6 +159,10 @@ jobs:
           caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
     - name: Validate public deployment configuration
       run: |
+        shellcheck \
+          deploy/public-relay/generate-room-config.sh \
+          deploy/public-relay/tests/generate-room-config_test.sh \
+          deploy/public-relay/verify-deployment.sh
         RELAY_CONFIG_FILE=./relay-config.example.json docker compose \
           --env-file deploy/public-relay/.env.example \
           -f deploy/public-relay/compose.yaml \

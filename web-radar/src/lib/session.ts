@@ -1,4 +1,5 @@
 const SESSION_ENDPOINT = '/api/v1/session';
+const REQUEST_TIMEOUT_MS = 10_000;
 
 export interface RelaySession {
   room: string;
@@ -35,6 +36,35 @@ export class RelaySessionError extends Error {
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
+async function fetchRelay(
+  fetcher: FetchLike,
+  init: RequestInit,
+  externalSignal?: AbortSignal,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const abortFromCaller = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) abortFromCaller();
+  else externalSignal?.addEventListener('abort', abortFromCaller, { once: true });
+
+  const timeout = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    return await fetcher(SESSION_ENDPOINT, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (timedOut) {
+      throw new RelaySessionError('request', 'Radar Relay 请求超时，请检查网络后重试');
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeout);
+    externalSignal?.removeEventListener('abort', abortFromCaller);
+  }
+}
+
 function parseSession(value: unknown): RelaySession {
   if (!value || typeof value !== 'object') {
     throw new RelaySessionError('protocol', 'Relay 返回了无效的会话信息');
@@ -68,18 +98,19 @@ async function readSession(response: Response): Promise<RelaySession> {
 export async function probeRelaySession(
   fetcher: FetchLike = fetch,
   signal?: AbortSignal,
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<RelaySessionProbe> {
   let response: Response;
   try {
-    response = await fetcher(SESSION_ENDPOINT, {
+    response = await fetchRelay(fetcher, {
       method: 'GET',
       credentials: 'same-origin',
       cache: 'no-store',
       redirect: 'error',
       headers: { Accept: 'application/json' },
-      signal,
-    });
+    }, signal, timeoutMs);
   } catch (error) {
+    if (error instanceof RelaySessionError) throw error;
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
     throw new RelaySessionError('request', '无法连接公网 Radar Relay');
   }
@@ -100,10 +131,11 @@ export async function loginRelaySession(
   login: RelayLogin,
   fetcher: FetchLike = fetch,
   signal?: AbortSignal,
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<RelaySession> {
   let response: Response;
   try {
-    response = await fetcher(SESSION_ENDPOINT, {
+    response = await fetchRelay(fetcher, {
       method: 'POST',
       credentials: 'same-origin',
       cache: 'no-store',
@@ -113,9 +145,9 @@ export async function loginRelaySession(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(login),
-      signal,
-    });
+    }, signal, timeoutMs);
   } catch (error) {
+    if (error instanceof RelaySessionError) throw error;
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
     throw new RelaySessionError('request', '无法连接公网 Radar Relay');
   }
@@ -129,6 +161,9 @@ export async function loginRelaySession(
   if (response.status === 404) {
     throw new RelaySessionError('unavailable', '当前站点未启用 Radar Relay', response.status);
   }
+  if (response.status === 429) {
+    throw new RelaySessionError('request', '登录尝试过于频繁，请稍后重试', response.status);
+  }
   if (!response.ok) {
     throw new RelaySessionError('request', '登录暂时失败，请稍后重试', response.status);
   }
@@ -136,17 +171,23 @@ export async function loginRelaySession(
   return readSession(response);
 }
 
-export async function logoutRelaySession(fetcher: FetchLike = fetch): Promise<void> {
+export async function logoutRelaySession(
+  fetcher: FetchLike = fetch,
+  signal?: AbortSignal,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<void> {
   let response: Response;
   try {
-    response = await fetcher(SESSION_ENDPOINT, {
+    response = await fetchRelay(fetcher, {
       method: 'DELETE',
       credentials: 'same-origin',
       cache: 'no-store',
       redirect: 'error',
       headers: { Accept: 'application/json' },
-    });
-  } catch {
+    }, signal, timeoutMs);
+  } catch (error) {
+    if (error instanceof RelaySessionError) throw error;
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
     throw new RelaySessionError('request', '无法连接公网 Radar Relay');
   }
 

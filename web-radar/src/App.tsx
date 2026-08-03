@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { ConnectionNotice } from './components/ConnectionNotice';
 import { PlayerPanel } from './components/PlayerPanel';
 import { RadarMap } from './components/RadarMap';
 import { RelayAccessGate } from './components/RelayAccessGate';
@@ -9,7 +10,11 @@ import { useMapManifest } from './hooks/useMapManifest';
 import { useRadarSettings } from './hooks/useRadarSettings';
 import { useRadarStream } from './hooks/useRadarStream';
 import { useRelaySession } from './hooks/useRelaySession';
-import { resolveRadarDeployment, type RadarDeploymentMode } from './lib/deployment';
+import {
+  resolveRadarDeployment,
+  sanitizeRelayUrl,
+  type RadarDeploymentMode,
+} from './lib/deployment';
 
 interface RadarWorkspaceProps {
   mode: RadarDeploymentMode;
@@ -52,6 +57,16 @@ function RadarWorkspace({
         logoutPending={logoutPending}
       />
 
+      <ConnectionNotice
+        status={stream.status}
+        stale={stream.stale}
+        error={stream.error}
+        retryInMs={stream.retryInMs}
+        lastReceivedAtMs={frame?.receivedAtWallMs ?? null}
+        hasFrame={frame !== null}
+        onRetry={stream.retry}
+      />
+
       {settingsOpen && (
         <SettingsPanel
           settings={settings}
@@ -78,7 +93,10 @@ function RadarWorkspace({
           performanceNowMs={performanceNowMs}
           settings={settings}
           stale={stream.stale}
+          staleMessage={stream.status === 'offline' ? '设备离线，等待网络恢复' : undefined}
           manifestError={maps.error}
+          manifestLoading={maps.loading}
+          onRetryMap={maps.retry}
         />
         <PlayerPanel
           team="T"
@@ -104,6 +122,12 @@ function RadarWorkspace({
 export default function App() {
   const mode = useMemo(() => resolveRadarDeployment(window.location), []);
   const relay = useRelaySession(mode);
+
+  useEffect(() => {
+    if (mode !== 'relay') return;
+    const sanitized = sanitizeRelayUrl(window.location);
+    if (sanitized !== null) window.history.replaceState(window.history.state, '', sanitized);
+  }, [mode]);
 
   if (mode === 'relay' && relay.access.status !== 'authenticated') {
     return (

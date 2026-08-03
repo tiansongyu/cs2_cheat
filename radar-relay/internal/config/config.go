@@ -42,6 +42,7 @@ type Config struct {
 	MaxSessions                int          `json:"maxSessions"`
 	MaxViewersPerSession       int          `json:"maxViewersPerSession"`
 	ShutdownTimeoutSeconds     int          `json:"shutdownTimeoutSeconds"`
+	EnableMetrics              bool         `json:"enableMetrics,omitempty"`
 	AllowInsecureDevelopment   bool         `json:"allowInsecureDevelopment,omitempty"`
 	Rooms                      []RoomConfig `json:"rooms"`
 }

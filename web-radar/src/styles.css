@@ -43,6 +43,12 @@ button {
   color: inherit;
 }
 
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid #9fe7bd;
+  outline-offset: 2px;
+}
+
 .app-shell {
   position: relative;
   display: grid;
@@ -207,6 +213,7 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  min-height: 40px;
   padding: 7px 10px;
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -271,7 +278,8 @@ button {
   flex-direction: column;
 }
 
-.access-brand strong {
+.access-brand h1 {
+  margin: 0;
   font-size: 12px;
   letter-spacing: 0.14em;
 }
@@ -375,6 +383,7 @@ button {
 
 .primary-button {
   width: 100%;
+  min-height: 44px;
   margin-top: 18px;
   padding: 10px 14px;
   border: 1px solid rgba(103, 216, 155, 0.3);
@@ -436,6 +445,80 @@ button {
   font-size: 8px;
   letter-spacing: 0.04em;
   text-align: center;
+}
+
+.connection-notice {
+  position: absolute;
+  z-index: 50;
+  top: 70px;
+  left: 50%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  width: min(620px, calc(100% - 28px));
+  gap: 11px;
+  padding: 10px 11px;
+  border: 1px solid rgba(241, 185, 91, 0.3);
+  border-radius: 9px;
+  background: rgba(25, 21, 15, 0.96);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.42);
+  transform: translateX(-50%);
+  backdrop-filter: blur(14px);
+}
+
+.connection-notice-mark {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid rgba(241, 185, 91, 0.28);
+  border-radius: 6px;
+  color: #ffd992;
+  background: rgba(241, 185, 91, 0.08);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.connection-notice > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.connection-notice strong {
+  color: #f3e3c3;
+  font-size: 11px;
+}
+
+.connection-notice div > span,
+.connection-notice small {
+  margin-top: 2px;
+  color: #b6aa94;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.connection-notice small {
+  color: #817866;
+}
+
+.connection-notice button,
+.map-placeholder button {
+  min-height: 40px;
+  padding: 7px 11px;
+  border: 1px solid rgba(241, 185, 91, 0.35);
+  border-radius: 6px;
+  color: #f7dca6;
+  background: rgba(241, 185, 91, 0.1);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.connection-notice button:hover,
+.map-placeholder button:hover {
+  border-color: rgba(241, 185, 91, 0.58);
+  background: rgba(241, 185, 91, 0.18);
 }
 
 .radar-layout {
@@ -975,7 +1058,7 @@ button {
 .map-placeholder {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  z-index: 22;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1004,6 +1087,10 @@ button {
   font-size: 10px;
 }
 
+.map-placeholder button {
+  margin-top: 14px;
+}
+
 .image-missing {
   background: rgba(12, 17, 21, 0.84);
 }
@@ -1018,6 +1105,7 @@ button {
   flex-direction: column;
   background: rgba(8, 11, 13, 0.55);
   backdrop-filter: grayscale(1) blur(1px);
+  pointer-events: none;
 }
 
 .stale-overlay strong {
@@ -1140,6 +1228,10 @@ button {
 }
 
 .settings-heading button {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
   border: 0;
   color: #8e999f;
   background: transparent;
@@ -1215,6 +1307,11 @@ button {
 .toggle-setting input:checked + i::after {
   left: 17px;
   background: var(--success);
+}
+
+.toggle-setting input:focus-visible + i {
+  outline: 2px solid #9fe7bd;
+  outline-offset: 3px;
 }
 
 .app-footer {
@@ -1319,6 +1416,10 @@ button {
     padding: 0 10px;
   }
 
+  .connection-notice {
+    top: 52px;
+  }
+
   .brand-block span:last-child,
   .sequence,
   .compact-error,
@@ -1386,6 +1487,16 @@ button {
     padding-left: 7px;
   }
 
+  .connection-notice {
+    top: 66px;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .connection-notice button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
   .radar-layout {
     display: flex;
     flex-direction: column;
@@ -1419,6 +1530,14 @@ button {
   .access-message {
     padding-right: 18px;
     padding-left: 18px;
+  }
+}
+
+@media (pointer: coarse) {
+  .icon-button,
+  .connection-notice button,
+  .map-placeholder button {
+    min-height: 44px;
   }
 }
 

@@ -17,7 +17,8 @@ var (
 
 type frame struct {
 	generation  uint64
-	payload     []byte
+	prepared    *websocket.PreparedMessage
+	payloadSize int
 	publishedAt time.Time
 }
 
@@ -32,21 +33,24 @@ func newViewer() *viewer {
 	return &viewer{updates: make(chan frame, 1)}
 }
 
-func (v *viewer) offer(update frame) {
+func (v *viewer) offer(update frame) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if update.generation <= v.newestGeneration {
-		return
+		return false
 	}
 	v.newestGeneration = update.generation
+	replaced := false
 	select {
 	case <-v.updates:
+		replaced = true
 	default:
 	}
 	select {
 	case v.updates <- update:
 	default:
 	}
+	return replaced
 }
 
 type room struct {
@@ -123,7 +127,7 @@ func (r *room) addViewer(v *viewer, now time.Time, ttl time.Duration) (frame, er
 		return frame{}, errViewerCapacity
 	}
 	r.viewers[v] = struct{}{}
-	if len(r.latest.payload) == 0 || now.Sub(r.latestAt) > ttl {
+	if r.latest.prepared == nil || now.Sub(r.latestAt) > ttl {
 		return frame{}, nil
 	}
 	return r.latest, nil
@@ -135,10 +139,23 @@ func (r *room) removeViewer(v *viewer) {
 	r.mu.Unlock()
 }
 
-func (r *room) publish(payload []byte, now time.Time) {
+func (r *room) publish(payload []byte, now time.Time) (int, error) {
+	// PreparedMessage builds one immutable wire representation which all
+	// viewers can safely share. It also caches one compressed representation
+	// per negotiated compression setting, avoiding per-viewer JSON framing and
+	// deflate work.
+	prepared, err := websocket.NewPreparedMessage(websocket.TextMessage, payload)
+	if err != nil {
+		return 0, err
+	}
 	r.mu.Lock()
 	r.frameGeneration++
-	update := frame{generation: r.frameGeneration, payload: payload, publishedAt: now}
+	update := frame{
+		generation:  r.frameGeneration,
+		prepared:    prepared,
+		payloadSize: len(payload),
+		publishedAt: now,
+	}
 	r.latest = update
 	r.latestAt = now
 	viewers := make([]*viewer, 0, len(r.viewers))
@@ -147,18 +164,28 @@ func (r *room) publish(payload []byte, now time.Time) {
 	}
 	r.mu.Unlock()
 
+	dropped := 0
 	for _, v := range viewers {
-		v.offer(update)
+		if v.offer(update) {
+			dropped++
+		}
 	}
+	return dropped, nil
 }
 
 func (r *room) expire(now time.Time, ttl time.Duration) {
 	r.mu.Lock()
-	if len(r.latest.payload) != 0 && now.Sub(r.latestAt) > ttl {
+	if r.latest.prepared != nil && now.Sub(r.latestAt) > ttl {
 		r.latest = frame{}
 		r.latestAt = time.Time{}
 	}
 	r.mu.Unlock()
+}
+
+func (r *room) operationalCounts() (producerActive bool, viewers int, latestFrame bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.producerActive, len(r.viewers), r.latest.prepared != nil
 }
 
 func (r *room) closeConnections(deadline time.Time) {

@@ -9,12 +9,68 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace menu
 {
+    // RuntimeConfig is copied by the 240 Hz sampling loop. Keep the complete
+    // connection configuration in one immutable allocation instead of
+    // repeatedly allocating URL/room/token strings, and wipe the token before
+    // that allocation is released.
+    class PublicRelayConnectionSettings final
+    {
+    public:
+        PublicRelayConnectionSettings(
+            const std::string_view endpointUrl,
+            const std::string_view room,
+            const std::string_view token)
+            : endpointUrl_(endpointUrl),
+              room_(room),
+              token_(token)
+        {
+        }
+
+        ~PublicRelayConnectionSettings()
+        {
+            if (!token_.empty()) {
+                SecureZeroMemory(token_.data(), token_.size());
+            }
+        }
+
+        PublicRelayConnectionSettings(
+            const PublicRelayConnectionSettings&) = delete;
+        PublicRelayConnectionSettings& operator=(
+            const PublicRelayConnectionSettings&) = delete;
+        PublicRelayConnectionSettings(
+            PublicRelayConnectionSettings&&) = delete;
+        PublicRelayConnectionSettings& operator=(
+            PublicRelayConnectionSettings&&) = delete;
+
+        [[nodiscard]] std::string_view endpointUrl() const noexcept
+        {
+            return endpointUrl_;
+        }
+
+        [[nodiscard]] std::string_view room() const noexcept
+        {
+            return room_;
+        }
+
+        [[nodiscard]] std::string_view token() const noexcept
+        {
+            return token_;
+        }
+
+    private:
+        std::string endpointUrl_;
+        std::string room_;
+        std::string token_;
+    };
+
     // ImGui edits these values on the render thread. The worker copies one
     // coherent snapshot under this mutex at the start of each update pass.
     inline std::mutex configMutex;
@@ -33,9 +89,8 @@ namespace menu
         uint16_t webRadarPort = 22006;
         bool publicRelayEnabled = false;
         bool publicRelayIncludeSteamIds = false;
-        std::string publicRelayUrl;
-        std::string publicRelayRoom;
-        std::string publicRelayToken;
+        std::shared_ptr<const PublicRelayConnectionSettings>
+            publicRelayConnection;
         bool espWallCheck = true;
         bool espSkeleton = true;
         bool grenadeESP = false;
@@ -146,6 +201,8 @@ namespace menu
     inline std::array<char, 512> publicRelayUrl{};
     inline std::array<char, 65> publicRelayRoom{};
     inline std::array<char, 513> publicRelayToken{};
+    inline std::shared_ptr<const PublicRelayConnectionSettings>
+        publicRelayConnectionSnapshot;
 
     struct WebRadarUiStatus
     {
@@ -177,6 +234,7 @@ namespace menu
             web_radar::PublicRelayState::disabled;
         std::uint64_t framesSent = 0;
         std::uint64_t replacedFrames = 0;
+        std::uint64_t droppedFrames = 0;
         std::uint64_t reconnects = 0;
         std::string error;
     };
@@ -233,9 +291,7 @@ namespace menu
         config.publicRelayEnabled = publicRelayEnabled;
         config.publicRelayIncludeSteamIds =
             publicRelayIncludeSteamIds;
-        config.publicRelayUrl = publicRelayUrl.data();
-        config.publicRelayRoom = publicRelayRoom.data();
-        config.publicRelayToken = publicRelayToken.data();
+        config.publicRelayConnection = publicRelayConnectionSnapshot;
         config.espWallCheck = espWallCheck;
         config.espSkeleton = espSkeleton;
         config.grenadeESP = grenadeESP;
@@ -274,6 +330,21 @@ namespace menu
 
     inline void publishRuntimeConfig()
     {
+        const std::string_view currentUrl(publicRelayUrl.data());
+        const std::string_view currentRoom(publicRelayRoom.data());
+        const std::string_view currentToken(publicRelayToken.data());
+        if (currentUrl.empty() && currentRoom.empty() && currentToken.empty()) {
+            publicRelayConnectionSnapshot.reset();
+        } else if (!publicRelayConnectionSnapshot ||
+                   publicRelayConnectionSnapshot->endpointUrl() != currentUrl ||
+                   publicRelayConnectionSnapshot->room() != currentRoom ||
+                   publicRelayConnectionSnapshot->token() != currentToken) {
+            publicRelayConnectionSnapshot =
+                std::make_shared<const PublicRelayConnectionSettings>(
+                    currentUrl,
+                    currentRoom,
+                    currentToken);
+        }
         const RuntimeConfig updated = buildRuntimeConfig();
         std::lock_guard<std::mutex> lock(configMutex);
         runtimeConfigSnapshot = updated;
@@ -1009,7 +1080,9 @@ namespace menu
         if (ImGui::Button("Clear Relay credentials")) {
             std::fill(publicRelayUrl.begin(), publicRelayUrl.end(), '\0');
             std::fill(publicRelayRoom.begin(), publicRelayRoom.end(), '\0');
-            std::fill(publicRelayToken.begin(), publicRelayToken.end(), '\0');
+            SecureZeroMemory(
+                publicRelayToken.data(),
+                publicRelayToken.size());
         }
         ImGui::EndDisabled();
 
@@ -1043,9 +1116,10 @@ namespace menu
         }
         ImGui::Text("Relay: %s", relayState);
         ImGui::Text(
-            "Frames sent: %llu  |  Replaced: %llu  |  Reconnects: %llu",
+            "Frames sent: %llu  |  Replaced: %llu  |  Dropped: %llu  |  Reconnects: %llu",
             static_cast<unsigned long long>(relayStatus.framesSent),
             static_cast<unsigned long long>(relayStatus.replacedFrames),
+            static_cast<unsigned long long>(relayStatus.droppedFrames),
             static_cast<unsigned long long>(relayStatus.reconnects));
         if (!relayStatus.error.empty()) {
             ImGui::TextColored(

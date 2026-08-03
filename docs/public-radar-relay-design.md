@@ -60,8 +60,12 @@ Windows 游戏电脑
 - 只允许 `wss://`，使用系统证书链和主机名校验。
 - 不提供关闭证书校验的选项。
 - 生产者 token 只保存在进程内存中，不写日志、不出现在 URL 中。
-- 网络线程只保留一个可替换的待发送快照；网络慢时丢弃旧帧。
-- 断线采用有上限的指数退避，游戏采样线程从不等待网络 I/O。
+- Runtime 共享一份不可变连接配置，避免采样循环反复复制 URL、房间和 token；
+  凭证对象释放以及 Producer 永久失败时会主动擦除 token 缓冲区。
+- 网络线程只保留一个可替换的待发送快照；默认拒绝超过 512 KiB 的本地帧，
+  排队超过 5 秒的快照直接丢弃并计数。
+- 断线采用有上限的指数退避，只有连接稳定 10 秒后才重置退避；游戏采样线程
+  从不等待网络 I/O。
 - 禁用或修改配置时，UI 只发出停止请求，后台 reaper 负责等待 WinHTTP
   worker 退出；旧 worker 未退出前不会再创建新 Producer，避免同步 WebSocket
   send 卡住界面或反复切换累积线程。
@@ -77,6 +81,10 @@ Windows 游戏电脑
 - 会话和最新快照只保存在内存；服务重启会使所有浏览器会话失效。
 - 单节点内不需要 Redis、数据库或消息队列。
 - 配置拒绝跨房间或跨角色复用同一个 token 哈希，避免一次配置错误扩大权限。
+- 同一快照为所有 Viewer 共享一个 PreparedMessage；浏览器支持时协商无上下文
+  `permessage-deflate`，旧客户端继续接收未压缩文本帧。
+- 可选 `/metrics` 只输出无房间、token 或 IP 标签的聚合指标，默认关闭；正式
+  Compose 在内网启用并由 Caddy 对公网固定返回 404。
 
 ### TLS Edge
 
@@ -150,6 +158,10 @@ Viewer WebSocket 是只读的。客户端发送应用数据会被关闭。
 新 Viewer 只在最新快照未超过 TTL 时立即收到该帧。Producer 断开或超过
 TTL 后，浏览器依靠现有 stale 状态提示显示数据已过期。
 
+共享 PreparedMessage 同时缓存压缩和未压缩表示，避免每个 Viewer 重复进行
+JSON WebSocket framing 和 deflate。静态前端的哈希资源采用 immutable 缓存，
+入口 HTML 保持 `no-store`，缺失地图或资源返回真正的 404。
+
 Relay 不保存快照历史，不把快照写入普通日志，也不提供回放接口。
 
 ## 安全模型
@@ -180,6 +192,7 @@ Relay 不保存快照历史，不把快照写入普通日志，也不提供回�
 - Relay 信任代理头时必须配置明确的可信代理网段；不能无条件信任客户端
   提交的 `X-Forwarded-For`。
 - 日志只记录路径，不记录 Authorization、Cookie、查询参数或快照正文。
+- Metrics 默认关闭；启用时必须限制在后端网络，不能通过公网入口转发。
 - 公网安全组只开放 80/443；Relay 内部端口不得直接发布。
 
 ## 前端双模式
@@ -193,6 +206,8 @@ Relay 不保存快照历史，不把快照写入普通日志，也不提供回�
 
 邀请凭证只存在登录组件的临时状态中，提交后立即清空，不进入 URL、
 `localStorage` 或前端日志。Radar 的地图、玩家、装备和 C4 渲染不分叉。
+Session 请求和 WebSocket 建连具有超时与指数重连；浏览器离线、回到前台或
+从 BFCache 恢复时会重新判断会话、数据新鲜度和地图资源，而不是保留假实时状态。
 
 ## 故障行为
 
@@ -200,6 +215,8 @@ Relay 不保存快照历史，不把快照写入普通日志，也不提供回�
 - Relay 重启：Producer 自动重连，Viewer 会话失效并返回登录页。
 - Producer 断开：Viewer 保持页面，3 秒后显示 stale，而不是继续伪装实时。
 - Viewer 过慢：只丢弃该 Viewer 的旧帧，不影响 Producer 或其他 Viewer。
+- 浏览器弱网或后台恢复：显示最近快照时间和明确的重试状态，联网后自动恢复；
+  用户也可立即重试连接或地图资源。
 - TLS 或证书校验失败：Producer 拒绝连接，不允许降级到明文。
 - 配置无效：Relay 启动失败，不使用弱默认 token 或临时公开房间。
 - 极端情况下，已完成 WSS 握手但永远不读取数据的恶意服务可能让 Windows
@@ -218,15 +235,17 @@ Relay 不保存快照历史，不把快照写入普通日志，也不提供回�
 65532 运行，根文件系统只读，最终层只包含静态 Go 二进制和构建后的 Radar
 前端。Caddy 是唯一映射宿主机 80/443 的容器；Relay 8080 只存在于 internal
 bridge。配置作为只读 secret 挂载，Caddy 的证书和 ACME 账户单独持久化。
+部署脚本还会校验容器健康、配置 Origin、HTTPS 安全头、内部端点隔离和端口
+发布情况；Caddy 对静态响应启用 zstd/gzip，并限制异常大的请求头和 HTTP body。
 
 ## 验证矩阵
 
 | 层 | 验证内容 |
 |---|---|
-| Producer 单元测试 | WSS URL、房间、token、退避和配置边界 |
+| Producer 单元测试 | WSS URL、DNS、房间、token、退避、帧大小和队列时效 |
 | Windows 编译 | WinHTTP WebSocket API、Unicode URL、Winhttp.lib 链接 |
 | Relay 单元测试 | 配置哈希、常量时间认证、session 生命周期、Origin、限流 |
-| Relay 集成测试 | Producer 鉴权、发布、Viewer 登录、首帧、广播、断开、TTL |
-| 前端测试 | embedded/relay 模式选择、登录、注销、401/403 和 WSS URL |
+| Relay 集成测试 | Producer 鉴权、发布、压缩/旧客户端、Metrics、缓存、断开、TTL |
+| 前端测试 | 双模式、登录/注销、超时、离线恢复、重连、地图重试和敏感 URL 清理 |
 | 容器验证 | 非 root Relay、只读文件系统、内部端口、Caddy 配置和健康检查 |
 | 人工验收 | 公网 HTTPS、证书失败、Producer 断线、多人观看、凭证轮换 |

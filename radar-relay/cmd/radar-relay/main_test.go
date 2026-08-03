@@ -79,3 +79,22 @@ func TestHealthcheckCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCheckConfigAndExpectedOrigin(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relay.json")
+	var initOutput bytes.Buffer
+	if err := run([]string{"init-config", "-out", path, "-origin", "https://radar.example.test", "-room", "room_one"}, strings.NewReader(""), &initOutput, &initOutput); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	if err := run([]string{"check-config", "-config", path, "-origin", "https://radar.example.test"}, strings.NewReader(""), &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	if got := output.String(); !strings.Contains(got, "configuration valid") || strings.Contains(got, "sha256") || strings.Contains(got, "token:") {
+		t.Fatalf("unsafe or unexpected check-config output: %q", got)
+	}
+	if err := run([]string{"check-config", "-config", path, "-origin", "https://other.example.test"}, strings.NewReader(""), &output, &output); err == nil || !strings.Contains(err.Error(), "publicOrigin mismatch") {
+		t.Fatalf("origin mismatch was not detected: %v", err)
+	}
+}

@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RadarDeploymentMode } from '../lib/deployment';
 import { probeRelaySession } from '../lib/session';
 import {
   deriveWebSocketUrl,
   isSessionRejectedCloseCode,
-  isSnapshotStale,
   reconnectDelayMs,
   shouldProbeSessionAfterClose,
 } from '../lib/stream';
@@ -22,7 +21,8 @@ export interface RadarStreamState {
   frame: RadarFrame | null;
   stale: boolean;
   error: string | null;
-  url: string;
+  retryInMs: number | null;
+  retry: () => void;
 }
 
 interface RadarStreamOptions {
@@ -34,49 +34,164 @@ export function useRadarStream({ mode, onSessionRejected }: RadarStreamOptions):
   const url = useMemo(() => deriveWebSocketUrl(window.location, mode), [mode]);
   const [status, setStatus] = useState<StreamStatus>('connecting');
   const [frame, setFrame] = useState<RadarFrame | null>(null);
+  const [stale, setStale] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [clock, setClock] = useState(() => Date.now());
+  const [retryInMs, setRetryInMs] = useState<number | null>(null);
+  const [retryVersion, setRetryVersion] = useState(0);
   const attemptRef = useRef(0);
+  const lastReceivedAtRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    const timer = window.setInterval(() => setClock(Date.now()), 750);
-    return () => window.clearInterval(timer);
-  }, []);
+  const retry = useCallback(() => setRetryVersion((version) => version + 1), []);
 
   useEffect(() => {
     let disposed = false;
     let reconnectTimer: number | undefined;
+    let staleTimer: number | undefined;
+    let connectWatchdogTimer: number | undefined;
     let socket: WebSocket | undefined;
+    let connectionStartedAtMs: number | null = null;
     let sessionProbeController: AbortController | undefined;
+    let generation = 0;
+    attemptRef.current = 0;
 
-    const scheduleReconnect = () => {
+    const isOffline = () => navigator.onLine === false;
+    const closeSocket = (target: WebSocket, code: number, reason: string) => {
+      try {
+        target.close(code, reason);
+      } catch {
+        // A CONNECTING socket can reject close() in some engines. Its late
+        // open handler will try again after the handshake finishes.
+      }
+    };
+
+    const clearReconnect = (updateState = true) => {
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+      if (updateState) setRetryInMs(null);
+    };
+
+    const clearConnectWatchdog = () => {
+      if (connectWatchdogTimer !== undefined) window.clearTimeout(connectWatchdogTimer);
+      connectWatchdogTimer = undefined;
+    };
+
+    const refreshStaleness = () => {
+      if (staleTimer !== undefined) window.clearTimeout(staleTimer);
+      staleTimer = undefined;
+      const lastReceivedAt = lastReceivedAtRef.current;
+      if (lastReceivedAt === null) {
+        setStale(true);
+        return;
+      }
+      const remaining = 3_000 - (Date.now() - lastReceivedAt);
+      if (remaining <= 0) {
+        setStale(true);
+        return;
+      }
+      setStale(false);
+      staleTimer = window.setTimeout(() => setStale(true), remaining);
+    };
+
+    const markOffline = () => {
+      clearReconnect();
+      clearConnectWatchdog();
+      sessionProbeController?.abort();
+      sessionProbeController = undefined;
+      generation += 1;
+      const previous = socket;
+      socket = undefined;
+      connectionStartedAtMs = null;
+      if (previous?.readyState === WebSocket.OPEN || previous?.readyState === WebSocket.CONNECTING) {
+        closeSocket(previous, 1000, 'network offline');
+      }
+      setStatus('offline');
+      setError('设备已离线；网络恢复后会自动重连');
+      refreshStaleness();
+    };
+
+    const scheduleReconnect = (immediate = false) => {
       if (disposed) return;
+      if (isOffline()) {
+        markOffline();
+        return;
+      }
+      clearReconnect();
       setStatus('reconnecting');
-      const delay = reconnectDelayMs(attemptRef.current++);
+      const delay = immediate ? 0 : reconnectDelayMs(attemptRef.current++);
+      setRetryInMs(delay);
       reconnectTimer = window.setTimeout(connect, delay);
     };
 
     const rejectSession = () => {
       if (disposed) return;
+      clearConnectWatchdog();
       setStatus('disconnected');
+      setRetryInMs(null);
       setError('公网 Radar 会话已失效');
       onSessionRejected?.();
     };
 
     function connect() {
       if (disposed) return;
+      clearReconnect();
+      if (isOffline()) {
+        markOffline();
+        return;
+      }
+      sessionProbeController?.abort();
+      sessionProbeController = undefined;
+      clearConnectWatchdog();
+      const connectionGeneration = ++generation;
       setStatus(attemptRef.current === 0 ? 'connecting' : 'reconnecting');
-      socket = new WebSocket(url);
+      let candidate: WebSocket;
+      try {
+        candidate = new WebSocket(url);
+      } catch {
+        setError('无法创建 Radar WebSocket 连接');
+        scheduleReconnect();
+        return;
+      }
+      socket = candidate;
+      connectionStartedAtMs = Date.now();
+      connectWatchdogTimer = window.setTimeout(() => {
+        if (
+          disposed
+          || connectionGeneration !== generation
+          || candidate.readyState !== WebSocket.CONNECTING
+        ) {
+          return;
+        }
+        connectWatchdogTimer = undefined;
+        generation += 1;
+        if (socket === candidate) socket = undefined;
+        connectionStartedAtMs = null;
+        closeSocket(candidate, 4001, 'connection timeout');
+        setError('Radar 实时连接超时');
+        scheduleReconnect();
+      }, 10_000);
 
-      socket.addEventListener('open', () => {
-        if (disposed) return;
-        attemptRef.current = 0;
+      candidate.addEventListener('open', () => {
+        if (disposed || connectionGeneration !== generation) {
+          closeSocket(
+            candidate,
+            disposed ? 1000 : 4000,
+            disposed ? 'page closed' : 'superseded connection',
+          );
+          return;
+        }
+        clearConnectWatchdog();
+        connectionStartedAtMs = null;
         setStatus('connected');
+        setRetryInMs(null);
         setError(null);
       });
 
-      socket.addEventListener('message', (event) => {
-        if (disposed || typeof event.data !== 'string') return;
+      candidate.addEventListener('message', (event) => {
+        if (disposed || connectionGeneration !== generation) return;
+        if (typeof event.data !== 'string') {
+          setError('收到不支持的二进制数据帧');
+          return;
+        }
         const message = parseServerMessage(event.data);
         if (!message) {
           setError('收到无法识别的 v1 数据帧');
@@ -88,21 +203,33 @@ export function useRadarStream({ mode, onSessionRejected }: RadarStreamOptions):
         }
         if (message.type !== 'snapshot') return;
 
+        const receivedAtWallMs = Date.now();
+        lastReceivedAtRef.current = receivedAtWallMs;
+        attemptRef.current = 0;
         setFrame({
           snapshot: message,
           receivedAtPerformanceMs: performance.now(),
-          receivedAtWallMs: Date.now(),
+          receivedAtWallMs,
         });
-        setClock(Date.now());
+        refreshStaleness();
       });
 
-      socket.addEventListener('close', (event) => {
-        if (disposed) return;
+      candidate.addEventListener('close', (event) => {
+        if (disposed || connectionGeneration !== generation) return;
+        clearConnectWatchdog();
+        socket = undefined;
+        connectionStartedAtMs = null;
         if (mode === 'relay' && isSessionRejectedCloseCode(event.code)) {
           rejectSession();
           return;
         }
         if (event.reason) setError(event.reason);
+        else setError(mode === 'relay' ? '公网 Radar 连接已中断' : '内嵌 Radar 连接已中断');
+
+        if (isOffline()) {
+          markOffline();
+          return;
+        }
 
         // Browsers deliberately hide the HTTP status of a rejected WebSocket
         // upgrade and report it as 1006. Re-probe the cookie session so an
@@ -113,43 +240,118 @@ export function useRadarStream({ mode, onSessionRejected }: RadarStreamOptions):
           sessionProbeController = new AbortController();
           void probeRelaySession(fetch, sessionProbeController.signal)
             .then((probe) => {
-              if (disposed) return;
+              if (disposed || connectionGeneration !== generation) return;
               if (probe.kind !== 'authenticated') {
                 rejectSession();
                 return;
               }
               scheduleReconnect();
             })
-            .catch(() => scheduleReconnect());
+            .catch((probeError: unknown) => {
+              if (disposed || connectionGeneration !== generation) return;
+              if (probeError instanceof DOMException && probeError.name === 'AbortError') return;
+              scheduleReconnect();
+            });
           return;
         }
 
         scheduleReconnect();
       });
 
-      socket.addEventListener('error', () => {
-        if (!disposed) {
+      candidate.addEventListener('error', () => {
+        if (!disposed && connectionGeneration === generation) {
           setError(mode === 'relay' ? '无法连接公网 Radar Relay' : '无法连接内嵌 Radar 服务');
         }
       });
     }
 
-    connect();
-    return () => {
-      disposed = true;
+    const restartNow = () => {
+      if (disposed) return;
+      if (isOffline()) {
+        markOffline();
+        return;
+      }
+      clearReconnect();
+      clearConnectWatchdog();
       sessionProbeController?.abort();
-      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
-      if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) {
-        socket.close(1000, 'page closed');
+      sessionProbeController = undefined;
+      generation += 1;
+      const previous = socket;
+      socket = undefined;
+      connectionStartedAtMs = null;
+      if (previous?.readyState === WebSocket.OPEN || previous?.readyState === WebSocket.CONNECTING) {
+        closeSocket(previous, 4000, 'client retry');
+      }
+      attemptRef.current = 0;
+      connect();
+    };
+
+    const handleOnline = () => restartNow();
+    const handleOffline = () => markOffline();
+    const handleResume = () => {
+      if (document.visibilityState === 'hidden') return;
+      refreshStaleness();
+      if (isOffline()) {
+        markOffline();
+        return;
+      }
+      if (
+        !socket
+        || socket.readyState === WebSocket.CLOSED
+        || socket.readyState === WebSocket.CLOSING
+      ) {
+        restartNow();
+        return;
+      }
+      if (
+        socket.readyState === WebSocket.CONNECTING
+        && connectionStartedAtMs !== null
+        && Date.now() - connectionStartedAtMs >= 10_000
+      ) {
+        restartNow();
+        return;
+      }
+      const lastReceivedAt = lastReceivedAtRef.current;
+      if (
+        socket.readyState === WebSocket.OPEN
+        && lastReceivedAt !== null
+        && Date.now() - lastReceivedAt > 10_000
+      ) {
+        restartNow();
       }
     };
-  }, [mode, onSessionRejected, url]);
+
+    refreshStaleness();
+    connect();
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('pageshow', handleResume);
+    window.addEventListener('focus', handleResume);
+    document.addEventListener('visibilitychange', handleResume);
+    return () => {
+      disposed = true;
+      generation += 1;
+      sessionProbeController?.abort();
+      clearReconnect(false);
+      clearConnectWatchdog();
+      if (staleTimer !== undefined) window.clearTimeout(staleTimer);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('pageshow', handleResume);
+      window.removeEventListener('focus', handleResume);
+      document.removeEventListener('visibilitychange', handleResume);
+      if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) {
+        closeSocket(socket, 1000, 'page closed');
+      }
+    };
+  }, [mode, onSessionRejected, retryVersion, url]);
 
   return {
     status,
     frame,
-    stale: isSnapshotStale(frame?.receivedAtWallMs ?? null, clock),
+    stale,
     error,
-    url,
+    retryInMs,
+    retry,
   };
 }

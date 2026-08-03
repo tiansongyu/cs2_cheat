@@ -98,6 +98,16 @@ namespace web_radar
             return std::wstring(value.begin(), value.end());
         }
 
+        void appendAsciiToWide(
+            std::wstring& destination,
+            const std::string_view value)
+        {
+            for (const char rawCharacter : value) {
+                destination.push_back(static_cast<wchar_t>(
+                    static_cast<unsigned char>(rawCharacter)));
+            }
+        }
+
         void securelyErase(std::wstring& value) noexcept
         {
             if (!value.empty()) {
@@ -156,13 +166,6 @@ namespace web_radar
                     std::to_string(statusCode) + ").";
             }
         }
-
-        [[nodiscard]] bool permanentHttpFailure(const DWORD statusCode) noexcept
-        {
-            return statusCode >= 400 && statusCode < 500 &&
-                statusCode != 408 && statusCode != 409 &&
-                statusCode != 425 && statusCode != 429;
-        }
     }
 
     class PublicRelayProducer::Impl final
@@ -181,38 +184,53 @@ namespace web_radar
 
         [[nodiscard]] bool start() noexcept
         {
-            std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                if (started_) {
-                    return status_.state != PublicRelayState::failed;
+            try {
+                std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    if (started_) {
+                        return status_.state != PublicRelayState::failed;
+                    }
+                    const std::string validationError =
+                        validatePublicRelayConfig(config_);
+                    if (!validationError.empty()) {
+                        status_.state = PublicRelayState::failed;
+                        status_.lastError = validationError;
+                        return false;
+                    }
+                    stopping_ = false;
+                    started_ = true;
+                    status_.state = PublicRelayState::connecting;
+                    status_.lastError.clear();
                 }
-                const std::string validationError =
-                    validatePublicRelayConfig(config_);
-                if (!validationError.empty()) {
+
+                try {
+                    worker_ = std::thread([this] {
+                        workerEntry();
+                    });
+                } catch (...) {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    started_ = false;
                     status_.state = PublicRelayState::failed;
-                    status_.lastError = validationError;
+                    status_.lastError =
+                        "Unable to start the Relay network worker.";
                     return false;
                 }
-                stopping_ = false;
-                started_ = true;
-                status_.state = PublicRelayState::connecting;
-                status_.lastError.clear();
-            }
-
-            try {
-                worker_ = std::thread([this] {
-                    workerMain();
-                });
+                return true;
             } catch (...) {
-                std::lock_guard<std::mutex> lock(mutex_);
-                started_ = false;
-                status_.state = PublicRelayState::failed;
-                status_.lastError =
-                    "Unable to start the Relay network worker.";
+                // start() is a process boundary used by the UI. Keep its
+                // noexcept contract even if validation/error formatting runs
+                // out of memory before the network thread exists.
+                try {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    started_ = false;
+                    status_.state = PublicRelayState::failed;
+                    status_.lastError.clear();
+                    status_.lastError = "Unable to initialize Public Relay.";
+                } catch (...) {
+                }
                 return false;
             }
-            return true;
         }
 
         void stop() noexcept
@@ -245,6 +263,7 @@ namespace web_radar
             pendingGeneration_ = 0;
             consumedGeneration_ = 0;
             sentGeneration_ = 0;
+            pendingAt_ = {};
             status_.state = PublicRelayState::disabled;
             status_.lastError.clear();
         }
@@ -273,11 +292,23 @@ namespace web_radar
                 if (!started_ || stopping_) {
                     return;
                 }
+                if (!publicRelaySnapshotFits(
+                        frame->size(),
+                        config_.maxSnapshotBytes)) {
+                    ++status_.droppedFrames;
+                    // Latest-state semantics are safer than sending an older
+                    // queued state after the newest one was rejected locally.
+                    consumedGeneration_ = pendingGeneration_;
+                    pending_.reset();
+                    pendingAt_ = {};
+                    return;
+                }
                 if (pending_ &&
                     pendingGeneration_ != consumedGeneration_) {
                     ++status_.replacedFrames;
                 }
                 pending_ = std::move(frame);
+                pendingAt_ = std::chrono::steady_clock::now();
                 ++pendingGeneration_;
                 if (pendingGeneration_ == 0) {
                     ++pendingGeneration_;
@@ -401,25 +432,46 @@ namespace web_radar
                     true};
             }
 
-            std::wstring authorization = L"Authorization: Bearer ";
-            authorization += asciiToWide(config_.token);
+            // Finish every non-secret allocation before materializing the
+            // token in wide form, so exception unwinding cannot bypass its
+            // explicit erase.
             const std::wstring roomHeader =
                 L"X-Radar-Room: " + asciiToWide(config_.room);
+            constexpr std::wstring_view authorizationPrefix =
+                L"Authorization: Bearer ";
+            std::wstring authorization;
+            authorization.reserve(
+                authorizationPrefix.size() + config_.token.size());
+            authorization.append(authorizationPrefix);
+            // Avoid a temporary wide token whose allocator-owned storage
+            // could outlive the request-header construction without being
+            // securely erased.
+            appendAsciiToWide(authorization, config_.token);
             const bool authorizationAdded = WinHttpAddRequestHeaders(
                 request.get(),
                 authorization.c_str(),
                 static_cast<DWORD>(-1L),
                 WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE) != FALSE;
+            const DWORD authorizationError = authorizationAdded
+                ? NO_ERROR
+                : GetLastError();
             securelyErase(authorization);
-            if (!authorizationAdded ||
-                !WinHttpAddRequestHeaders(
+            if (!authorizationAdded) {
+                return ConnectionAttempt{
+                    {},
+                    winHttpFailure(
+                        "Relay authentication header",
+                        authorizationError),
+                    true};
+            }
+            if (!WinHttpAddRequestHeaders(
                     request.get(),
                     roomHeader.c_str(),
                     static_cast<DWORD>(-1L),
                     WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE)) {
                 return ConnectionAttempt{
                     {},
-                    winHttpFailure("Relay authentication header", GetLastError()),
+                    winHttpFailure("Relay room header", GetLastError()),
                     true};
             }
 
@@ -461,7 +513,7 @@ namespace web_radar
                 return ConnectionAttempt{
                     {},
                     httpFailure(statusCode),
-                    permanentHttpFailure(statusCode)};
+                    publicRelayHttpFailureIsPermanent(statusCode)};
             }
 
             result.socket.reset(WinHttpWebSocketCompleteUpgrade(
@@ -476,7 +528,32 @@ namespace web_radar
             return ConnectionAttempt{std::move(result), {}, false};
         }
 
-        void workerMain() noexcept
+        void workerEntry() noexcept
+        {
+            try {
+                workerMain();
+            } catch (...) {
+                // The worker performs allocation while formatting WinHTTP
+                // errors and request headers. An unexpected allocation or
+                // library exception must fail this producer, never terminate
+                // the overlay process or expose exception text that might
+                // contain request details.
+                try {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    if (!stopping_) {
+                        status_.state = PublicRelayState::failed;
+                        status_.lastError =
+                            "Relay network worker stopped unexpectedly.";
+                    }
+                } catch (...) {
+                    // Preserve noexcept at the thread boundary even under
+                    // extreme memory pressure.
+                }
+                securelyErase(config_.token);
+            }
+        }
+
+        void workerMain()
         {
             std::uint32_t failureCount = 0;
             std::uint32_t entropy = static_cast<std::uint32_t>(
@@ -484,9 +561,12 @@ namespace web_radar
                 reinterpret_cast<std::uintptr_t>(this));
             bool attemptedConnection = false;
 
-            while (!shouldStop()) {
+            while (true) {
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
+                    if (stopping_) {
+                        return;
+                    }
                     status_.state = PublicRelayState::connecting;
                     if (attemptedConnection) {
                         ++status_.reconnects;
@@ -497,9 +577,15 @@ namespace web_radar
                 ConnectionAttempt attempt = connect();
                 if (!attempt) {
                     if (attempt.permanentFailure) {
-                        std::lock_guard<std::mutex> lock(mutex_);
-                        status_.state = PublicRelayState::failed;
-                        status_.lastError = std::move(attempt.error);
+                        {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            if (stopping_) {
+                                return;
+                            }
+                            status_.state = PublicRelayState::failed;
+                            status_.lastError = std::move(attempt.error);
+                        }
+                        securelyErase(config_.token);
                         return;
                     }
                     if (!waitAfterFailure(
@@ -512,26 +598,32 @@ namespace web_radar
                     continue;
                 }
 
+                const auto connectedAt =
+                    std::chrono::steady_clock::now();
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
+                    if (stopping_) {
+                        return;
+                    }
                     status_.state = PublicRelayState::connected;
                     status_.lastError.clear();
                 }
 
                 std::string sendError;
-                std::uint64_t framesSentOnConnection = 0;
                 if (sendFrames(
                         attempt.connection.socket.get(),
-                        sendError,
-                        framesSentOnConnection)) {
+                        sendError)) {
                     return;
                 }
+                const auto connectedFor =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - connectedAt);
                 attempt.connection = RelayConnection{};
-                // A connection that carried at least one second of the normal
-                // 20 Hz stream is considered healthy. Immediate upgrade/close
-                // loops retain their failure count and therefore continue the
-                // exponential backoff instead of reconnecting every second.
-                if (framesSentOnConnection >= 20) {
+                // Reset only after a genuinely stable connection. Basing this
+                // on elapsed time rather than an assumed publish rate keeps
+                // low-rate and bursty callers from receiving different retry
+                // behavior, while short upgrade/close loops remain backed off.
+                if (publicRelayConnectionWasHealthy(connectedFor)) {
                     failureCount = 0;
                 }
                 if (!waitAfterFailure(
@@ -546,8 +638,7 @@ namespace web_radar
 
         [[nodiscard]] bool sendFrames(
             const HINTERNET socket,
-            std::string& error,
-            std::uint64_t& framesSentOnConnection)
+            std::string& error)
         {
             while (true) {
                 std::shared_ptr<const std::string> frame;
@@ -563,6 +654,18 @@ namespace web_radar
                         return true;
                     }
                     if (!pending_) {
+                        continue;
+                    }
+                    const auto queuedFor =
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - pendingAt_);
+                    if (publicRelayQueuedSnapshotExpired(
+                            queuedFor,
+                            config_.maximumQueuedSnapshotAgeMilliseconds)) {
+                        ++status_.droppedFrames;
+                        consumedGeneration_ = pendingGeneration_;
+                        pending_.reset();
+                        pendingAt_ = {};
                         continue;
                     }
                     frame = pending_;
@@ -590,7 +693,6 @@ namespace web_radar
                     ++status_.framesSent;
                     sentGeneration_ = generation;
                 }
-                ++framesSentOnConnection;
             }
         }
 
@@ -614,12 +716,6 @@ namespace web_radar
             return !stopping_;
         }
 
-        [[nodiscard]] bool shouldStop() const
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            return stopping_;
-        }
-
         [[nodiscard]] static std::uint32_t nextEntropy(
             std::uint32_t& state) noexcept
         {
@@ -640,6 +736,7 @@ namespace web_radar
         std::uint64_t pendingGeneration_ = 0;
         std::uint64_t consumedGeneration_ = 0;
         std::uint64_t sentGeneration_ = 0;
+        std::chrono::steady_clock::time_point pendingAt_{};
         PublicRelayStatus status_;
     };
 

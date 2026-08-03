@@ -22,7 +22,10 @@ interface RadarMapProps {
   performanceNowMs: number;
   settings: RadarSettings;
   stale: boolean;
+  staleMessage?: string;
   manifestError: string | null;
+  manifestLoading: boolean;
+  onRetryMap: () => void;
 }
 
 const competitivePalette = ['#9aa4b2', '#5ab4ff', '#b88cff', '#72d69d', '#ffd166', '#ff8c69'];
@@ -45,17 +48,60 @@ export function RadarMap({
   performanceNowMs,
   settings,
   stale,
+  staleMessage,
   manifestError,
+  manifestLoading,
+  onRetryMap,
 }: RadarMapProps) {
   const [imageFailed, setImageFailed] = useState(false);
+  const [imageRevision, setImageRevision] = useState(0);
   const playerHeadings = useRef(new Map<string, number>());
   const localPlayer = players.find((player) => player.id === localPlayerId);
   const referenceZ =
     localPlayer?.position?.z ?? players.find((player) => player.alive && player.position)?.position?.z;
   const imageUrl = map ? resolveMapImage(map, referenceZ) : '';
+  const imageSrc = imageRevision === 0
+    ? imageUrl
+    : `${imageUrl}${imageUrl.includes('?') ? '&' : '?'}radar_retry=${imageRevision}`;
   const level = map && referenceZ !== undefined ? selectMapLevel(map.levels, referenceZ) : undefined;
 
-  useEffect(() => setImageFailed(false), [imageUrl]);
+  useEffect(() => {
+    setImageFailed(false);
+    setImageRevision(0);
+  }, [imageUrl]);
+
+  useEffect(() => {
+    const activePlayers = new Set(players.map((player) => player.id));
+    for (const playerId of playerHeadings.current.keys()) {
+      if (!activePlayers.has(playerId)) playerHeadings.current.delete(playerId);
+    }
+  }, [players]);
+
+  useEffect(() => {
+    playerHeadings.current.clear();
+  }, [mapId]);
+
+  useEffect(() => {
+    if (!imageFailed) return undefined;
+    const resume = () => {
+      if (document.visibilityState === 'hidden' || navigator.onLine === false) return;
+      setImageFailed(false);
+      setImageRevision((revision) => revision + 1);
+    };
+    window.addEventListener('online', resume);
+    window.addEventListener('pageshow', resume);
+    document.addEventListener('visibilitychange', resume);
+    return () => {
+      window.removeEventListener('online', resume);
+      window.removeEventListener('pageshow', resume);
+      document.removeEventListener('visibilitychange', resume);
+    };
+  }, [imageFailed]);
+
+  const retryMapImage = () => {
+    setImageFailed(false);
+    setImageRevision((revision) => revision + 1);
+  };
 
   const bombPosition = useMemo(() => {
     if (bomb.position) return bomb.position;
@@ -94,8 +140,9 @@ export function RadarMap({
           {map && !imageFailed && (
             <img
               className="radar-image"
-              src={imageUrl}
-              alt={`${map.name} 雷达地图`}
+              src={imageSrc}
+              alt=""
+              aria-hidden="true"
               draggable={false}
               onError={() => setImageFailed(true)}
             />
@@ -167,8 +214,25 @@ export function RadarMap({
           {!map && (
             <div className="map-placeholder">
               <span aria-hidden="true">⌖</span>
-              <strong>{mapId ? `缺少 ${mapId} 的地图定义` : '等待游戏地图'}</strong>
-              <p>{manifestError ? `Manifest 加载失败：${manifestError}` : '请检查 /maps/manifest.json'}</p>
+              <strong>
+                {manifestLoading
+                  ? '正在加载固定地图资源'
+                  : mapId
+                    ? `缺少 ${mapId} 的地图定义`
+                    : '等待游戏地图'}
+              </strong>
+              <p>
+                {manifestError
+                  ? `地图清单加载失败：${manifestError}`
+                  : manifestLoading
+                    ? '正在读取地图清单…'
+                    : mapId
+                      ? '当前地图尚未收录到地图清单。'
+                      : '收到游戏快照后会自动显示。'}
+              </p>
+              {manifestError && (
+                <button type="button" onClick={onRetryMap}>重新加载地图清单</button>
+              )}
             </div>
           )}
 
@@ -176,20 +240,21 @@ export function RadarMap({
             <div className="map-placeholder image-missing">
               <span aria-hidden="true">▧</span>
               <strong>地图图像不可用</strong>
-              <p>{imageUrl}</p>
+              <p>固定地图静态资源加载失败。</p>
+              <button type="button" onClick={retryMapImage}>重新加载地图图像</button>
             </div>
           )}
 
           {stale && (
-            <div className="stale-overlay">
+            <div className="stale-overlay" role="status" aria-live="polite">
               <strong>数据已暂停</strong>
-              <span>正在等待新的游戏快照</span>
+              <span>{staleMessage ?? '正在等待新的游戏快照'}</span>
             </div>
           )}
         </div>
 
         {bomb.state === 'planted' && (
-          <div className="bomb-timer" role="status">
+          <div className="bomb-timer" role="timer" aria-live="off" aria-label="炸弹倒计时">
             <span className="site-badge">
               {bomb.site && bomb.site !== 'unknown' ? bomb.site.toUpperCase() : '?'}
             </span>

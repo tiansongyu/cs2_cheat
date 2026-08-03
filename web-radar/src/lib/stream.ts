@@ -1,6 +1,6 @@
 import type { RadarDeploymentMode } from './deployment';
 
-export type StreamStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
+export type StreamStatus = 'connecting' | 'connected' | 'reconnecting' | 'offline' | 'disconnected';
 
 interface LocationLike {
   protocol: string;

@@ -93,7 +93,9 @@ LAN token 只能限制未持有链接的访问者，HTTP/WS 本身没有 TLS。�
 公网模式是一条独立链路，不会把游戏电脑的 CivetWeb 或任何入站端口暴露到
 Internet。Windows 主程序只主动连接 `wss://`；公网服务器由 Caddy 提供自动
 HTTPS，再由 Go Relay 完成房间隔离、Producer/Viewer 分权、短期 HttpOnly
-会话、限流和“只保留最新帧”的有界广播。
+会话、限流和“只保留最新帧”的有界广播。多人观看共享同一个预编码压缩帧；
+浏览器弱网、离线和后台恢复都有明确状态与自动重连，Relay 还提供仅内网可见的
+聚合 Metrics 和部署验收工具。
 
 1. 按 [正式部署指南](deploy/public-relay/README.md) 在有域名的 Linux 服务器上
    生成房间凭证并启动 Caddy + Relay。

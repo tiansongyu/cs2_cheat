@@ -29,6 +29,7 @@ Usage:
   radar-relay token
   radar-relay hash-token                 # reads the token from stdin
   radar-relay init-config [options]
+  radar-relay check-config -config /path/to/config.json [-origin https://radar.example.com]
   radar-relay healthcheck [-url http://127.0.0.1:8080/healthz]
 `
 
@@ -53,6 +54,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return hashToken(args[1:], stdin, stdout)
 	case "init-config":
 		return initConfig(args[1:], stdout, stderr)
+	case "check-config":
+		return checkConfig(args[1:], stdout, stderr)
 	case "healthcheck":
 		return healthcheck(args[1:])
 	case "help", "-h", "--help":
@@ -61,6 +64,28 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func checkConfig(args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("check-config", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	configPath := flags.String("config", "radar-relay.json", "path to the JSON configuration")
+	expectedOrigin := flags.String("origin", "", "optional expected public origin from the reverse proxy")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("check-config does not accept positional arguments")
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if *expectedOrigin != "" && cfg.PublicOrigin != *expectedOrigin {
+		return fmt.Errorf("publicOrigin mismatch: config has %q, expected %q", cfg.PublicOrigin, *expectedOrigin)
+	}
+	_, err = fmt.Fprintf(stdout, "configuration valid (rooms: %d, publicOrigin: %s)\n", len(cfg.Rooms), cfg.PublicOrigin)
+	return err
 }
 
 func serve(args []string, stderr io.Writer) error {
@@ -98,7 +123,7 @@ func serve(args []string, stderr io.Writer) error {
 	}
 	serveErrors := make(chan error, 1)
 	go func() {
-		logger.Info("radar relay listening", "listen", cfg.Listen, "rooms", len(cfg.Rooms), "tls", cfg.TLSCertFile != "")
+		logger.Info("radar relay listening", "listen", cfg.Listen, "rooms", len(cfg.Rooms), "tls", cfg.TLSCertFile != "", "metrics", cfg.EnableMetrics)
 		if cfg.TLSCertFile != "" {
 			serveErrors <- httpServer.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile)
 			return

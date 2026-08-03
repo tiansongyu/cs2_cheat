@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   loginRelaySession,
   logoutRelaySession,
@@ -10,6 +10,8 @@ const sessionBody = {
   room: 'match-alpha',
   expiresAtMs: 1_900_000_000_000,
 };
+
+afterEach(() => vi.useRealTimers());
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -41,6 +43,24 @@ describe('probeRelaySession', () => {
 
     await expect(probeRelaySession(unauthenticated)).resolves.toEqual({ kind: 'unauthenticated' });
     await expect(probeRelaySession(unavailable)).resolves.toEqual({ kind: 'unavailable' });
+  });
+
+  it('aborts a stalled request and reports a useful timeout', async () => {
+    vi.useFakeTimers();
+    const fetcher = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('aborted', 'AbortError'));
+        }, { once: true });
+      })
+    ));
+    const request = probeRelaySession(fetcher, undefined, 250);
+    const rejection = expect(request).rejects.toMatchObject({
+      kind: 'request',
+      message: 'Radar Relay 请求超时，请检查网络后重试',
+    });
+    await vi.advanceTimersByTimeAsync(250);
+    await rejection;
   });
 });
 
@@ -79,6 +99,19 @@ describe('relay login and logout', () => {
       kind: 'request',
       status: 403,
     });
+  });
+
+  it('explains relay login rate limiting instead of showing a generic failure', async () => {
+    const fetcher = vi.fn(async () => new Response(null, {
+      status: 429,
+      headers: { 'Retry-After': '60' },
+    }));
+    await expect(loginRelaySession({ room: 'room', inviteToken: 'secret' }, fetcher))
+      .rejects.toMatchObject({
+        kind: 'request',
+        status: 429,
+        message: '登录尝试过于频繁，请稍后重试',
+      });
   });
 
   it('logs out with DELETE and accepts an already-expired session', async () => {
