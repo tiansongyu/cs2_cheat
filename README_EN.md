@@ -47,7 +47,7 @@ Step-by-step tutorials on game reverse engineering:
 | **ESP** | Box ESP, Skeleton ESP, Health Bar, Weapon Display, Distance, Snaplines, CS2 spotted-state indicator |
 | **Aimbot** | Auto Aim, FOV Adjustment, Smoothness |
 | **Triggerbot** | Auto Fire, Delay Settings |
-| **Web Radar** | Browser-based fixed north-up map, all-player position/direction and equipment, CT/T panels, C4 state and timers, reconnect support |
+| **Web Radar** | Browser-based fixed north-up map, all-player position/direction and equipment, CT/T panels, C4 state and timers, local CivetWeb, and a shared public relay |
 | **Misc** | Anti-Flash, Bomb Timer, Grenade ESP, Dropped Weapon ESP |
 | **UI** | ImGui Menu, Real-time Settings Adjustment |
 
@@ -89,6 +89,31 @@ Web Radar is a standalone browser page, not a circular overlay radar. It keeps t
 
 The LAN token prevents access by clients that do not have the link; it does not add TLS to HTTP/WS. Never port-forward the service, expose it through a public tunnel, or share it over an untrusted Wi-Fi network. Restrict any Windows Firewall rule to private networks. See the [Web Radar design](docs/web-radar-design.md) for the architecture, security boundaries, and optimization roadmap.
 
+### Production public shared Radar
+
+Public mode is an independent path and never exposes CivetWeb or an inbound port
+on the game PC. The Windows process makes an outbound-only `wss://` connection;
+Caddy provides automatic HTTPS at the server, and the Go relay provides room
+isolation, separate Producer/Viewer credentials, short-lived HttpOnly sessions,
+rate limits, and bounded latest-frame fan-out.
+
+1. Follow the [production deployment guide](deploy/public-relay/README.md) on a
+   Linux server with a domain, generate the room credentials, and start Caddy +
+   Relay.
+2. In the Windows **Public Relay** settings, enter
+   `wss://your-domain/api/v1/publish`, the room, and the Producer token, then
+   enable it.
+3. Viewers open `https://your-domain/` and enter the same room plus the separate
+   Viewer invite token. Never give the Producer token to viewers.
+
+The server does not retain snapshot history; a restart clears sessions and the
+latest frame. Local and public Radar can be enabled independently, and public
+mode does not require the embedded service. See the
+[public Relay design](docs/public-radar-relay-design.md) for the protocol,
+security model, and scaling boundary.
+The [public Radar architecture diagram](docs/public-radar-relay-architecture.html)
+shows the ports, trust boundaries, and end-to-end data flow.
+
 Web Radar and the memory-writing Anti-Flash option are disabled by default. Only opt
 into Anti-Flash for explicit offline testing:
 
@@ -115,6 +140,9 @@ cd ..
 
 # Or run all frontend/backend tests and the Windows cross-build with Docker
 docker build --target artifacts -t cs2-cheat-build .
+
+# Build the production public Relay image, including the frontend bundle
+docker build -f radar-relay/Dockerfile -t cs2-radar-relay:local .
 ```
 
 MSBuild copies an existing `web-radar/dist` into `web-radar/dist` under the binary output directory. CI and Docker build the frontend automatically; run the npm commands above before a local Visual Studio build. The map synchronization script downloads a pinned, SHA-256-verified asset set:
@@ -135,4 +163,6 @@ MIT License
 - [libsdl-org/SDL](https://github.com/libsdl-org/SDL) - SDL2 graphics library
 - [ocornut/imgui](https://github.com/ocornut/imgui) - ImGui interface library
 - [CivetWeb](https://github.com/civetweb/civetweb) - MIT-licensed embedded HTTP/WebSocket server
+- [Caddy](https://caddyserver.com/) - public edge, automatic HTTPS, and WebSocket reverse proxy
+- [gorilla/websocket](https://github.com/gorilla/websocket) - BSD-2-Clause Relay WebSocket transport
 - [awpy-data](https://github.com/pnxenopoulos/awpy-data) - map synchronization source and overview-data pipeline (see the bundled NOTICE for asset rights)

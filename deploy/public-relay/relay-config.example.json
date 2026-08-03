@@ -1,0 +1,32 @@
+{
+  "listen": "0.0.0.0:8080",
+  "publicOrigin": "https://radar.example.com",
+  "staticDir": "/srv/web-radar",
+  "trustedProxyCIDRs": [
+    "172.30.67.2/32"
+  ],
+  "sessionTTLSeconds": 3600,
+  "snapshotTTLMillis": 3000,
+  "maxSnapshotAgeMillis": 10000,
+  "maxFutureSkewMillis": 30000,
+  "producerIdleTimeoutSeconds": 30,
+  "maxSnapshotBytes": 524288,
+  "maxPublishHz": 30,
+  "publishBurst": 5,
+  "loginAttemptsPerMinute": 10,
+  "loginBurst": 5,
+  "maxTrackedIPs": 10000,
+  "maxSessions": 2048,
+  "maxViewersPerSession": 2,
+  "shutdownTimeoutSeconds": 10,
+  "rooms": [
+    {
+      "id": "team-a",
+      "producerTokenSha256": "REPLACE_WITH_EXACTLY_64_HEXADECIMAL_CHARACTERS",
+      "inviteTokenSha256": [
+        "REPLACE_WITH_EXACTLY_64_HEXADECIMAL_CHARACTERS"
+      ],
+      "maxViewers": 20
+    }
+  ]
+}

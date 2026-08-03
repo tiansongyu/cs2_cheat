@@ -3,9 +3,11 @@
 #include "imgui.h"
 #include "core/renderer/sdl_renderer.h"
 #include "core/memory/memory.hpp"
+#include "features/web_radar/public_relay_config.hpp"
 #include <Windows.h>
 #include <shellapi.h>
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -29,6 +31,11 @@ namespace menu
         bool webRadarPauseWhenUnfocused = true;
         bool webRadarIncludeSteamIds = false;
         uint16_t webRadarPort = 22006;
+        bool publicRelayEnabled = false;
+        bool publicRelayIncludeSteamIds = false;
+        std::string publicRelayUrl;
+        std::string publicRelayRoom;
+        std::string publicRelayToken;
         bool espWallCheck = true;
         bool espSkeleton = true;
         bool grenadeESP = false;
@@ -53,6 +60,11 @@ namespace menu
         int triggerbotDelay = 50;
         int triggerbotKey = 0x46;
         bool inputSuppressed = false;
+
+        [[nodiscard]] bool radarSnapshotEnabled() const noexcept
+        {
+            return webRadarEnabled || publicRelayEnabled;
+        }
     };
 
     // Current tab index
@@ -126,6 +138,15 @@ namespace menu
     inline bool webRadarIncludeSteamIds = false;
     inline int webRadarPort = 22006;
 
+    // Public Relay credentials intentionally live only in process memory and
+    // are never included in any settings persistence path. The producer token
+    // is rendered with ImGui's password mode and is never copied to status.
+    inline bool publicRelayEnabled = false;
+    inline bool publicRelayIncludeSteamIds = false;
+    inline std::array<char, 512> publicRelayUrl{};
+    inline std::array<char, 65> publicRelayRoom{};
+    inline std::array<char, 513> publicRelayToken{};
+
     struct WebRadarUiStatus
     {
         bool running = false;
@@ -148,6 +169,31 @@ namespace menu
     {
         std::lock_guard<std::mutex> lock(webRadarStatusMutex);
         return webRadarStatus;
+    }
+
+    struct PublicRelayUiStatus
+    {
+        web_radar::PublicRelayState state =
+            web_radar::PublicRelayState::disabled;
+        std::uint64_t framesSent = 0;
+        std::uint64_t replacedFrames = 0;
+        std::uint64_t reconnects = 0;
+        std::string error;
+    };
+
+    inline std::mutex publicRelayStatusMutex;
+    inline PublicRelayUiStatus publicRelayStatus;
+
+    inline void setPublicRelayStatus(PublicRelayUiStatus status)
+    {
+        std::lock_guard<std::mutex> lock(publicRelayStatusMutex);
+        publicRelayStatus = std::move(status);
+    }
+
+    inline PublicRelayUiStatus getPublicRelayStatus()
+    {
+        std::lock_guard<std::mutex> lock(publicRelayStatusMutex);
+        return publicRelayStatus;
     }
 
     // Misc Settings
@@ -184,6 +230,12 @@ namespace menu
             webRadarIncludeSteamIds;
         config.webRadarPort = static_cast<uint16_t>(
             std::clamp(webRadarPort, 1024, 65535));
+        config.publicRelayEnabled = publicRelayEnabled;
+        config.publicRelayIncludeSteamIds =
+            publicRelayIncludeSteamIds;
+        config.publicRelayUrl = publicRelayUrl.data();
+        config.publicRelayRoom = publicRelayRoom.data();
+        config.publicRelayToken = publicRelayToken.data();
         config.espWallCheck = espWallCheck;
         config.espSkeleton = espSkeleton;
         config.grenadeESP = grenadeESP;
@@ -862,7 +914,7 @@ namespace menu
         ImGui::Checkbox("Allow viewers on this LAN", &webRadarLanAccess);
 
         ImGui::Checkbox(
-            "Pause sampling when CS2 loses focus",
+            "Pause all Radar sampling when CS2 loses focus",
             &webRadarPauseWhenUnfocused);
         ImGui::Checkbox(
             "Share Steam IDs (profile links)",
@@ -918,6 +970,88 @@ namespace menu
                     "For another device, replace 127.0.0.1 in this URL with "
                     "this PC's private LAN IPv4 address.");
             }
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::TextColored(
+            ImVec4(0.330f, 0.800f, 1.000f, 1.0f),
+            "PUBLIC RELAY (OUTBOUND WSS)");
+        ImGui::TextWrapped(
+            "Publishes snapshots through an authenticated, TLS-protected "
+            "outbound connection. No inbound port or LAN mode is required.");
+        ImGui::Checkbox("Enable Public Relay", &publicRelayEnabled);
+
+        ImGui::BeginDisabled(publicRelayEnabled);
+        ImGui::InputTextWithHint(
+            "Relay WSS URL",
+            "wss://radar.example.com/api/v1/publish",
+            publicRelayUrl.data(),
+            publicRelayUrl.size(),
+            ImGuiInputTextFlags_CharsNoBlank |
+                ImGuiInputTextFlags_AutoSelectAll);
+        ImGui::InputTextWithHint(
+            "Relay room",
+            "match-room",
+            publicRelayRoom.data(),
+            publicRelayRoom.size(),
+            ImGuiInputTextFlags_CharsNoBlank |
+                ImGuiInputTextFlags_AutoSelectAll);
+        ImGui::InputTextWithHint(
+            "Producer token",
+            "Paste the producer-only token",
+            publicRelayToken.data(),
+            publicRelayToken.size(),
+            ImGuiInputTextFlags_Password |
+                ImGuiInputTextFlags_CharsNoBlank |
+                ImGuiInputTextFlags_AutoSelectAll);
+        if (ImGui::Button("Clear Relay credentials")) {
+            std::fill(publicRelayUrl.begin(), publicRelayUrl.end(), '\0');
+            std::fill(publicRelayRoom.begin(), publicRelayRoom.end(), '\0');
+            std::fill(publicRelayToken.begin(), publicRelayToken.end(), '\0');
+        }
+        ImGui::EndDisabled();
+
+        ImGui::Checkbox(
+            "Share Steam IDs through Public Relay",
+            &publicRelayIncludeSteamIds);
+        ImGui::TextWrapped(
+            "The producer token is kept in memory only and is never shown in "
+            "status or logs. Use a producer token, never a viewer token.");
+
+        const PublicRelayUiStatus relayStatus = getPublicRelayStatus();
+        const char* relayState = "DISABLED";
+        switch (relayStatus.state) {
+        case web_radar::PublicRelayState::connecting:
+            relayState = "CONNECTING";
+            break;
+        case web_radar::PublicRelayState::connected:
+            relayState = "CONNECTED";
+            break;
+        case web_radar::PublicRelayState::backoff:
+            relayState = "RETRY BACKOFF";
+            break;
+        case web_radar::PublicRelayState::retiring:
+            relayState = "STOPPING";
+            break;
+        case web_radar::PublicRelayState::failed:
+            relayState = "FAILED";
+            break;
+        case web_radar::PublicRelayState::disabled:
+            break;
+        }
+        ImGui::Text("Relay: %s", relayState);
+        ImGui::Text(
+            "Frames sent: %llu  |  Replaced: %llu  |  Reconnects: %llu",
+            static_cast<unsigned long long>(relayStatus.framesSent),
+            static_cast<unsigned long long>(relayStatus.replacedFrames),
+            static_cast<unsigned long long>(relayStatus.reconnects));
+        if (!relayStatus.error.empty()) {
+            ImGui::TextColored(
+                ImVec4(0.930f, 0.420f, 0.430f, 1.0f),
+                "Relay error: %s",
+                relayStatus.error.c_str());
         }
     }
 

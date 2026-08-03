@@ -1,0 +1,124 @@
+name: ${COMPOSE_PROJECT_NAME:-cs2-radar-public}
+
+services:
+  radar-relay:
+    image: ${RADAR_RELAY_IMAGE:-cs2-radar-relay:local}
+    build:
+      context: ../..
+      dockerfile: radar-relay/Dockerfile
+    command:
+      - serve
+      - -config
+      - /run/secrets/relay-config.json
+    user: "65532:65532"
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 1.0
+    expose:
+      - "8080"
+    secrets:
+      - source: relay_config
+        target: relay-config.json
+    networks:
+      relay_internal:
+        ipv4_address: 172.30.67.3
+    restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      test:
+        - CMD
+        - /radar-relay
+        - healthcheck
+        - -url
+        - http://127.0.0.1:8080/healthz
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: ${CADDY_IMAGE:-cs2-radar-caddy:2.11.4}
+    build:
+      context: .
+      dockerfile: Caddy.Dockerfile
+    depends_on:
+      radar-relay:
+        condition: service_healthy
+    user: "65532:65532"
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 1.0
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+      RADAR_DOMAIN: ${RADAR_DOMAIN:?set RADAR_DOMAIN in .env}
+      XDG_CONFIG_HOME: /config
+      XDG_DATA_HOME: /data
+    ports:
+      - "80:8080/tcp"
+      - "443:8443/tcp"
+    volumes:
+      - type: bind
+        source: ./Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+      - type: bind
+        source: ${CADDY_DATA_DIR:-./state/caddy-data}
+        target: /data
+      - type: bind
+        source: ${CADDY_CONFIG_DIR:-./state/caddy-config}
+        target: /config
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1700,uid=65532,gid=65532
+    networks:
+      edge: {}
+      relay_internal:
+        ipv4_address: 172.30.67.2
+    restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --spider
+        - http://127.0.0.1:9080/healthz
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+secrets:
+  relay_config:
+    file: ${RELAY_CONFIG_FILE:-./secrets/relay-config.json}
+
+networks:
+  edge:
+    driver: bridge
+  relay_internal:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.67.0/24

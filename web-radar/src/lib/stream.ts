@@ -1,3 +1,5 @@
+import type { RadarDeploymentMode } from './deployment';
+
 export type StreamStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
 interface LocationLike {
@@ -6,14 +8,25 @@ interface LocationLike {
   search: string;
 }
 
-export function deriveWebSocketUrl(location: LocationLike): string {
+export function deriveWebSocketUrl(
+  location: LocationLike,
+  mode: RadarDeploymentMode = 'embedded',
+): string {
   const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const source = new URLSearchParams(location.search);
-  const target = new URLSearchParams();
-  const token = source.get('token');
-  if (token) target.set('token', token);
-  const query = target.toString();
-  return `${scheme}//${location.host}/api/v1/stream${query ? `?${query}` : ''}`;
+  const endpoint = `${scheme}//${location.host}/api/v1/stream`;
+  if (mode === 'relay') return endpoint;
+
+  const token = new URLSearchParams(location.search).get('token');
+  if (!token) return endpoint;
+  return `${endpoint}?${new URLSearchParams({ token }).toString()}`;
+}
+
+export function isSessionRejectedCloseCode(code: number): boolean {
+  return code === 4401 || code === 4403;
+}
+
+export function shouldProbeSessionAfterClose(mode: RadarDeploymentMode, code: number): boolean {
+  return mode === 'relay' && code === 1006;
 }
 
 export function reconnectDelayMs(attempt: number, jitter = Math.random()): number {

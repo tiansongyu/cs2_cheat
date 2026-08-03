@@ -7,7 +7,10 @@ interface StatusHeaderProps {
   sequence: number | null;
   error: string | null;
   settingsOpen: boolean;
+  deploymentLabel: string;
   onToggleSettings: () => void;
+  onLogout?: () => void;
+  logoutPending: boolean;
 }
 
 const statusLabels: Record<StreamStatus, string> = {
@@ -24,7 +27,10 @@ export function StatusHeader({
   sequence,
   error,
   settingsOpen,
+  deploymentLabel,
   onToggleSettings,
+  onLogout,
+  logoutPending,
 }: StatusHeaderProps) {
   const displayStatus = status === 'connected' && stale ? '数据暂停' : statusLabels[status];
   const stateClass = status === 'connected' && !stale ? 'is-live' : 'is-warn';
@@ -54,6 +60,7 @@ export function StatusHeader({
 
       <div className="header-actions">
         {error && <span className="compact-error" title={error}>连接异常</span>}
+        <span className="deployment-label" title={deploymentLabel}>{deploymentLabel}</span>
         <button
           type="button"
           className={`icon-button ${settingsOpen ? 'is-active' : ''}`}
@@ -64,6 +71,16 @@ export function StatusHeader({
           <span aria-hidden="true">☷</span>
           <span>设置</span>
         </button>
+        {onLogout && (
+          <button
+            type="button"
+            className="icon-button logout-button"
+            onClick={onLogout}
+            disabled={logoutPending}
+          >
+            {logoutPending ? '退出中…' : '退出'}
+          </button>
+        )}
       </div>
     </header>
   );

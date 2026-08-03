@@ -1,15 +1,32 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { PlayerPanel } from './components/PlayerPanel';
 import { RadarMap } from './components/RadarMap';
+import { RelayAccessGate } from './components/RelayAccessGate';
 import { SettingsPanel } from './components/SettingsPanel';
 import { StatusHeader } from './components/StatusHeader';
 import { useAnimationClock } from './hooks/useAnimationClock';
 import { useMapManifest } from './hooks/useMapManifest';
 import { useRadarSettings } from './hooks/useRadarSettings';
 import { useRadarStream } from './hooks/useRadarStream';
+import { useRelaySession } from './hooks/useRelaySession';
+import { resolveRadarDeployment, type RadarDeploymentMode } from './lib/deployment';
 
-export default function App() {
-  const stream = useRadarStream();
+interface RadarWorkspaceProps {
+  mode: RadarDeploymentMode;
+  room: string | null;
+  onSessionRejected: () => void;
+  onLogout?: () => void;
+  logoutPending: boolean;
+}
+
+function RadarWorkspace({
+  mode,
+  room,
+  onSessionRejected,
+  onLogout,
+  logoutPending,
+}: RadarWorkspaceProps) {
+  const stream = useRadarStream({ mode, onSessionRejected });
   const maps = useMapManifest();
   const { settings, setSettings } = useRadarSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -29,7 +46,10 @@ export default function App() {
         sequence={snapshot?.seq ?? null}
         error={stream.error}
         settingsOpen={settingsOpen}
+        deploymentLabel={mode === 'relay' ? `RELAY · ${room ?? ''}` : 'LOCAL'}
         onToggleSettings={() => setSettingsOpen((value) => !value)}
+        onLogout={onLogout}
+        logoutPending={logoutPending}
       />
 
       {settingsOpen && (
@@ -73,9 +93,38 @@ export default function App() {
         <span><i className="legend-dot t" /> T</span>
         <span><i className="legend-cross">×</i> 阵亡</span>
         <span className="footer-spacer" />
+        <span>{mode === 'relay' ? '安全 Relay' : '内嵌服务'}</span>
         <span>协议 v1</span>
         <span>{players.length} 名玩家</span>
       </footer>
     </div>
+  );
+}
+
+export default function App() {
+  const mode = useMemo(() => resolveRadarDeployment(window.location), []);
+  const relay = useRelaySession(mode);
+
+  if (mode === 'relay' && relay.access.status !== 'authenticated') {
+    return (
+      <RelayAccessGate
+        access={relay.access}
+        submitting={relay.submitting}
+        actionError={relay.actionError}
+        onLogin={relay.login}
+        onRetry={relay.retry}
+      />
+    );
+  }
+
+  const room = relay.access.status === 'authenticated' ? relay.access.session.room : null;
+  return (
+    <RadarWorkspace
+      mode={mode}
+      room={room}
+      onSessionRejected={relay.invalidate}
+      onLogout={mode === 'relay' ? () => void relay.logout() : undefined}
+      logoutPending={relay.submitting}
+    />
   );
 }

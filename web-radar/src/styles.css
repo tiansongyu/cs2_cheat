@@ -184,6 +184,20 @@ button {
   gap: 8px;
 }
 
+.deployment-label {
+  max-width: 150px;
+  padding: 4px 6px;
+  overflow: hidden;
+  border: 1px solid rgba(103, 216, 155, 0.14);
+  border-radius: 4px;
+  color: #7fae92;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 8px;
+  letter-spacing: 0.05em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .compact-error {
   color: #ff9b9b;
   font-size: 11px;
@@ -206,6 +220,222 @@ button {
   border-color: rgba(255, 255, 255, 0.22);
   color: white;
   background: #192028;
+}
+
+.icon-button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.logout-button {
+  color: #d4a3a3;
+}
+
+.access-shell {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  min-width: 320px;
+  padding: 24px;
+  overflow: auto;
+  place-items: center;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+    radial-gradient(circle at 50% 15%, rgba(70, 112, 132, 0.2), transparent 40%),
+    #07090b;
+  background-size: 32px 32px, 32px 32px, auto, auto;
+}
+
+.access-card {
+  width: min(430px, 100%);
+  overflow: hidden;
+  border: 1px solid rgba(215, 230, 238, 0.14);
+  border-radius: 12px;
+  background: rgba(13, 18, 22, 0.96);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(18px);
+}
+
+.access-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 19px 22px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.access-brand > div {
+  display: flex;
+  flex-direction: column;
+}
+
+.access-brand strong {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+}
+
+.access-brand > div > span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.relay-login,
+.access-message {
+  padding: 26px 24px 24px;
+}
+
+.login-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  margin-bottom: 22px;
+}
+
+.login-heading > div {
+  min-width: 0;
+}
+
+.login-heading strong,
+.access-message strong {
+  display: block;
+  color: #e5ebef;
+  font-size: 15px;
+}
+
+.login-heading p,
+.access-message p {
+  margin: 5px 0 0;
+  color: #7f8b94;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.access-symbol {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(255, 120, 120, 0.2);
+  border-radius: 7px;
+  color: #ff9b9b;
+  background: rgba(255, 92, 92, 0.07);
+  font-size: 13px;
+}
+
+.access-symbol.is-secure {
+  color: var(--success);
+  border-color: rgba(103, 216, 155, 0.2);
+  background: rgba(103, 216, 155, 0.07);
+  font-size: 10px;
+}
+
+.relay-login label {
+  display: block;
+  margin-top: 14px;
+}
+
+.relay-login label > span {
+  display: block;
+  margin-bottom: 6px;
+  color: #aeb8bf;
+  font-size: 10px;
+}
+
+.relay-login input {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  outline: none;
+  color: #eef2f4;
+  background: #0a0e11;
+  font-size: 12px;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.relay-login input:focus {
+  border-color: rgba(103, 216, 155, 0.5);
+  box-shadow: 0 0 0 3px rgba(103, 216, 155, 0.08);
+}
+
+.relay-login input::placeholder {
+  color: #49535b;
+}
+
+.login-error {
+  margin: 12px 0 0;
+  color: #ff9b9b;
+  font-size: 10px;
+}
+
+.primary-button {
+  width: 100%;
+  margin-top: 18px;
+  padding: 10px 14px;
+  border: 1px solid rgba(103, 216, 155, 0.3);
+  border-radius: 7px;
+  color: #d7f6e4;
+  background: rgba(103, 216, 155, 0.13);
+  font-weight: 700;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.primary-button:hover:not(:disabled) {
+  border-color: rgba(103, 216, 155, 0.5);
+  background: rgba(103, 216, 155, 0.2);
+}
+
+.primary-button:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+
+.access-message {
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  text-align: center;
+}
+
+.access-message .access-symbol,
+.access-spinner {
+  margin-bottom: 14px;
+}
+
+.access-message .primary-button {
+  width: auto;
+  min-width: 120px;
+}
+
+.access-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-top-color: var(--success);
+  border-radius: 50%;
+  animation: access-spin 800ms linear infinite;
+}
+
+@keyframes access-spin {
+  to { transform: rotate(360deg); }
+}
+
+.access-card > footer {
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  color: #56616a;
+  background: rgba(0, 0, 0, 0.14);
+  font-size: 8px;
+  letter-spacing: 0.04em;
+  text-align: center;
 }
 
 .radar-layout {
@@ -1147,6 +1377,15 @@ button {
     display: none;
   }
 
+  .deployment-label {
+    display: none;
+  }
+
+  .logout-button {
+    padding-right: 7px;
+    padding-left: 7px;
+  }
+
   .radar-layout {
     display: flex;
     flex-direction: column;
@@ -1168,6 +1407,18 @@ button {
   .radar-topbar,
   .radar-frame {
     width: calc(100vw - 16px);
+  }
+}
+
+@media (max-width: 480px) {
+  .access-shell {
+    padding: 12px;
+  }
+
+  .relay-login,
+  .access-message {
+    padding-right: 18px;
+    padding-left: 18px;
   }
 }
 

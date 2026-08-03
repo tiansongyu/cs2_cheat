@@ -1,0 +1,49 @@
+{
+	admin off
+	email {$ACME_EMAIL}
+	http_port 8080
+	https_port 8443
+	servers {
+		protocols h1 h2
+	}
+}
+
+# Docker publishes these unprivileged container ports as public 80/443. Caddy
+# still advertises the normal public HTTPS port and manages certificates
+# automatically. Access logging is intentionally not enabled: Authorization,
+# Cookie headers, query strings and request bodies must never enter access logs.
+{$RADAR_DOMAIN} {
+	@internal_health path /healthz /readyz
+	respond @internal_health 404
+
+	header {
+		-Server
+		Content-Security-Policy "default-src 'self'; base-uri 'none'; connect-src 'self' wss://{$RADAR_DOMAIN}; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		Referrer-Policy "no-referrer"
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+	}
+
+	reverse_proxy radar-relay:8080 {
+		# Relay trusts X-Real-IP only from this Caddy container's fixed /32.
+		header_up X-Real-IP {remote_host}
+		health_uri /readyz
+		health_interval 10s
+		health_timeout 2s
+		transport http {
+			dial_timeout 3s
+			response_header_timeout 10s
+		}
+	}
+}
+
+# Container-local liveness endpoint for the Compose healthcheck. It is not
+# published by Docker and does not expose Relay health on the public hostname.
+http://127.0.0.1:9080 {
+	respond /healthz 200
+	respond 404
+}

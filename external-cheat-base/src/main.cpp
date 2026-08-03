@@ -2,6 +2,7 @@
 #include "features/aimbot.hpp"
 #include "core/renderer/sdl_renderer.h"
 #include "features/menu.hpp"
+#include "features/web_radar/public_relay_producer.hpp"
 #include "features/web_radar/web_radar_service.hpp"
 #include "core/game/web_radar_json.hpp"
 #include "core/diagnostics.hpp"
@@ -17,6 +18,7 @@
 #include <chrono>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -375,6 +377,276 @@ namespace
         std::string documentRoot_;
         std::string lastError_;
     };
+
+    struct AbandonedPublicRelayProducerSlot final
+    {
+        std::mutex mutex;
+        std::shared_ptr<web_radar::PublicRelayProducer> producer;
+    };
+
+    // Placement construction deliberately leaves this one-slot registry out of
+    // C++ static destruction. It is used only if the OS cannot create the
+    // detached reaper thread: retaining the producer until ExitProcess is safer
+    // than destroying it on the UI thread and entering a potentially blocking
+    // WinHTTP join. A runtime enters a permanent failed state after using it, so
+    // one process can never need more than this single slot.
+    alignas(AbandonedPublicRelayProducerSlot)
+        unsigned char abandonedPublicRelayProducerStorage[
+            sizeof(AbandonedPublicRelayProducerSlot)]{};
+    AbandonedPublicRelayProducerSlot* const
+        abandonedPublicRelayProducerSlot = ::new (
+            static_cast<void*>(abandonedPublicRelayProducerStorage))
+                AbandonedPublicRelayProducerSlot{};
+
+    void retainAbandonedPublicRelayProducer(
+        std::shared_ptr<web_radar::PublicRelayProducer> producer) noexcept
+    {
+        std::lock_guard<std::mutex> lock(
+            abandonedPublicRelayProducerSlot->mutex);
+        abandonedPublicRelayProducerSlot->producer = std::move(producer);
+    }
+
+    class PublicRelayRuntime final
+    {
+    public:
+        ~PublicRelayRuntime()
+        {
+            stop();
+        }
+
+        void sync(const menu::RuntimeConfig& config)
+        {
+            const Settings desired{
+                config.publicRelayEnabled,
+                config.publicRelayUrl,
+                config.publicRelayRoom,
+                config.publicRelayEnabled
+                    ? config.publicRelayToken
+                    : std::string{}
+            };
+            const bool settingsChanged =
+                !settings_ || *settings_ != desired;
+            if (settingsChanged) {
+                settings_ = desired;
+                if (!retirementFailed_) {
+                    lastError_.clear();
+                    beginRetirement();
+                }
+            }
+
+            consumeCompletedRetirement();
+            if (retirementFailed_ || retirement_) {
+                publishUiStatus();
+                return;
+            }
+            if (!settings_ || !settings_->enabled) {
+                publishUiStatus();
+                return;
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(producerMutex_);
+                if (producer_) {
+                    publishUiStatusLockedProducer(producer_);
+                    return;
+                }
+            }
+
+            try {
+                web_radar::PublicRelayConfig relayConfig;
+                relayConfig.endpointUrl = settings_->endpointUrl;
+                relayConfig.room = settings_->room;
+                relayConfig.token = settings_->token;
+                auto producer = std::make_shared<
+                    web_radar::PublicRelayProducer>(
+                        std::move(relayConfig));
+                const bool started = producer->start();
+                if (!started) {
+                    lastError_ = producer->status().lastError;
+                }
+                std::lock_guard<std::mutex> lock(producerMutex_);
+                producer_ = std::move(producer);
+            } catch (const std::exception& error) {
+                lastError_ = error.what();
+            }
+            publishUiStatus();
+        }
+
+        void publish(
+            const esp::GameSnapshot& snapshot,
+            const bool includeSteamIds)
+        {
+            if (!snapshot) {
+                return;
+            }
+
+            std::shared_ptr<web_radar::PublicRelayProducer> producer;
+            {
+                std::lock_guard<std::mutex> lock(producerMutex_);
+                producer = producer_;
+            }
+            if (!producer ||
+                producer->status().state ==
+                    web_radar::PublicRelayState::failed) {
+                return;
+            }
+
+            game::web_radar_json::SerializationOptions options;
+            options.includeSteamIds = includeSteamIds;
+            producer->publish(std::make_shared<const std::string>(
+                game::web_radar_json::serializeSnapshotV1(
+                    *snapshot,
+                    options)));
+        }
+
+        void stop()
+        {
+            settings_.reset();
+            consumeCompletedRetirement();
+            if (!retirementFailed_) {
+                beginRetirement();
+            }
+            publishUiStatus();
+        }
+
+    private:
+        struct Settings
+        {
+            bool enabled = false;
+            std::string endpointUrl;
+            std::string room;
+            std::string token;
+
+            bool operator==(const Settings&) const = default;
+        };
+
+        struct RetirementTicket final
+        {
+            std::atomic<bool> complete{false};
+        };
+
+        void beginRetirement()
+        {
+            std::shared_ptr<web_radar::PublicRelayProducer> producer;
+            {
+                std::lock_guard<std::mutex> lock(producerMutex_);
+                producer.swap(producer_);
+            }
+            if (!producer) {
+                return;
+            }
+
+            producer->requestStop();
+            std::unique_ptr<std::thread> reaper;
+            try {
+                const auto ticket =
+                    std::make_shared<RetirementTicket>();
+                reaper = std::make_unique<std::thread>(
+                    [producer, ticket]() mutable noexcept {
+                        producer->stop();
+                        producer.reset();
+                        ticket->complete.store(
+                            true,
+                            std::memory_order_release);
+                    });
+                try {
+                    reaper->detach();
+                } catch (...) {
+                    // A joinable std::thread terminates the process when its
+                    // destructor runs. On the exceptional detach path, leak
+                    // only that small wrapper so neither destruction nor a UI
+                    // join can occur; Windows reclaims it at process exit.
+                    static_cast<void>(reaper.release());
+                    throw;
+                }
+                reaper.reset();
+                retirement_ = ticket;
+            } catch (...) {
+                if (reaper && reaper->joinable()) {
+                    static_cast<void>(reaper.release());
+                }
+                // Never fall back to a synchronous join here. If the OS cannot
+                // create or detach the reaper, requestStop still prevents new
+                // frames and this process-lifetime slot keeps the joinable
+                // producer alive until Windows tears down the process.
+                retainAbandonedPublicRelayProducer(
+                    std::move(producer));
+                retirement_.reset();
+                retirementFailed_ = true;
+                lastError_ =
+                    "Unable to retire the previous Relay connection safely. "
+                    "Restart the program before enabling Public Relay again.";
+            }
+        }
+
+        void consumeCompletedRetirement()
+        {
+            if (!retirement_ ||
+                !retirement_->complete.load(
+                    std::memory_order_acquire)) {
+                return;
+            }
+            retirement_.reset();
+            lastError_.clear();
+        }
+
+        void publishUiStatusLockedProducer(
+            const std::shared_ptr<
+                web_radar::PublicRelayProducer>& producer)
+        {
+            menu::PublicRelayUiStatus ui;
+            const web_radar::PublicRelayStatus status =
+                producer->status();
+            ui.state = status.state;
+            ui.framesSent = status.framesSent;
+            ui.replacedFrames = status.replacedFrames;
+            ui.reconnects = status.reconnects;
+            ui.error = status.lastError.empty()
+                ? lastError_
+                : status.lastError;
+            menu::setPublicRelayStatus(std::move(ui));
+        }
+
+        void publishUiStatus()
+        {
+            menu::PublicRelayUiStatus ui;
+            ui.error = lastError_;
+            if (retirementFailed_) {
+                ui.state = web_radar::PublicRelayState::failed;
+                menu::setPublicRelayStatus(std::move(ui));
+                return;
+            }
+            if (retirement_) {
+                ui.state = web_radar::PublicRelayState::retiring;
+                menu::setPublicRelayStatus(std::move(ui));
+                return;
+            }
+            std::shared_ptr<web_radar::PublicRelayProducer> producer;
+            {
+                std::lock_guard<std::mutex> lock(producerMutex_);
+                producer = producer_;
+            }
+            if (producer) {
+                const web_radar::PublicRelayStatus status =
+                    producer->status();
+                ui.state = status.state;
+                ui.framesSent = status.framesSent;
+                ui.replacedFrames = status.replacedFrames;
+                ui.reconnects = status.reconnects;
+                if (!status.lastError.empty()) {
+                    ui.error = status.lastError;
+                }
+            }
+            menu::setPublicRelayStatus(std::move(ui));
+        }
+
+        std::mutex producerMutex_;
+        std::shared_ptr<web_radar::PublicRelayProducer> producer_;
+        std::shared_ptr<RetirementTicket> retirement_;
+        std::optional<Settings> settings_;
+        std::string lastError_;
+        bool retirementFailed_ = false;
+    };
 }
 
 int main(int argc, char* argv[])
@@ -410,6 +682,7 @@ int main(int argc, char* argv[])
 #endif
 
     WebRadarRuntime webRadar;
+    PublicRelayRuntime publicRelay;
 
     while (sdl_renderer::running)
     {
@@ -482,7 +755,8 @@ int main(int argc, char* argv[])
         // 20 Hz, and background sampling is opt-in; input features always stay
         // foreground-gated even when shared radar sampling continues.
         std::atomic<bool> dataRunning{true};
-        std::thread dataThread([&dataRunning, &webRadar]() {
+        std::thread dataThread(
+            [&dataRunning, &webRadar, &publicRelay]() {
             constexpr auto dataInterval =
                 std::chrono::microseconds(4167);
             constexpr auto radarInterval =
@@ -495,8 +769,10 @@ int main(int argc, char* argv[])
                     menu::getRuntimeConfig();
                 const bool gameForeground =
                     sdl_renderer::isGameForeground();
+                const bool radarSamplingEnabled =
+                    config.radarSnapshotEnabled();
                 const bool backgroundRadarSampling =
-                    config.webRadarEnabled &&
+                    radarSamplingEnabled &&
                     !config.webRadarPauseWhenUnfocused;
                 if (!gameForeground && !backgroundRadarSampling) {
                     if (!stateClearedWhileInactive) {
@@ -506,6 +782,11 @@ int main(int argc, char* argv[])
                             webRadar.publish(
                                 esp::getGameSnapshot(),
                                 config.webRadarIncludeSteamIds);
+                        }
+                        if (config.publicRelayEnabled) {
+                            publicRelay.publish(
+                                esp::getGameSnapshot(),
+                                config.publicRelayIncludeSteamIds);
                         }
                     }
                     std::this_thread::sleep_for(
@@ -531,13 +812,23 @@ int main(int argc, char* argv[])
 
                 const auto sampleComplete =
                     std::chrono::steady_clock::now();
-                if (config.webRadarEnabled &&
+                if (radarSamplingEnabled &&
                     sampleComplete >= nextRadarTime) {
-                    webRadar.publish(
-                        esp::getGameSnapshot(),
-                        config.webRadarIncludeSteamIds);
-                    nextRadarTime = sampleComplete + radarInterval;
-                } else if (!config.webRadarEnabled) {
+                    const esp::GameSnapshot snapshot =
+                        esp::getGameSnapshot();
+                    if (config.webRadarEnabled) {
+                        webRadar.publish(
+                            snapshot,
+                            config.webRadarIncludeSteamIds);
+                    }
+                    if (config.publicRelayEnabled) {
+                        publicRelay.publish(
+                            snapshot,
+                            config.publicRelayIncludeSteamIds);
+                    }
+                    nextRadarTime =
+                        sampleComplete + radarInterval;
+                } else if (!radarSamplingEnabled) {
                     nextRadarTime = sampleComplete;
                 }
 
@@ -562,7 +853,12 @@ int main(int argc, char* argv[])
         {
             sdl_renderer::pollEvents();
             sdl_renderer::updateWindowPosition();
-            webRadar.sync(menu::getRuntimeConfig());
+            {
+                const menu::RuntimeConfig config =
+                    menu::getRuntimeConfig();
+                webRadar.sync(config);
+                publicRelay.sync(config);
+            }
             if (!sdl_renderer::isGameVisible()) {
                 std::this_thread::sleep_for(
                     std::chrono::milliseconds(25));
@@ -584,7 +880,12 @@ int main(int argc, char* argv[])
             }
             esp::renderBombTimer();
             menu::render();
-            webRadar.sync(menu::getRuntimeConfig());
+            {
+                const menu::RuntimeConfig config =
+                    menu::getRuntimeConfig();
+                webRadar.sync(config);
+                publicRelay.sync(config);
+            }
 
             sdl_renderer::renderImGui();
             sdl_renderer::endFrame();
@@ -617,6 +918,11 @@ int main(int argc, char* argv[])
                     esp::getGameSnapshot(),
                     config.webRadarIncludeSteamIds);
             }
+            if (config.publicRelayEnabled) {
+                publicRelay.publish(
+                    esp::getGameSnapshot(),
+                    config.publicRelayIncludeSteamIds);
+            }
         }
         memory::Close();
 
@@ -629,6 +935,7 @@ int main(int argc, char* argv[])
     }
 
     webRadar.stop();
+    publicRelay.stop();
     memory::Close();
     return 0;
 }

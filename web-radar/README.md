@@ -1,6 +1,6 @@
 # Fixed Web Radar
 
-Clean-room React/Vite frontend for the embedded CivetWeb radar service. The map is always north-up; player markers rotate instead of the map.
+Clean-room React/Vite frontend for both the embedded CivetWeb service and the public Radar Relay. The map is always north-up; player markers rotate instead of the map.
 
 ## Build and verify
 
@@ -17,8 +17,11 @@ npm run build
 ## Endpoints
 
 - Page and assets are loaded from the current HTTP(S) origin.
-- The stream URL is derived as `ws(s)://<current-host>/api/v1/stream`.
-- Only the current page's `token` query parameter is forwarded to the WebSocket URL.
+- A page URL containing `token` selects embedded mode. Only that query parameter is forwarded to the embedded WebSocket URL.
+- A page URL without `token` probes `GET /api/v1/session`. A `404` is treated as an embedded link missing its access token; a `401`/`403` shows the Relay login screen.
+- Relay login sends `{room, inviteToken}` to `POST /api/v1/session`. The server returns `{authenticated:true, room, expiresAtMs}` and owns the `Secure; HttpOnly` session cookie.
+- Relay streaming always uses the query-free, same-origin `ws(s)://<current-host>/api/v1/stream`; browsers attach the session cookie during the handshake.
+- Relay logout uses `DELETE /api/v1/session`. Neither invite credentials nor session credentials are stored in `localStorage` or a URL.
 - The map manifest is loaded once from `/maps/manifest.json`.
 
 ## WebSocket v1

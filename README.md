@@ -46,7 +46,7 @@
 | **ESP** | 方框透视、骨骼透视、血条、武器显示、距离、射线、CS2 spotted 状态提示 |
 | **Aimbot** | 自动瞄准、FOV 调节、平滑度|
 | **Triggerbot** | 自动扳机、延迟设置 |
-| **Web Radar** | 浏览器固定北向全地图、全体玩家位置/朝向与装备、CT/T 面板、C4 状态与倒计时、断线重连 |
+| **Web Radar** | 浏览器固定北向全地图、全体玩家位置/朝向与装备、CT/T 面板、C4 状态与倒计时、本地 CivetWeb、多人共享公网 Relay |
 | **Misc** | 防闪光、炸弹倒计时、手雷 ESP、掉落武器 ESP |
 | **界面** | ImGui 图形菜单、实时调整所有设置 |
 
@@ -88,6 +88,26 @@ Web Radar 是独立的浏览器页面，不是圆形覆盖雷达。它始终显�
 
 LAN token 只能限制未持有链接的访问者，HTTP/WS 本身没有 TLS。不要把端口映射到公网、使用公网穿透或在不可信 Wi-Fi 上共享链接。建议 Windows 防火墙只允许专用网络。详细架构、安全边界和优化路线见 [Web Radar 设计文档](docs/web-radar-design.md)。
 
+### 正式公网共享 Radar
+
+公网模式是一条独立链路，不会把游戏电脑的 CivetWeb 或任何入站端口暴露到
+Internet。Windows 主程序只主动连接 `wss://`；公网服务器由 Caddy 提供自动
+HTTPS，再由 Go Relay 完成房间隔离、Producer/Viewer 分权、短期 HttpOnly
+会话、限流和“只保留最新帧”的有界广播。
+
+1. 按 [正式部署指南](deploy/public-relay/README.md) 在有域名的 Linux 服务器上
+   生成房间凭证并启动 Caddy + Relay。
+2. 在 Windows 菜单的 **Public Relay** 中填写
+   `wss://你的域名/api/v1/publish`、房间名和 Producer token，然后启用。
+3. 观看者打开 `https://你的域名/`，输入同一房间名和独立的 Viewer invite
+   token。不要把 Producer token 发给观看者。
+
+服务器不保存快照历史，重启会清空会话和最新帧。本地 Radar 与公网 Radar
+可以独立启停；公网模式不要求启用内嵌服务。完整协议、安全模型和扩展边界见
+[公网 Relay 设计文档](docs/public-radar-relay-design.md)。
+也可以直接打开 [公网 Radar 架构图](docs/public-radar-relay-architecture.html)
+查看端口、信任边界和完整数据流。
+
 Web Radar 和写内存的防闪光功能默认关闭。只有在明确需要离线测试防闪光时，才从命令行使用：
 
 ```powershell
@@ -113,6 +133,9 @@ cd ..
 
 # 或在安装 Docker 后一次性运行前后端测试和 Windows 交叉编译
 docker build --target artifacts -t cs2-cheat-build .
+
+# 单独构建包含前端静态文件的公网 Relay 生产镜像
+docker build -f radar-relay/Dockerfile -t cs2-radar-relay:local .
 ```
 
 MSBuild 会把已有的 `web-radar/dist` 复制到输出目录的 `web-radar/dist`。CI 与 Docker 会自动构建前端；本机使用 Visual Studio 前请执行上面的 npm 命令。地图同步脚本会下载经过 SHA-256 校验的固定版本素材：
@@ -134,4 +157,6 @@ MIT License
 - [libsdl-org/SDL](https://github.com/libsdl-org/SDL) - SDL2 图形库
 - [ocornut/imgui](https://github.com/ocornut/imgui) - ImGui 界面库
 - [CivetWeb](https://github.com/civetweb/civetweb) - MIT 许可的内嵌 HTTP/WebSocket 服务
+- [Caddy](https://caddyserver.com/) - 公网入口、自动 HTTPS 与 WebSocket 反向代理
+- [gorilla/websocket](https://github.com/gorilla/websocket) - BSD-2-Clause 许可的 Relay WebSocket 传输
 - [awpy-data](https://github.com/pnxenopoulos/awpy-data) - 地图素材同步来源与 overview 数据流水线（素材版权见随附 NOTICE）

@@ -457,7 +457,7 @@ void esp::refreshEntityCache(const menu::RuntimeConfig& config)
             entity +
                 cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
         if (!validTeam(team)) continue;
-        if (!config.webRadarEnabled &&
+        if (!config.radarSnapshotEnabled() &&
             (!pawnAlive || entity == localPlayerPawn || team == myTeam)) {
             continue;
         }
@@ -469,7 +469,7 @@ void esp::refreshEntityCache(const menu::RuntimeConfig& config)
         cp.entityIndex = pawnIndex;
         cp.team = team;
         cp.alive = pawnAlive;
-        if (config.webRadarEnabled) {
+        if (config.radarSnapshotEnabled()) {
             cp.isLocal = entity == localPlayerPawn;
             bool controllerIsLocal = false;
             if (memory::TryRead(
@@ -533,7 +533,7 @@ void esp::refreshEntityCache(const menu::RuntimeConfig& config)
         }
 
         // Read slow-changing data
-        if (config.webRadarEnabled ||
+        if (config.radarSnapshotEnabled() ||
             (config.espEnabled && config.espWeapon)) {
             cp.weaponName = "Unknown";
             const uintptr_t weaponServices = memory::Read<uintptr_t>(
@@ -552,7 +552,7 @@ void esp::refreshEntityCache(const menu::RuntimeConfig& config)
                     cp.weaponName = cp.activeWeapon->displayName;
                 }
 
-                if (config.webRadarEnabled) {
+                if (config.radarSnapshotEnabled()) {
                     RemoteWeaponVector remoteWeapons{};
                     if (memory::TryRead(
                             weaponServices +
@@ -625,7 +625,7 @@ namespace
         std::vector<CachedWorldEntity> refreshed;
         if (!config.grenadeESP &&
             !config.droppedWeaponESP &&
-            !config.webRadarEnabled) {
+            !config.radarSnapshotEnabled()) {
             cachedWorldEntities.clear();
             return;
         }
@@ -706,7 +706,7 @@ namespace
                     ownerHandle);
             }
 
-            if (config.webRadarEnabled &&
+            if (config.radarSnapshotEnabled() &&
                 name == "weapon_c4" &&
                 (ownerHandle == 0 || ownerHandle == 0xFFFFFFFF)) {
                 type = 6;
@@ -1066,7 +1066,7 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
 
     const auto updateNow = std::chrono::steady_clock::now();
     bool captureWebSnapshot = false;
-    if (!config.webRadarEnabled) {
+    if (!config.radarSnapshotEnabled()) {
         lastWebSnapshotRefresh = {};
     } else if (
         lastWebSnapshotRefresh.time_since_epoch().count() == 0 ||
@@ -1342,7 +1342,7 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
     const bool worldEnabled =
         config.grenadeESP ||
         config.droppedWeaponESP ||
-        config.webRadarEnabled;
+        config.radarSnapshotEnabled();
     if (!worldEnabled) {
         if (!cachedWorldEntities.empty() ||
             lastWorldDiscovery.time_since_epoch().count() != 0) {
@@ -1366,7 +1366,7 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
     }
 
     const bool bombSamplingEnabled =
-        config.bombTimer || config.webRadarEnabled;
+        config.bombTimer || config.radarSnapshotEnabled();
     if (!bombSamplingEnabled) {
         if (lastBombRefresh.time_since_epoch().count() != 0) {
             clearBombInfo();

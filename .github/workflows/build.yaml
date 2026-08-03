@@ -21,10 +21,14 @@ on:
       - 'external-cheat-base/**'
       - 'tests/**'
       - 'web-radar/**'
+      - 'radar-relay/**'
+      - 'deploy/public-relay/**'
+      - 'docs/public-radar-relay-design.md'
       - 'vendor/civetweb/**'
       - 'scripts/sync_web_radar_maps.py'
       - 'Dockerfile'
       - '.dockerignore'
+      - 'LICENSE'
       - '.github/workflows/build.yaml'
       - '!external-cheat-base/generated/**'
 
@@ -55,6 +59,13 @@ jobs:
           -o web_radar_model_tests
     - name: Run Web Radar model regression tests
       run: ./web_radar_model_tests
+    - name: Build and run Public Relay producer configuration tests
+      run: |
+        g++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror \
+          -Iexternal-cheat-base/src \
+          external-cheat-base/src/features/web_radar/tests/public_relay_config_tests.cpp \
+          -o public_relay_config_tests
+        ./public_relay_config_tests
     - name: Build and run embedded service smoke tests
       run: |
         mkdir -p /tmp/web-radar-smoke
@@ -100,8 +111,54 @@ jobs:
         if-no-files-found: error
         retention-days: 1
 
+  public-relay-tests:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+      with:
+        ref: ${{ inputs.source_sha || github.sha }}
+    - name: Setup Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: radar-relay/go.mod
+        cache-dependency-path: radar-relay/go.sum
+    - name: Test Radar Relay with race detector
+      working-directory: radar-relay
+      run: go test -mod=vendor -race ./...
+    - name: Vet Radar Relay
+      working-directory: radar-relay
+      run: go vet -mod=vendor ./...
+    - name: Scan Radar Relay for known Go vulnerabilities
+      working-directory: radar-relay
+      run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+    - name: Build production Radar Relay image
+      run: docker build -f radar-relay/Dockerfile -t cs2-radar-relay:ci .
+    - name: Build and verify capability-free Caddy image
+      run: |
+        docker build \
+          -f deploy/public-relay/Caddy.Dockerfile \
+          -t cs2-radar-caddy:ci \
+          deploy/public-relay
+        docker run --rm \
+          --user 65532:65532 \
+          --cap-drop ALL \
+          --security-opt no-new-privileges \
+          cs2-radar-caddy:ci caddy version
+        docker run --rm \
+          -e RADAR_DOMAIN=radar.example.com \
+          -e ACME_EMAIL=admin@example.net \
+          -v "$PWD/deploy/public-relay/Caddyfile:/etc/caddy/Caddyfile:ro" \
+          cs2-radar-caddy:ci \
+          caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+    - name: Validate public deployment configuration
+      run: |
+        RELAY_CONFIG_FILE=./relay-config.example.json docker compose \
+          --env-file deploy/public-relay/.env.example \
+          -f deploy/public-relay/compose.yaml \
+          config --quiet
+
   build:
-    needs: unit-tests
+    needs: [unit-tests, public-relay-tests]
     runs-on: windows-2022
 
     steps:

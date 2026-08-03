@@ -9,3 +9,7 @@ x64
 **/__pycache__
 web-radar/node_modules
 web-radar/dist
+deploy/public-relay/.env
+deploy/public-relay/state
+deploy/public-relay/secrets/*.json
+deploy/public-relay/secrets/*-credentials.txt

@@ -66,7 +66,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>SDL2.lib;SDL2main.lib;Ws2_32.lib;Shell32.lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>SDL2.lib;SDL2main.lib;Ws2_32.lib;Shell32.lib;Bcrypt.lib;Winhttp.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
       <Command>xcopy /Y "$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64\SDL2.dll" "$(OutDir)"&#xD;&#xA;copy /Y "$(SolutionDir)vendor\civetweb\LICENSE.md" "$(OutDir)CIVETWEB-LICENSE.md"&#xD;&#xA;if exist "$(SolutionDir)web-radar\dist\index.html" xcopy /E /I /Y "$(SolutionDir)web-radar\dist" "$(OutDir)web-radar\dist"</Command>
@@ -88,7 +88,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>false</GenerateDebugInformation>
-      <AdditionalDependencies>SDL2.lib;SDL2main.lib;Ws2_32.lib;Shell32.lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>SDL2.lib;SDL2main.lib;Ws2_32.lib;Shell32.lib;Bcrypt.lib;Winhttp.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
       <Command>xcopy /Y "$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64\SDL2.dll" "$(OutDir)"&#xD;&#xA;copy /Y "$(SolutionDir)vendor\civetweb\LICENSE.md" "$(OutDir)CIVETWEB-LICENSE.md"&#xD;&#xA;if exist "$(SolutionDir)web-radar\dist\index.html" xcopy /E /I /Y "$(SolutionDir)web-radar\dist" "$(OutDir)web-radar\dist"</Command>
@@ -109,6 +109,8 @@
     <ClInclude Include="src\features\esp.hpp" />
     <ClInclude Include="src\features\aimbot.hpp" />
     <ClInclude Include="src\features\menu.hpp" />
+    <ClInclude Include="src\features\web_radar\public_relay_config.hpp" />
+    <ClInclude Include="src\features\web_radar\public_relay_producer.hpp" />
     <ClInclude Include="src\features\web_radar\web_radar_config.hpp" />
     <ClInclude Include="src\features\web_radar\web_radar_service.hpp" />
     <ClInclude Include="src\utils\math\vector.hpp" />
@@ -126,6 +128,7 @@
   <ItemGroup>
     <ClCompile Include="src\features\esp.cpp" />
     <ClCompile Include="src\features\aimbot.cpp" />
+    <ClCompile Include="src\features\web_radar\public_relay_producer.cpp" />
     <ClCompile Include="src\features\web_radar\web_radar_service.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\core\memory\memory.cpp" />
