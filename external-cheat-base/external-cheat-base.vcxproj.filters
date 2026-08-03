@@ -27,6 +27,15 @@
     <ClInclude Include="src\core\diagnostics.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\core\game\fixed_map_radar.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\game\game_snapshot.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\game\web_radar_json.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\core\memory\game_layout.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -46,6 +55,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\features\menu.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\features\web_radar\web_radar_config.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\features\web_radar\web_radar_service.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\utils\math\vector.hpp">
@@ -75,12 +90,21 @@
     <ClInclude Include="vendor\imgui\imgui_impl_sdlrenderer2.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\vendor\civetweb\include\civetweb.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\vendor\civetweb\include\CivetServer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\features\esp.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\features\aimbot.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\features\web_radar\web_radar_service.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\main.cpp">
@@ -90,6 +114,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\core\renderer\sdl_renderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\game\web_radar_json.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="vendor\imgui\imgui.cpp">
@@ -111,6 +138,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="vendor\imgui\imgui_impl_sdlrenderer2.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\vendor\civetweb\src\CivetServer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\vendor\civetweb\src\civetweb.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

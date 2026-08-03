@@ -8,6 +8,10 @@
 #include <cmath>
 #include <algorithm>  // For std::min
 #include <chrono>
+#include <cctype>
+#include <cstring>
+#include <optional>
+#include <string_view>
 
 namespace
 {
@@ -56,11 +60,232 @@ namespace
         return team == 2 || team == 3;
     }
 
+    game::Team snapshotTeam(uint8_t team)
+    {
+        if (team == 2) {
+            return game::Team::Terrorists;
+        }
+        if (team == 3) {
+            return game::Team::CounterTerrorists;
+        }
+        if (team == 1) {
+            return game::Team::Spectator;
+        }
+        return game::Team::Unknown;
+    }
+
+    game::WeaponCategory weaponCategory(uint16_t definitionIndex)
+    {
+        switch (definitionIndex) {
+        case 1: case 2: case 3: case 4: case 30: case 32: case 36:
+        case 61: case 63: case 64:
+            return game::WeaponCategory::Pistol;
+        case 7: case 8: case 10: case 13: case 16: case 39: case 60:
+            return game::WeaponCategory::Rifle;
+        case 9: case 11: case 38: case 40:
+            return game::WeaponCategory::SniperRifle;
+        case 17: case 19: case 23: case 24: case 26: case 33: case 34:
+            return game::WeaponCategory::Smg;
+        case 25: case 27: case 29: case 35:
+            return game::WeaponCategory::Shotgun;
+        case 14: case 28:
+            return game::WeaponCategory::MachineGun;
+        case 43: case 44: case 45: case 46: case 47: case 48:
+        case 68: case 81: case 82: case 84:
+            return game::WeaponCategory::Grenade;
+        case 42: case 59: case 500: case 503: case 505: case 506:
+        case 507: case 508: case 509: case 512: case 514: case 515:
+        case 516: case 517: case 518: case 519: case 520: case 521:
+        case 522: case 523: case 525:
+            return game::WeaponCategory::Knife;
+        case 49:
+            return game::WeaponCategory::Bomb;
+        case 31: case 50: case 51: case 52: case 54: case 55:
+        case 57: case 80:
+            return game::WeaponCategory::Equipment;
+        default:
+            return game::WeaponCategory::Unknown;
+        }
+    }
+
+    std::string weaponProtocolName(uint16_t definitionIndex)
+    {
+        return "item_" + std::to_string(definitionIndex);
+    }
+
+    std::optional<game::WeaponSnapshot> readWeaponSnapshot(
+        uintptr_t entityList,
+        uint32_t weaponHandle)
+    {
+        if (!weaponHandle || weaponHandle == 0xFFFFFFFF) {
+            return std::nullopt;
+        }
+
+        const uintptr_t weaponEntity = entityAddress(
+            entityList,
+            weaponHandle & game_layout::ENTITY_HANDLE_MASK);
+        if (!weaponEntity) {
+            return std::nullopt;
+        }
+
+        const uintptr_t itemView =
+            weaponEntity +
+            cs2_dumper::schemas::client_dll::C_EconEntity::m_AttributeManager +
+            cs2_dumper::schemas::client_dll::C_AttributeContainer::m_Item;
+        uint16_t definitionIndex = 0;
+        if (!memory::TryRead(
+                itemView +
+                    cs2_dumper::schemas::client_dll::
+                        C_EconItemView::m_iItemDefinitionIndex,
+                definitionIndex) ||
+            definitionIndex == 0) {
+            return std::nullopt;
+        }
+
+        game::WeaponSnapshot weapon;
+        weapon.definitionIndex = definitionIndex;
+        weapon.name = weaponProtocolName(definitionIndex);
+        weapon.displayName = weapon_names::getWeaponName(definitionIndex);
+        weapon.category = weaponCategory(definitionIndex);
+
+        int clipAmmo = 0;
+        if (memory::TryRead(
+                weaponEntity +
+                    cs2_dumper::schemas::client_dll::
+                        C_BasePlayerWeapon::m_iClip1,
+                clipAmmo) &&
+            clipAmmo >= 0 && clipAmmo <= 1000) {
+            weapon.clipAmmo = clipAmmo;
+        }
+
+        int reserveAmmo = 0;
+        if (memory::TryRead(
+                weaponEntity +
+                    cs2_dumper::schemas::client_dll::
+                        C_BasePlayerWeapon::m_pReserveAmmo,
+                reserveAmmo) &&
+            reserveAmmo >= 0 && reserveAmmo <= 5000) {
+            weapon.reserveAmmo = reserveAmmo;
+        }
+        return weapon;
+    }
+
+    std::string readPlayerName(uintptr_t controller)
+    {
+        char name[128]{};
+        const uintptr_t sanitizedName = memory::Read<uintptr_t>(
+            controller +
+                cs2_dumper::schemas::client_dll::
+                    CCSPlayerController::m_sSanitizedPlayerName);
+        bool read = sanitizedName && memory::ReadRaw(
+            sanitizedName,
+            name,
+            sizeof(name) - 1);
+        if (!read) {
+            read = memory::ReadRaw(
+                controller +
+                    cs2_dumper::schemas::client_dll::
+                        CBasePlayerController::m_iszPlayerName,
+                name,
+                sizeof(name) - 1);
+        }
+        if (!read) {
+            return {};
+        }
+        name[sizeof(name) - 1] = '\0';
+        return std::string(name, strnlen(name, sizeof(name)));
+    }
+
+    std::string normalizeMapId(std::string value)
+    {
+        const std::size_t slash = value.find_last_of("/\\");
+        if (slash != std::string::npos) {
+            value.erase(0, slash + 1);
+        }
+        const std::size_t extension = value.find('.');
+        if (extension != std::string::npos) {
+            value.erase(extension);
+        }
+        if (value.empty() || value.size() > 64) {
+            return {};
+        }
+        for (const unsigned char character : value) {
+            if (!std::isalnum(character) &&
+                character != '_' && character != '-') {
+                return {};
+            }
+        }
+        return value;
+    }
+
+    game::MapState sampleMapState()
+    {
+        game::MapState map;
+        map.connected = true;
+
+        const uintptr_t globalVars = memory::Read<uintptr_t>(
+            esp::modBase +
+                cs2_dumper::offsets::client_dll::dwGlobalVars);
+        if (globalVars) {
+            const uintptr_t mapNamePointer = memory::Read<uintptr_t>(
+                globalVars + game_layout::GLOBAL_VARS_MAP_NAME);
+            char mapName[128]{};
+            if (mapNamePointer && memory::ReadRaw(
+                    mapNamePointer,
+                    mapName,
+                    sizeof(mapName) - 1)) {
+                map.id = normalizeMapId(std::string(
+                    mapName,
+                    strnlen(mapName, sizeof(mapName))));
+            }
+        }
+        map.displayName = map.id;
+        map.phase = game::MapPhase::Live;
+
+        const uintptr_t gameRules = memory::Read<uintptr_t>(
+            esp::modBase +
+                cs2_dumper::offsets::client_dll::dwGameRules);
+        if (gameRules) {
+            bool warmup = false;
+            bool freeze = false;
+            int rounds = 0;
+            memory::TryRead(
+                gameRules +
+                    cs2_dumper::schemas::client_dll::
+                        C_CSGameRules::m_bWarmupPeriod,
+                warmup);
+            memory::TryRead(
+                gameRules +
+                    cs2_dumper::schemas::client_dll::
+                        C_CSGameRules::m_bFreezePeriod,
+                freeze);
+            if (memory::TryRead(
+                    gameRules +
+                        cs2_dumper::schemas::client_dll::
+                            C_CSGameRules::m_totalRoundsPlayed,
+                    rounds) &&
+                rounds >= 0 && rounds < 1000) {
+                map.roundNumber = static_cast<uint32_t>(rounds + 1);
+            }
+            if (warmup) {
+                map.phase = game::MapPhase::Warmup;
+            } else if (freeze) {
+                map.phase = game::MapPhase::FreezeTime;
+            }
+        }
+        return map;
+    }
+
     int consecutiveReadFailures = 0;
     std::chrono::steady_clock::time_point lastEntityCacheRefresh{};
     std::chrono::steady_clock::time_point lastWorldDiscovery{};
     std::chrono::steady_clock::time_point lastWorldPositionRefresh{};
     std::chrono::steady_clock::time_point lastBombRefresh{};
+    std::chrono::steady_clock::time_point lastMapRefresh{};
+    std::chrono::steady_clock::time_point lastWebSnapshotRefresh{};
+    game::MapState cachedMapState{};
+    std::optional<game::WorldPosition> droppedBombPosition;
+    uint64_t snapshotSequence = 0;
 
     struct CachedWorldEntity
     {
@@ -132,6 +357,12 @@ void esp::clearRuntimeState()
     enemies = std::make_shared<const std::vector<EnemyInfo>>();
     worldEntities =
         std::make_shared<const std::vector<WorldEntityInfo>>();
+    auto disconnected = std::make_shared<game::GameSnapshot>();
+    disconnected->sequence = ++snapshotSequence;
+    disconnected->capturedAtMs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+    gameSnapshot = disconnected;
     vm = {};
     player_position = {};
     player_yaw = 0.0f;
@@ -143,6 +374,10 @@ void esp::clearRuntimeState()
     lastWorldDiscovery = {};
     lastWorldPositionRefresh = {};
     lastBombRefresh = {};
+    lastMapRefresh = {};
+    lastWebSnapshotRefresh = {};
+    cachedMapState = {};
+    droppedBombPosition.reset();
     cachedWorldEntities.clear();
 }
 
@@ -152,12 +387,23 @@ esp::EnemySnapshot esp::getEnemySnapshot()
     return enemies;
 }
 
+esp::GameSnapshot esp::getGameSnapshot()
+{
+    std::lock_guard<std::mutex> lock(dataMutex);
+    return gameSnapshot;
+}
+
 void esp::refreshEntityCache(const menu::RuntimeConfig& config)
 {
-    uintptr_t entity_list = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwEntityList);
-    if (!entity_list) { cachedPawns.clear(); return; }
+    const uintptr_t entityList = memory::Read<uintptr_t>(
+        modBase + cs2_dumper::offsets::client_dll::dwEntityList);
+    if (!entityList) {
+        cachedPawns.clear();
+        return;
+    }
 
-    uintptr_t localPlayerPawn = memory::Read<uintptr_t>(modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
+    const uintptr_t localPlayerPawn = memory::Read<uintptr_t>(
+        modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
     if (!localPlayerPawn) {
         cachedPawns.clear();
         return;
@@ -169,14 +415,21 @@ void esp::refreshEntityCache(const menu::RuntimeConfig& config)
     }
 
     std::vector<CachedPawn> newCache;
-    newCache.reserve(16);
+    newCache.reserve(32);
+
+    struct RemoteWeaponVector
+    {
+        uint32_t size = 0;
+        uint32_t padding = 0;
+        uintptr_t elements = 0;
+    };
+    static_assert(sizeof(RemoteWeaponVector) == 16);
 
     for (uint32_t i = game_layout::FIRST_PLAYER_CONTROLLER;
          i <= game_layout::LAST_PLAYER_CONTROLLER;
          ++i)
     {
-        const uintptr_t entityController =
-            entityAddress(entity_list, i);
+        const uintptr_t entityController = entityAddress(entityList, i);
         if (!entityController) continue;
 
         bool pawnAlive = false;
@@ -186,11 +439,10 @@ void esp::refreshEntityCache(const menu::RuntimeConfig& config)
                     cs2_dumper::schemas::client_dll::
                         CCSPlayerController::m_bPawnIsAlive,
                 pawnAlive) ||
-            !pawnAlive ||
             !memory::TryRead(
                 entityController +
                     cs2_dumper::schemas::client_dll::
-                        CBasePlayerController::m_hPawn,
+                        CCSPlayerController::m_hPlayerPawn,
                 pawnHandle)) {
             continue;
         }
@@ -198,12 +450,17 @@ void esp::refreshEntityCache(const menu::RuntimeConfig& config)
 
         const uint32_t pawnIndex =
             pawnHandle & game_layout::ENTITY_HANDLE_MASK;
-        const uintptr_t entity =
-            entityAddress(entity_list, pawnIndex);
-        if (!entity || entity == localPlayerPawn) continue;
+        const uintptr_t entity = entityAddress(entityList, pawnIndex);
+        if (!entity) continue;
 
-        uint8_t team = memory::Read<uint8_t>(entity + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
-        if (!validTeam(team) || team == myTeam) continue;
+        const uint8_t team = memory::Read<uint8_t>(
+            entity +
+                cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
+        if (!validTeam(team)) continue;
+        if (!config.webRadarEnabled &&
+            (!pawnAlive || entity == localPlayerPawn || team == myTeam)) {
+            continue;
+        }
 
         CachedPawn cp;
         cp.controllerAddress = entityController;
@@ -211,23 +468,122 @@ void esp::refreshEntityCache(const menu::RuntimeConfig& config)
         cp.pawnHandle = pawnHandle;
         cp.entityIndex = pawnIndex;
         cp.team = team;
+        cp.alive = pawnAlive;
+        if (config.webRadarEnabled) {
+            cp.isLocal = entity == localPlayerPawn;
+            bool controllerIsLocal = false;
+            if (memory::TryRead(
+                    entityController +
+                        cs2_dumper::schemas::client_dll::
+                            CBasePlayerController::
+                                m_bIsLocalPlayerController,
+                    controllerIsLocal)) {
+                cp.isLocal = cp.isLocal || controllerIsLocal;
+            }
+            memory::TryRead(
+                entityController +
+                    cs2_dumper::schemas::client_dll::
+                        CBasePlayerController::m_steamID,
+                cp.steamId);
+            // Keep the protocol identity independent from Steam identity.
+            // Controller slots are stable for the active session and the
+            // high bit keeps these generated IDs in a separate namespace.
+            // Steam IDs are serialized only through the explicit opt-in
+            // field below.
+            cp.playerId = game::makeOpaquePlayerId(i);
+            cp.playerName = readPlayerName(entityController);
+            if (cp.playerName.empty()) {
+                cp.playerName = "Player " + std::to_string(i);
+            }
+            memory::TryRead(
+                entityController +
+                    cs2_dumper::schemas::client_dll::
+                        CCSPlayerController::m_iCompTeammateColor,
+                cp.competitiveColor);
+            memory::TryRead(
+                entityController +
+                    cs2_dumper::schemas::client_dll::
+                        CCSPlayerController::m_iPawnArmor,
+                cp.armor);
+            cp.armor = std::clamp(cp.armor, 0, 200);
+            memory::TryRead(
+                entityController +
+                    cs2_dumper::schemas::client_dll::
+                        CCSPlayerController::m_bPawnHasHelmet,
+                cp.hasHelmet);
+            memory::TryRead(
+                entityController +
+                    cs2_dumper::schemas::client_dll::
+                        CCSPlayerController::m_bPawnHasDefuser,
+                cp.hasDefuser);
+
+            const uintptr_t moneyServices = memory::Read<uintptr_t>(
+                entityController +
+                    cs2_dumper::schemas::client_dll::
+                        CCSPlayerController::m_pInGameMoneyServices);
+            if (moneyServices) {
+                memory::TryRead(
+                    moneyServices +
+                        cs2_dumper::schemas::client_dll::
+                            CCSPlayerController_InGameMoneyServices::
+                                m_iAccount,
+                    cp.money);
+                cp.money = std::clamp(cp.money, 0, 1000000);
+            }
+        }
 
         // Read slow-changing data
-        if (config.espEnabled && config.espWeapon) {
+        if (config.webRadarEnabled ||
+            (config.espEnabled && config.espWeapon)) {
             cp.weaponName = "Unknown";
-            uintptr_t weaponServices = memory::Read<uintptr_t>(entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_pWeaponServices);
+            const uintptr_t weaponServices = memory::Read<uintptr_t>(
+                entity +
+                    cs2_dumper::schemas::client_dll::
+                        C_BasePlayerPawn::m_pWeaponServices);
             if (weaponServices) {
-                uint32_t activeWeaponHandle = memory::Read<uint32_t>(weaponServices + cs2_dumper::schemas::client_dll::CPlayer_WeaponServices::m_hActiveWeapon);
-                if (activeWeaponHandle && activeWeaponHandle != 0xFFFFFFFF) {
-                    const uint32_t weaponIndex =
-                        activeWeaponHandle &
-                        game_layout::ENTITY_HANDLE_MASK;
-                    const uintptr_t weaponEntity =
-                        entityAddress(entity_list, weaponIndex);
-                    if (weaponEntity) {
-                            uintptr_t attributeManager = weaponEntity + cs2_dumper::schemas::client_dll::C_EconEntity::m_AttributeManager;
-                            uint16_t itemDefIndex = memory::Read<uint16_t>(attributeManager + cs2_dumper::schemas::client_dll::C_AttributeContainer::m_Item + cs2_dumper::schemas::client_dll::C_EconItemView::m_iItemDefinitionIndex);
-                            cp.weaponName = weapon_names::getWeaponName(itemDefIndex);
+                const uint32_t activeWeaponHandle = memory::Read<uint32_t>(
+                    weaponServices +
+                        cs2_dumper::schemas::client_dll::
+                            CPlayer_WeaponServices::m_hActiveWeapon);
+                cp.activeWeapon = readWeaponSnapshot(
+                    entityList,
+                    activeWeaponHandle);
+                if (cp.activeWeapon) {
+                    cp.weaponName = cp.activeWeapon->displayName;
+                }
+
+                if (config.webRadarEnabled) {
+                    RemoteWeaponVector remoteWeapons{};
+                    if (memory::TryRead(
+                            weaponServices +
+                                cs2_dumper::schemas::client_dll::
+                                    CPlayer_WeaponServices::m_hMyWeapons,
+                            remoteWeapons) &&
+                        remoteWeapons.elements &&
+                        remoteWeapons.size > 0 &&
+                        remoteWeapons.size <= 32) {
+                        uint32_t handles[32]{};
+                        if (memory::ReadRaw(
+                                remoteWeapons.elements,
+                                handles,
+                                remoteWeapons.size * sizeof(uint32_t))) {
+                            cp.inventory.reserve(remoteWeapons.size);
+                            for (uint32_t index = 0;
+                                 index < remoteWeapons.size;
+                                 ++index) {
+                                auto weapon = readWeaponSnapshot(
+                                    entityList,
+                                    handles[index]);
+                                if (!weapon) {
+                                    continue;
+                                }
+                                if (weapon->category ==
+                                    game::WeaponCategory::Bomb) {
+                                    cp.hasBomb = true;
+                                }
+                                cp.inventory.push_back(std::move(*weapon));
+                            }
+                        }
                     }
                 }
             }
@@ -259,6 +615,7 @@ namespace
     void clearWorldEntities()
     {
         cachedWorldEntities.clear();
+        droppedBombPosition.reset();
         publishWorldEntities({});
     }
 
@@ -266,7 +623,9 @@ namespace
         const menu::RuntimeConfig& config)
     {
         std::vector<CachedWorldEntity> refreshed;
-        if (!config.grenadeESP && !config.droppedWeaponESP) {
+        if (!config.grenadeESP &&
+            !config.droppedWeaponESP &&
+            !config.webRadarEnabled) {
             cachedWorldEntities.clear();
             return;
         }
@@ -338,6 +697,21 @@ namespace
             const std::string name(className);
             int type = -1;
             std::string displayName;
+            uint32_t ownerHandle = 0xFFFFFFFF;
+            if (name.starts_with("weapon_")) {
+                memory::TryRead(
+                    entity +
+                        cs2_dumper::schemas::client_dll::
+                            C_BaseEntity::m_hOwnerEntity,
+                    ownerHandle);
+            }
+
+            if (config.webRadarEnabled &&
+                name == "weapon_c4" &&
+                (ownerHandle == 0 || ownerHandle == 0xFFFFFFFF)) {
+                type = 6;
+                displayName = "C4";
+            }
             if (config.grenadeESP) {
                 if (name == "smokegrenade_projectile") {
                     type = 0;
@@ -359,10 +733,6 @@ namespace
 
             if (config.droppedWeaponESP && type < 0 &&
                 name.starts_with("weapon_")) {
-                const uint32_t ownerHandle = memory::Read<uint32_t>(
-                    entity +
-                        cs2_dumper::schemas::client_dll::
-                            C_BaseEntity::m_hOwnerEntity);
                 if (ownerHandle == 0 ||
                     ownerHandle == 0xFFFFFFFF) {
                     type = 5;
@@ -387,11 +757,13 @@ namespace
     {
         std::vector<WorldEntityInfo> positioned;
         positioned.reserve(cachedWorldEntities.size());
+        std::optional<game::WorldPosition> sampledDroppedBomb;
 
         const uintptr_t entityList = memory::Read<uintptr_t>(
             esp::modBase +
                 cs2_dumper::offsets::client_dll::dwEntityList);
         if (!entityList) {
+            droppedBombPosition.reset();
             publishWorldEntities({});
             return;
         }
@@ -424,6 +796,15 @@ namespace
                 continue;
             }
 
+            if (cached.type == 6) {
+                sampledDroppedBomb = game::WorldPosition{
+                    position.x,
+                    position.y,
+                    position.z
+                };
+                continue;
+            }
+
             positioned.push_back(WorldEntityInfo{
                 position,
                 cached.type,
@@ -435,6 +816,7 @@ namespace
             });
         }
 
+        droppedBombPosition = sampledDroppedBomb;
         publishWorldEntities(std::move(positioned));
     }
 
@@ -483,7 +865,42 @@ namespace
             return;
         }
         if (!ticking) {
-            clearBombInfo();
+            BombInfo finalState{};
+            if (!memory::TryRead(
+                    plantedC4 +
+                        cs2_dumper::schemas::client_dll::
+                            C_PlantedC4::m_bHasExploded,
+                    finalState.hasExploded) ||
+                !memory::TryRead(
+                    plantedC4 +
+                        cs2_dumper::schemas::client_dll::
+                            C_PlantedC4::m_bBombDefused,
+                    finalState.isDefused) ||
+                (!finalState.hasExploded && !finalState.isDefused)) {
+                clearBombInfo();
+                return;
+            }
+
+            finalState.isPlanted = true;
+            memory::TryRead(
+                plantedC4 +
+                    cs2_dumper::schemas::client_dll::
+                        C_PlantedC4::m_nBombSite,
+                finalState.bombSite);
+            const uintptr_t sceneNode = memory::Read<uintptr_t>(
+                plantedC4 +
+                    cs2_dumper::schemas::client_dll::
+                        C_BaseEntity::m_pGameSceneNode);
+            if (sceneNode && memory::TryRead(
+                    sceneNode +
+                        cs2_dumper::schemas::client_dll::
+                            CGameSceneNode::m_vecAbsOrigin,
+                    finalState.position) &&
+                isFiniteVec3(finalState.position)) {
+                finalState.positionKnown = true;
+            }
+            finalState.sampledAtMilliseconds = GetTickCount64();
+            publishBombInfo(finalState);
             return;
         }
 
@@ -528,6 +945,19 @@ namespace
                         C_PlantedC4::m_flDefuseCountDown,
                 sampled.defuseCountDown)) {
             return;
+        }
+
+        const uintptr_t sceneNode = memory::Read<uintptr_t>(
+            plantedC4 +
+                cs2_dumper::schemas::client_dll::
+                    C_BaseEntity::m_pGameSceneNode);
+        if (sceneNode && memory::TryRead(
+                sceneNode +
+                    cs2_dumper::schemas::client_dll::
+                        CGameSceneNode::m_vecAbsOrigin,
+                sampled.position) &&
+            isFiniteVec3(sampled.position)) {
+            sampled.positionKnown = true;
         }
 
         const bool timesValid =
@@ -635,6 +1065,16 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
     }
 
     const auto updateNow = std::chrono::steady_clock::now();
+    bool captureWebSnapshot = false;
+    if (!config.webRadarEnabled) {
+        lastWebSnapshotRefresh = {};
+    } else if (
+        lastWebSnapshotRefresh.time_since_epoch().count() == 0 ||
+        updateNow - lastWebSnapshotRefresh >=
+            std::chrono::milliseconds(50)) {
+        lastWebSnapshotRefresh = updateNow;
+        captureWebSnapshot = true;
+    }
     if (cachedPawns.empty() ||
         lastEntityCacheRefresh.time_since_epoch().count() == 0 ||
         updateNow - lastEntityCacheRefresh >=
@@ -646,10 +1086,21 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
     // Fast path: only read position, health, bones, angles from cached pawns
     std::vector<EnemyInfo> buffer;
     buffer.reserve(cachedPawns.size());
+    std::vector<game::PlayerSnapshot> sampledPlayers;
+    std::optional<uint64_t> sampledLocalPlayerId;
+    std::optional<uint64_t> bombCarrierId;
+    if (captureWebSnapshot) {
+        sampledPlayers.reserve(cachedPawns.size());
+        if (lastMapRefresh.time_since_epoch().count() == 0 ||
+            updateNow - lastMapRefresh >= std::chrono::seconds(1)) {
+            lastMapRefresh = updateNow;
+            cachedMapState = sampleMapState();
+        }
+    }
 
     for (const auto& cp : cachedPawns)
     {
-        uintptr_t entity = cp.pawnAddress;
+        const uintptr_t entity = cp.pawnAddress;
 
         // A cached address is only a performance hint. Validate its owning
         // controller and live state on every high-frequency pass so an address
@@ -662,7 +1113,7 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         if (!memory::TryRead(
                 cp.controllerAddress +
                     cs2_dumper::schemas::client_dll::
-                        CBasePlayerController::m_hPawn,
+                        CCSPlayerController::m_hPlayerPawn,
                 livePawnHandle) ||
             livePawnHandle != cp.pawnHandle ||
             !memory::TryRead(
@@ -680,54 +1131,51 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
                     cs2_dumper::schemas::client_dll::
                         C_BaseEntity::m_iTeamNum,
                 liveTeam) ||
-            health <= 0 ||
             health > 200 ||
-            lifeState != 0 ||
-            liveTeam != cp.team ||
-            liveTeam == localTeam) {
+            liveTeam != cp.team) {
             continue;
         }
 
+        const bool alive = health > 0 && lifeState == 0 && cp.alive;
+
         uintptr_t gameSceneNode = 0;
         bool dormant = true;
-        if (!memory::TryRead(
+        const bool sceneNodeKnown = memory::TryRead(
                 entity +
                     cs2_dumper::schemas::client_dll::
                         C_BaseEntity::m_pGameSceneNode,
-                gameSceneNode) ||
-            !gameSceneNode ||
-            !memory::TryRead(
+                gameSceneNode) &&
+            gameSceneNode;
+        if (sceneNodeKnown) {
+            memory::TryRead(
                 gameSceneNode +
                     cs2_dumper::schemas::client_dll::
                         CGameSceneNode::m_bDormant,
-                dormant) ||
-            dormant) {
-            continue;
+                dormant);
         }
 
         vec3 feetPos{};
         vec3 vOffset{};
-        if (!memory::TryRead(
+        const bool positionKnown = memory::TryRead(
                 entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin,
                 feetPos) ||
-            !memory::TryRead(
+            (sceneNodeKnown && memory::TryRead(
+                gameSceneNode +
+                    cs2_dumper::schemas::client_dll::
+                        CGameSceneNode::m_vecAbsOrigin,
+                feetPos));
+        const bool validPosition = positionKnown && isFiniteVec3(feetPos);
+        const bool viewOffsetKnown = memory::TryRead(
                 entity + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset,
-                vOffset) ||
-            !isFiniteVec3(feetPos) ||
-            !isFiniteVec3(vOffset)) {
-            continue;
-        }
-        vec3 headPos = feetPos + vOffset;
-
-        float distance = static_cast<float>(player_distance(eyePos, feetPos));
+                vOffset) &&
+            isFiniteVec3(vOffset);
 
         float enemyYaw = 0.0f;
         float angleToPlayer = 180.0f;
         bool viewAngleKnown = false;
-        if ((config.espEnabled && config.espViewAngle) ||
-            config.radarEnabled ||
-            (config.headOffsetEnabled &&
-                config.aimbotEnabled)) {
+        if (captureWebSnapshot ||
+            (config.espEnabled && config.espViewAngle) ||
+            (config.headOffsetEnabled && config.aimbotEnabled)) {
             vec3 eyeAngles{};
             if (memory::TryRead(
                     entity +
@@ -736,14 +1184,62 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
                     eyeAngles) &&
                 isFiniteVec3(eyeAngles)) {
                 enemyYaw = eyeAngles.y;
-                angleToPlayer =
-                    calculateAngleToPlayer(
+                if (validPosition) {
+                    angleToPlayer = calculateAngleToPlayer(
                         enemyYaw,
                         feetPos,
                         eyePos);
+                }
                 viewAngleKnown = true;
             }
         }
+
+        if (captureWebSnapshot) {
+            game::PlayerSnapshot player;
+            player.id = cp.playerId;
+            if (cp.steamId != 0) {
+                player.steamId = cp.steamId;
+            }
+            player.name = cp.playerName;
+            player.team = snapshotTeam(liveTeam);
+            player.competitiveColor = cp.competitiveColor;
+            player.alive = alive;
+            player.dormant = dormant;
+            if (validPosition) {
+                player.position = game::WorldPosition{
+                    feetPos.x,
+                    feetPos.y,
+                    feetPos.z
+                };
+            }
+            player.yaw = viewAngleKnown ? enemyYaw : 0.0f;
+            player.health = alive ? health : 0;
+            player.armor = cp.armor;
+            player.money = cp.money;
+            player.hasHelmet = cp.hasHelmet;
+            player.hasDefuser = cp.hasDefuser;
+            player.hasBomb = cp.hasBomb;
+            player.activeWeapon = cp.activeWeapon;
+            player.inventory = cp.inventory;
+            if (cp.isLocal) {
+                sampledLocalPlayerId = cp.playerId;
+            }
+            if (cp.hasBomb) {
+                bombCarrierId = cp.playerId;
+            }
+            sampledPlayers.push_back(std::move(player));
+        }
+
+        if (!alive ||
+            liveTeam == localTeam ||
+            dormant ||
+            !validPosition ||
+            !viewOffsetKnown) {
+            continue;
+        }
+        vec3 headPos = feetPos + vOffset;
+
+        float distance = static_cast<float>(player_distance(eyePos, feetPos));
 
         const bool needsSpottedState =
             (config.espEnabled && config.espWallCheck) ||
@@ -844,7 +1340,9 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
     // at 60 Hz. This keeps moving grenades and countdown text smooth without
     // rescanning thousands of entity identities every frame.
     const bool worldEnabled =
-        config.grenadeESP || config.droppedWeaponESP;
+        config.grenadeESP ||
+        config.droppedWeaponESP ||
+        config.webRadarEnabled;
     if (!worldEnabled) {
         if (!cachedWorldEntities.empty() ||
             lastWorldDiscovery.time_since_epoch().count() != 0) {
@@ -867,7 +1365,9 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         }
     }
 
-    if (!config.bombTimer) {
+    const bool bombSamplingEnabled =
+        config.bombTimer || config.webRadarEnabled;
+    if (!bombSamplingEnabled) {
         if (lastBombRefresh.time_since_epoch().count() != 0) {
             clearBombInfo();
             lastBombRefresh = {};
@@ -879,6 +1379,86 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         lastBombRefresh = updateNow;
         updateBombInfo();
     }
+
+    if (captureWebSnapshot) {
+        BombInfo sampledBomb;
+        {
+            std::lock_guard<std::mutex> lock(dataMutex);
+            sampledBomb = bombInfo;
+        }
+
+        auto snapshot = std::make_shared<game::GameSnapshot>();
+        snapshot->sequence = ++snapshotSequence;
+        snapshot->capturedAtMs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+        snapshot->map = cachedMapState;
+        snapshot->map.connected = true;
+        snapshot->localPlayerId = sampledLocalPlayerId;
+        snapshot->localTeam = snapshotTeam(localTeam);
+        snapshot->players = std::move(sampledPlayers);
+
+        if (sampledBomb.isPlanted) {
+            if (sampledBomb.hasExploded) {
+                snapshot->bomb.state = game::BombState::Exploded;
+            } else if (sampledBomb.isDefused) {
+                snapshot->bomb.state = game::BombState::Defused;
+            } else {
+                snapshot->bomb.state = game::BombState::Planted;
+            }
+            snapshot->bomb.site = sampledBomb.bombSite == 1
+                ? game::BombSite::B
+                : game::BombSite::A;
+            if (sampledBomb.positionKnown) {
+                snapshot->bomb.position = game::WorldPosition{
+                    sampledBomb.position.x,
+                    sampledBomb.position.y,
+                    sampledBomb.position.z
+                };
+            }
+
+            if (!sampledBomb.hasExploded && !sampledBomb.isDefused) {
+                const float sampleAgeSeconds =
+                    sampledBomb.sampledAtMilliseconds == 0
+                        ? 0.0f
+                        : static_cast<float>(
+                            GetTickCount64() -
+                            sampledBomb.sampledAtMilliseconds) / 1000.0f;
+                const float explodeIn =
+                    sampledBomb.blowTime -
+                    sampledBomb.curtime -
+                    sampleAgeSeconds;
+                if (std::isfinite(explodeIn)) {
+                    snapshot->bomb.explodeInSeconds =
+                        std::max(0.0f, explodeIn);
+                }
+                snapshot->bomb.beingDefused = sampledBomb.isDefusing;
+                if (sampledBomb.isDefusing) {
+                    const float defuseIn =
+                        sampledBomb.defuseCountDown -
+                        sampledBomb.curtime -
+                        sampleAgeSeconds;
+                    if (std::isfinite(defuseIn)) {
+                        snapshot->bomb.defuseInSeconds =
+                            std::max(0.0f, defuseIn);
+                        snapshot->bomb.defuseWillSucceed =
+                            !snapshot->bomb.explodeInSeconds ||
+                            *snapshot->bomb.defuseInSeconds <=
+                                *snapshot->bomb.explodeInSeconds;
+                    }
+                }
+            }
+        } else if (bombCarrierId) {
+            snapshot->bomb.state = game::BombState::Carried;
+            snapshot->bomb.carrierPlayerId = bombCarrierId;
+        } else if (droppedBombPosition) {
+            snapshot->bomb.state = game::BombState::Dropped;
+            snapshot->bomb.position = droppedBombPosition;
+        }
+
+        std::lock_guard<std::mutex> lock(dataMutex);
+        gameSnapshot = std::move(snapshot);
+    }
 }
 
 void esp::render()
@@ -889,16 +1469,12 @@ void esp::render()
     EnemySnapshot snapEnemies;
     WorldEntitySnapshot snapWorldEntities;
     viewMatrix snapVm;
-    vec3 snapPlayerPos;
-    float snapPlayerYaw;
     LocalPlayerCache snapLocalPlayer;
     {
         std::lock_guard<std::mutex> lock(dataMutex);
         snapEnemies = enemies;
         snapWorldEntities = worldEntities;
         snapVm = vm;
-        snapPlayerPos = player_position;
-        snapPlayerYaw = player_yaw;
         snapLocalPlayer = localPlayer;
     }
     if (!snapEnemies) {
@@ -1328,182 +1904,6 @@ void esp::render()
                 IM_COL32(sr, sg, sb, sa), 1.5f * overlayScale()
             );
         }
-        }
-    }
-
-    // ==================== RADAR OVERLAY ====================
-    if (menu::radarEnabled) {
-
-
-        // Calculate radar center position based on screen size
-        const float scale = overlayScale();
-        float radarCenterXPx =
-            static_cast<float>(VIEWPORT_X) + VIEWPORT_W * menu::radarCenterX;
-        float radarCenterYPx =
-            static_cast<float>(VIEWPORT_Y) + VIEWPORT_H * menu::radarCenterY;
-        float radarRadiusPx = VIEWPORT_H * menu::radarRadius;
-
-        // Draw radar background (semi-transparent circle)
-        uint8_t bgR = static_cast<uint8_t>(menu::radarBgColor[0] * 255);
-        uint8_t bgG = static_cast<uint8_t>(menu::radarBgColor[1] * 255);
-        uint8_t bgB = static_cast<uint8_t>(menu::radarBgColor[2] * 255);
-        uint8_t bgA = static_cast<uint8_t>(menu::radarBgColor[3] * 255);
-        drawList->AddCircleFilled(
-            ImVec2(radarCenterXPx, radarCenterYPx),
-            radarRadiusPx,
-            IM_COL32(bgR, bgG, bgB, bgA), 32
-        );
-        // Draw radar border
-        drawList->AddCircle(
-            ImVec2(radarCenterXPx, radarCenterYPx),
-            radarRadiusPx,
-            IM_COL32(100, 100, 100, 255), 32, 2.0f * scale
-        );
-
-        // Draw player marker at center (you)
-        if (menu::radarShowCenter) {
-            uint8_t cr = static_cast<uint8_t>(menu::radarCenterColor[0] * 255);
-            uint8_t cg = static_cast<uint8_t>(menu::radarCenterColor[1] * 255);
-            uint8_t cb = static_cast<uint8_t>(menu::radarCenterColor[2] * 255);
-            uint8_t ca = static_cast<uint8_t>(menu::radarCenterColor[3] * 255);
-
-            // Draw player dot at center (1.5x size: 5 * 1.5 = 7.5)
-            float playerDotRadius = 7.5f * scale;
-            drawList->AddCircleFilled(
-                ImVec2(radarCenterXPx, radarCenterYPx),
-                playerDotRadius,
-                IM_COL32(cr, cg, cb, ca)
-            );
-
-            // Draw player direction arrow (pointing up = forward)
-            float arrowLen = 14.0f * scale;
-            float arrowOffset = playerDotRadius + 2.0f;  // Start from circle edge
-            drawList->AddTriangleFilled(
-                ImVec2(radarCenterXPx, radarCenterYPx - arrowOffset - arrowLen),  // Top point
-                ImVec2(radarCenterXPx - 6.0f * scale, radarCenterYPx - arrowOffset),      // Bottom left
-                ImVec2(radarCenterXPx + 6.0f * scale, radarCenterYPx - arrowOffset),      // Bottom right
-                IM_COL32(cr, cg, cb, ca)
-            );
-        }
-
-        // Draw enemy dots on radar
-        uint8_t er = static_cast<uint8_t>(menu::radarEnemyColor[0] * 255);
-        uint8_t eg = static_cast<uint8_t>(menu::radarEnemyColor[1] * 255);
-        uint8_t eb = static_cast<uint8_t>(menu::radarEnemyColor[2] * 255);
-        uint8_t ea = static_cast<uint8_t>(menu::radarEnemyColor[3] * 255);
-
-        // Convert player yaw to radians for rotation
-        // CS2 yaw: 0 = East, 90 = North, 180/-180 = West, -90 = South
-        // We need to rotate so that "up" on radar = player's forward direction
-        float rotationRad = (90.0f - snapPlayerYaw) * (3.14159265f / 180.0f);
-        float cosRot = std::cos(rotationRad);
-        float sinRot = std::sin(rotationRad);
-
-        for (const auto& enemy : *snapEnemies) {
-            // Calculate relative position from player to enemy (world coords)
-            float deltaX = enemy.position.x - snapPlayerPos.x;
-            float deltaY = enemy.position.y - snapPlayerPos.y;
-
-            // Rotate based on player's view direction
-            // After rotation: +Y = forward (up on radar), +X = right
-            float rotatedX = deltaX * cosRot - deltaY * sinRot;
-            float rotatedY = deltaX * sinRot + deltaY * cosRot;
-
-            // Scale the position to fit radar
-            float scaleFactor = radarRadiusPx / (2000.0f * menu::radarScale);
-
-            // Map to screen: +X = right, -rotatedY = up (since screen Y increases downward)
-            float radarX = radarCenterXPx + rotatedX * scaleFactor;
-            float radarY = radarCenterYPx - rotatedY * scaleFactor;
-
-            // Calculate distance from radar center
-            float distFromCenter = std::sqrt(
-                (radarX - radarCenterXPx) * (radarX - radarCenterXPx) +
-                (radarY - radarCenterYPx) * (radarY - radarCenterYPx)
-            );
-
-            // Only draw if within radar radius
-            if (distFromCenter <= radarRadiusPx) {
-                // Draw enemy dot (red by default) - 1.5x size (6 * 1.5 = 9)
-                float dotRadius = 9.0f * scale;
-                drawList->AddCircleFilled(
-                    ImVec2(radarX, radarY),
-                    dotRadius,
-                    IM_COL32(er, eg, eb, ea)
-                );
-
-                if (!enemy.viewAngleKnown) {
-                    continue;
-                }
-
-                // Get arrow color (white by default, separate from dot)
-                uint8_t ar = static_cast<uint8_t>(menu::radarEnemyArrowColor[0] * 255);
-                uint8_t ag = static_cast<uint8_t>(menu::radarEnemyArrowColor[1] * 255);
-                uint8_t ab = static_cast<uint8_t>(menu::radarEnemyArrowColor[2] * 255);
-                uint8_t aa = static_cast<uint8_t>(menu::radarEnemyArrowColor[3] * 255);
-
-                // Draw enemy direction arrow showing where the enemy is FACING
-                // enemy.viewYaw is the enemy's absolute facing direction in world coordinates
-                // We need to transform it to radar coordinates (relative to player's view)
-                //
-                // The radar is already rotated so that "up" = player's forward direction
-                // So we need to subtract player_yaw from enemy.viewYaw to get relative angle
-                //
-                // CS2 coordinate system:
-                //   Yaw 0 deg = East (+X direction)
-                //   Yaw 90 deg = North (+Y direction)
-                //   Yaw 180 deg = West (-X direction)
-                //   Yaw -90 deg = South (-Y direction)
-                //
-                // Screen coordinate system (after radar rotation):
-                //   0 deg = Up (player's forward)
-                //   90 deg = Right
-                //   180 deg = Down
-                //   -90 deg = Left
-                //
-                // Relative yaw = enemy.viewYaw - player_yaw
-                // Screen angle = -(relative_yaw - 90 deg) in radians
-                // This converts from CS2 yaw to screen angle where 0 deg = up
-
-                float relativeYaw = enemy.viewYaw - snapPlayerYaw;
-                // Convert to screen coordinates: screen 0 deg (up) = CS2 90 deg (north)
-                // Screen angle = 90 deg - relativeYaw, then convert to radians
-                // Negate because screen Y increases downward
-                float enemyDirRad = (90.0f - relativeYaw) * (3.14159265f / 180.0f);
-
-                // Arrow starts from edge of circle, not center (to avoid overlap)
-                float arrowLen = 12.0f * scale;
-                float arrowWidth = 6.0f * scale;
-                float arrowOffset = dotRadius + 2.0f * scale;  // Start from circle edge + small gap
-
-                // Calculate arrow direction vector (pointing where enemy is facing)
-                // cos(angle) gives X component, -sin(angle) gives Y component (screen coords)
-                float dirVecX = std::cos(enemyDirRad);
-                float dirVecY = -std::sin(enemyDirRad);
-
-                // Calculate arrow base center (at edge of circle)
-                float baseCenterX = radarX + arrowOffset * dirVecX;
-                float baseCenterY = radarY + arrowOffset * dirVecY;
-
-                // Calculate arrow tip position (extends from base)
-                float tipX = baseCenterX + arrowLen * dirVecX;
-                float tipY = baseCenterY + arrowLen * dirVecY;
-
-                // Calculate arrow base corners (perpendicular to direction)
-                // Perpendicular vector: (-dirVecY, dirVecX)
-                float baseX1 = baseCenterX - arrowWidth * (-dirVecY);
-                float baseY1 = baseCenterY - arrowWidth * dirVecX;
-                float baseX2 = baseCenterX + arrowWidth * (-dirVecY);
-                float baseY2 = baseCenterY + arrowWidth * dirVecX;
-
-                // Draw filled triangle arrow (white by default)
-                drawList->AddTriangleFilled(
-                    ImVec2(tipX, tipY),
-                    ImVec2(baseX1, baseY1),
-                    ImVec2(baseX2, baseY2),
-                    IM_COL32(ar, ag, ab, aa)
-                );
-            }
         }
     }
 

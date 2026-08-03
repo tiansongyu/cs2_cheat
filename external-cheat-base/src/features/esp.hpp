@@ -1,8 +1,10 @@
 #pragma once
 
+#include <optional>
 #include <vector>
 
 #include "core/memory/memory.hpp"
+#include "core/game/game_snapshot.hpp"
 #include "client_dll.hpp"
 #include "offsets.hpp"
 #include "utils/math/vector.hpp"
@@ -93,6 +95,8 @@ struct BombInfo
     float curtime = 0.0f;
     int bombSite = 0; // 0=A, 1=B
     uint64_t sampledAtMilliseconds = 0;
+    vec3 position{};
+    bool positionKnown = false;
 };
 
 // World entity info (grenades, dropped weapons)
@@ -112,7 +116,20 @@ struct CachedPawn
     uint32_t pawnHandle = 0;
     uint32_t entityIndex = 0;
     uint8_t team = 0;
+    uint64_t playerId = 0;
+    uint64_t steamId = 0;
+    std::string playerName;
+    int competitiveColor = -1;
+    int armor = 0;
+    int money = 0;
+    bool alive = false;
+    bool isLocal = false;
+    bool hasHelmet = false;
+    bool hasDefuser = false;
+    bool hasBomb = false;
     std::string weaponName;
+    std::optional<game::WeaponSnapshot> activeWeapon;
+    std::vector<game::WeaponSnapshot> inventory;
     float flashDuration = 0.0f;
     bool isFlashed = false;
 };
@@ -130,11 +147,14 @@ namespace esp
         std::shared_ptr<const std::vector<EnemyInfo>>;
     using WorldEntitySnapshot =
         std::shared_ptr<const std::vector<WorldEntityInfo>>;
+    using GameSnapshot = std::shared_ptr<const game::GameSnapshot>;
 
     inline EnemySnapshot enemies =
         std::make_shared<const std::vector<EnemyInfo>>();
     inline WorldEntitySnapshot worldEntities =
         std::make_shared<const std::vector<WorldEntityInfo>>();
+    inline GameSnapshot gameSnapshot =
+        std::make_shared<const game::GameSnapshot>();
     inline viewMatrix vm = {};
     inline vec3 player_position{};
     inline float player_yaw = 0.0f;
@@ -160,6 +180,7 @@ namespace esp
     void renderBombTimer();
     void clearRuntimeState();
     EnemySnapshot getEnemySnapshot();
+    GameSnapshot getGameSnapshot();
     bool w2s(const vec3& world, vec2& screen, float m[16]);
     double player_distance(const vec3& a, const vec3& b);
     float normalizeAngle(float angle);

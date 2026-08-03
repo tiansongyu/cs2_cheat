@@ -47,7 +47,7 @@ Step-by-step tutorials on game reverse engineering:
 | **ESP** | Box ESP, Skeleton ESP, Health Bar, Weapon Display, Distance, Snaplines, CS2 spotted-state indicator |
 | **Aimbot** | Auto Aim, FOV Adjustment, Smoothness |
 | **Triggerbot** | Auto Fire, Delay Settings |
-| **Radar** | Standalone Radar Overlay, Enemy Position/Direction Display |
+| **Web Radar** | Browser-based fixed north-up map, all-player position/direction and equipment, CT/T panels, C4 state and timers, reconnect support |
 | **Misc** | Anti-Flash, Bomb Timer, Grenade ESP, Dropped Weapon ESP |
 | **UI** | ImGui Menu, Real-time Settings Adjustment |
 
@@ -79,7 +79,17 @@ Step-by-step tutorials on game reverse engineering:
 2. Run the program, press **F4** to open menu
 3. Press **F4** to hide menu for normal gameplay
 
-Radar and the memory-writing Anti-Flash option are disabled by default. Only opt
+### Fixed-map Web Radar
+
+Web Radar is a standalone browser page, not a circular overlay radar. It keeps the complete map north-up while rotating only player direction markers, and supports multi-level maps, team panels, and C4 timing.
+
+1. Press **F4** and enable the embedded service under the Web Radar settings.
+2. Open the token-bearing URL shown in the menu. The default endpoint is `127.0.0.1:22006`, so only the same computer can access it.
+3. To view it on a phone or tablet on the same trusted LAN, explicitly enable LAN binding and replace `127.0.0.1` in the copied URL with this PC's private LAN IPv4 address. Keep the token in the URL.
+
+The LAN token prevents access by clients that do not have the link; it does not add TLS to HTTP/WS. Never port-forward the service, expose it through a public tunnel, or share it over an untrusted Wi-Fi network. Restrict any Windows Firewall rule to private networks. See the [Web Radar design](docs/web-radar-design.md) for the architecture, security boundaries, and optimization roadmap.
+
+Web Radar and the memory-writing Anti-Flash option are disabled by default. Only opt
 into Anti-Flash for explicit offline testing:
 
 ```powershell
@@ -93,12 +103,27 @@ Runtime diagnostics are written to `%TEMP%\cs2-esp.log`.
 ```bash
 git clone https://github.com/tiansongyu/cs2_cheat.git
 cd cs2_cheat
+# Build the fixed-map Web Radar assets first (Node.js 22.12+)
+cd web-radar
+npm ci
+npm test
+npm run build
+cd ..
+
 # Open external-cheat-base.sln with Visual Studio 2022
 # Select Release | x64 and build
 
-# Or run the CI-equivalent unit test and Windows cross-build with Docker
+# Or run all frontend/backend tests and the Windows cross-build with Docker
 docker build --target artifacts -t cs2-cheat-build .
 ```
+
+MSBuild copies an existing `web-radar/dist` into `web-radar/dist` under the binary output directory. CI and Docker build the frontend automatically; run the npm commands above before a local Visual Studio build. The map synchronization script downloads a pinned, SHA-256-verified asset set:
+
+```bash
+python3 scripts/sync_web_radar_maps.py
+```
+
+Radar images and overview coordinates are Valve property and remain subject to Valve's copyright and terms; keep `web-radar/dist/maps/NOTICE.txt` and `SOURCE.json` in every distribution. The Web Radar code is a clean-room reimplementation of the requested feature set and does not contain GPL-3.0 source from `cs2_webradar`.
 
 ## 📜 License
 
@@ -109,3 +134,5 @@ MIT License
 - [a2x/cs2-dumper](https://github.com/a2x/cs2-dumper) - Offset source
 - [libsdl-org/SDL](https://github.com/libsdl-org/SDL) - SDL2 graphics library
 - [ocornut/imgui](https://github.com/ocornut/imgui) - ImGui interface library
+- [CivetWeb](https://github.com/civetweb/civetweb) - MIT-licensed embedded HTTP/WebSocket server
+- [awpy-data](https://github.com/pnxenopoulos/awpy-data) - map synchronization source and overview-data pipeline (see the bundled NOTICE for asset rights)

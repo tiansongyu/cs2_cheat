@@ -2,14 +2,26 @@
 #include "features/aimbot.hpp"
 #include "core/renderer/sdl_renderer.h"
 #include "features/menu.hpp"
+#include "features/web_radar/web_radar_service.hpp"
+#include "core/game/web_radar_json.hpp"
 #include "core/diagnostics.hpp"
 #include <algorithm>
+#include <array>
+#include <bcrypt.h>
 #include <thread>
 #include <atomic>
+#include <filesystem>
 #include <iostream>
 #include <locale>
 #include <codecvt>
 #include <chrono>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
 #include <Windows.h>
 #include "imgui.h"
 
@@ -159,6 +171,210 @@ namespace
             L"CS2 ESP",
             MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
     }
+
+    std::string makeViewerToken()
+    {
+        static constexpr char alphabet[] =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "abcdefghijklmnopqrstuvwxyz"
+            "0123456789-_";
+        static_assert(sizeof(alphabet) - 1 == 64);
+
+        std::array<unsigned char, 32> entropy{};
+        const NTSTATUS result = BCryptGenRandom(
+            nullptr,
+            entropy.data(),
+            static_cast<ULONG>(entropy.size()),
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+        if (result != 0) {
+            throw std::runtime_error(
+                "Windows could not generate a Web Radar access token");
+        }
+
+        std::string token(32, 'A');
+        for (std::size_t index = 0; index < token.size(); ++index) {
+            token[index] = alphabet[entropy[index] & 63U];
+        }
+        return token;
+    }
+
+    std::string webRadarDocumentRoot()
+    {
+        std::array<wchar_t, 32768> executablePath{};
+        const DWORD length = GetModuleFileNameW(
+            nullptr,
+            executablePath.data(),
+            static_cast<DWORD>(executablePath.size()));
+        if (length == 0 || length >= executablePath.size()) {
+            return "web-radar/dist";
+        }
+        return (
+            std::filesystem::path(
+                std::wstring_view(executablePath.data(), length))
+                .parent_path() /
+            L"web-radar" /
+            L"dist").string();
+    }
+
+    class WebRadarRuntime final
+    {
+    public:
+        WebRadarRuntime()
+            : documentRoot_(webRadarDocumentRoot())
+        {
+        }
+
+        ~WebRadarRuntime()
+        {
+            stop();
+        }
+
+        void sync(const menu::RuntimeConfig& config)
+        {
+            const Settings desired{
+                config.webRadarEnabled,
+                config.webRadarLanAccess,
+                config.webRadarPort
+            };
+            if (settings_ && *settings_ == desired) {
+                publishUiStatus();
+                return;
+            }
+
+            const bool rotateToken =
+                desired.enabled &&
+                (!settings_ || !settings_->enabled);
+            settings_ = desired;
+            detachAndStop();
+            lastError_.clear();
+
+            if (!desired.enabled) {
+                publishUiStatus();
+                return;
+            }
+
+            try {
+                if (rotateToken || token_.empty()) {
+                    token_ = makeViewerToken();
+                }
+                web_radar::WebRadarConfig serviceConfig;
+                serviceConfig.bindAddress = desired.lanAccess
+                    ? "0.0.0.0"
+                    : "127.0.0.1";
+                serviceConfig.port = desired.port;
+                serviceConfig.documentRoot = documentRoot_;
+                serviceConfig.token = token_;
+
+                auto service = std::make_shared<
+                    web_radar::WebRadarService>(
+                        std::move(serviceConfig));
+                if (!service->start()) {
+                    lastError_ = service->status().lastError;
+                    service->stop();
+                    publishUiStatus();
+                    return;
+                }
+
+                std::lock_guard<std::mutex> lock(serviceMutex_);
+                service_ = std::move(service);
+            } catch (const std::exception& error) {
+                lastError_ = error.what();
+            }
+            publishUiStatus();
+        }
+
+        void publish(
+            const esp::GameSnapshot& snapshot,
+            bool includeSteamIds)
+        {
+            if (!snapshot) {
+                return;
+            }
+
+            std::shared_ptr<web_radar::WebRadarService> service;
+            {
+                std::lock_guard<std::mutex> lock(serviceMutex_);
+                service = service_;
+            }
+            if (!service || !service->isRunning()) {
+                return;
+            }
+
+            game::web_radar_json::SerializationOptions options;
+            options.includeSteamIds = includeSteamIds;
+            service->publish(std::make_shared<const std::string>(
+                game::web_radar_json::serializeSnapshotV1(
+                    *snapshot,
+                    options)));
+        }
+
+        void stop()
+        {
+            settings_.reset();
+            detachAndStop();
+            publishUiStatus();
+        }
+
+    private:
+        struct Settings
+        {
+            bool enabled = false;
+            bool lanAccess = false;
+            uint16_t port = 22006;
+
+            bool operator==(const Settings&) const = default;
+        };
+
+        void detachAndStop()
+        {
+            std::shared_ptr<web_radar::WebRadarService> service;
+            {
+                std::lock_guard<std::mutex> lock(serviceMutex_);
+                service.swap(service_);
+            }
+            if (service) {
+                service->stop();
+            }
+        }
+
+        void publishUiStatus()
+        {
+            menu::WebRadarUiStatus ui;
+            ui.bindAddress = settings_ && settings_->lanAccess
+                ? "0.0.0.0"
+                : "127.0.0.1";
+            ui.error = lastError_;
+
+            std::shared_ptr<web_radar::WebRadarService> service;
+            {
+                std::lock_guard<std::mutex> lock(serviceMutex_);
+                service = service_;
+            }
+            if (service) {
+                const web_radar::WebRadarStatus status = service->status();
+                ui.running = status.isRunning();
+                ui.viewers = status.viewerCount;
+                ui.bindAddress = status.bindAddress;
+                if (!status.lastError.empty()) {
+                    ui.error = status.lastError;
+                }
+                if (ui.running) {
+                    ui.viewerUrl =
+                        "http://127.0.0.1:" +
+                        std::to_string(status.port) +
+                        "/?token=" + token_;
+                }
+            }
+            menu::setWebRadarStatus(std::move(ui));
+        }
+
+        std::mutex serviceMutex_;
+        std::shared_ptr<web_radar::WebRadarService> service_;
+        std::optional<Settings> settings_;
+        std::string token_;
+        std::string documentRoot_;
+        std::string lastError_;
+    };
 }
 
 int main(int argc, char* argv[])
@@ -192,6 +408,8 @@ int main(int argc, char* argv[])
 #ifndef SHOW_CONSOLE
     FreeConsole();
 #endif
+
+    WebRadarRuntime webRadar;
 
     while (sdl_renderer::running)
     {
@@ -260,32 +478,68 @@ int main(int argc, char* argv[])
             continue;
         }
 
-        // A 240 Hz time-based worker is fast enough for high-refresh ESP while
-        // bounding RPM/CPU usage. It pauses completely when CS2 is not active.
+        // ESP/aim sampling remains 240 Hz. The browser stream is serialized at
+        // 20 Hz, and background sampling is opt-in; input features always stay
+        // foreground-gated even when shared radar sampling continues.
         std::atomic<bool> dataRunning{true};
-        std::thread dataThread([&dataRunning]() {
+        std::thread dataThread([&dataRunning, &webRadar]() {
             constexpr auto dataInterval =
                 std::chrono::microseconds(4167);
+            constexpr auto radarInterval =
+                std::chrono::milliseconds(50);
             auto nextDataTime = std::chrono::steady_clock::now();
+            auto nextRadarTime = nextDataTime;
             bool stateClearedWhileInactive = false;
             while (dataRunning.load(std::memory_order_relaxed)) {
-                if (!sdl_renderer::isGameForeground()) {
+                const menu::RuntimeConfig config =
+                    menu::getRuntimeConfig();
+                const bool gameForeground =
+                    sdl_renderer::isGameForeground();
+                const bool backgroundRadarSampling =
+                    config.webRadarEnabled &&
+                    !config.webRadarPauseWhenUnfocused;
+                if (!gameForeground && !backgroundRadarSampling) {
                     if (!stateClearedWhileInactive) {
                         esp::clearRuntimeState();
                         stateClearedWhileInactive = true;
+                        if (config.webRadarEnabled) {
+                            webRadar.publish(
+                                esp::getGameSnapshot(),
+                                config.webRadarIncludeSteamIds);
+                        }
                     }
                     std::this_thread::sleep_for(
                         std::chrono::milliseconds(25));
                     nextDataTime = std::chrono::steady_clock::now();
+                    nextRadarTime = nextDataTime;
                     continue;
                 }
                 stateClearedWhileInactive = false;
 
-                const menu::RuntimeConfig config =
-                    menu::getRuntimeConfig();
-                esp::updateEntities(config);
-                aimbot::update(config);
-                aimbot::updateTriggerbot(config);
+                menu::RuntimeConfig samplingConfig = config;
+                if (!gameForeground) {
+                    samplingConfig.antiFlash = false;
+                    samplingConfig.aimbotEnabled = false;
+                    samplingConfig.triggerbotEnabled = false;
+                    samplingConfig.espEnabled = false;
+                }
+                esp::updateEntities(samplingConfig);
+                if (gameForeground) {
+                    aimbot::update(config);
+                    aimbot::updateTriggerbot(config);
+                }
+
+                const auto sampleComplete =
+                    std::chrono::steady_clock::now();
+                if (config.webRadarEnabled &&
+                    sampleComplete >= nextRadarTime) {
+                    webRadar.publish(
+                        esp::getGameSnapshot(),
+                        config.webRadarIncludeSteamIds);
+                    nextRadarTime = sampleComplete + radarInterval;
+                } else if (!config.webRadarEnabled) {
+                    nextRadarTime = sampleComplete;
+                }
 
                 nextDataTime += dataInterval;
                 const auto now = std::chrono::steady_clock::now();
@@ -308,6 +562,7 @@ int main(int argc, char* argv[])
         {
             sdl_renderer::pollEvents();
             sdl_renderer::updateWindowPosition();
+            webRadar.sync(menu::getRuntimeConfig());
             if (!sdl_renderer::isGameVisible()) {
                 std::this_thread::sleep_for(
                     std::chrono::milliseconds(25));
@@ -321,7 +576,6 @@ int main(int argc, char* argv[])
             sdl_renderer::newFrameImGui();
 
             if (menu::espEnabled ||
-                menu::radarEnabled ||
                 menu::grenadeESP ||
                 menu::droppedWeaponESP ||
                 (menu::aimbotEnabled &&
@@ -330,6 +584,7 @@ int main(int argc, char* argv[])
             }
             esp::renderBombTimer();
             menu::render();
+            webRadar.sync(menu::getRuntimeConfig());
 
             sdl_renderer::renderImGui();
             sdl_renderer::endFrame();
@@ -354,6 +609,15 @@ int main(int argc, char* argv[])
         sdl_renderer::shutdownImGui();
         sdl_renderer::destroy();
         esp::clearRuntimeState();
+        {
+            const menu::RuntimeConfig config =
+                menu::getRuntimeConfig();
+            if (config.webRadarEnabled) {
+                webRadar.publish(
+                    esp::getGameSnapshot(),
+                    config.webRadarIncludeSteamIds);
+            }
+        }
         memory::Close();
 
         if (sdl_renderer::running) {
@@ -364,6 +628,7 @@ int main(int argc, char* argv[])
         }
     }
 
+    webRadar.stop();
     memory::Close();
     return 0;
 }

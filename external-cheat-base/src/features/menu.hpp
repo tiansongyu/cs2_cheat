@@ -4,9 +4,12 @@
 #include "core/renderer/sdl_renderer.h"
 #include "core/memory/memory.hpp"
 #include <Windows.h>
+#include <shellapi.h>
 #include <algorithm>
+#include <cstdint>
 #include <mutex>
 #include <string>
+#include <utility>
 
 namespace menu
 {
@@ -21,7 +24,11 @@ namespace menu
         bool espFlashIndicator = false;
         bool antiFlash = false;
         bool espViewAngle = true;
-        bool radarEnabled = false;
+        bool webRadarEnabled = false;
+        bool webRadarLanAccess = false;
+        bool webRadarPauseWhenUnfocused = true;
+        bool webRadarIncludeSteamIds = false;
+        uint16_t webRadarPort = 22006;
         bool espWallCheck = true;
         bool espSkeleton = true;
         bool grenadeESP = false;
@@ -111,23 +118,43 @@ namespace menu
     // 2=force 4:3 black bars, 3=force 16:10 black bars.
     inline int viewportMode = 0;
 
-    // Radar Settings
-    inline bool radarEnabled = false;        // Radar overlay - Default OFF
-    inline bool radarShowCenter = true;      // Show radar center marker (for debugging)
+    // Fixed-map Web Radar settings. The HTTP service is local-only unless the
+    // user explicitly enables LAN access; stream URLs always carry a token.
+    inline bool webRadarEnabled = false;
+    inline bool webRadarLanAccess = false;
+    inline bool webRadarPauseWhenUnfocused = true;
+    inline bool webRadarIncludeSteamIds = false;
+    inline int webRadarPort = 22006;
+
+    struct WebRadarUiStatus
+    {
+        bool running = false;
+        size_t viewers = 0;
+        std::string viewerUrl;
+        std::string bindAddress = "127.0.0.1";
+        std::string error;
+    };
+
+    inline std::mutex webRadarStatusMutex;
+    inline WebRadarUiStatus webRadarStatus;
+
+    inline void setWebRadarStatus(WebRadarUiStatus status)
+    {
+        std::lock_guard<std::mutex> lock(webRadarStatusMutex);
+        webRadarStatus = std::move(status);
+    }
+
+    inline WebRadarUiStatus getWebRadarStatus()
+    {
+        std::lock_guard<std::mutex> lock(webRadarStatusMutex);
+        return webRadarStatus;
+    }
 
     // Misc Settings
     inline bool antiFlash = false;          // Memory writes are opt-in
     inline bool bombTimer = true;            // Show bomb timer on screen
     inline bool grenadeESP = false;          // Show grenade positions
     inline bool droppedWeaponESP = false;    // Show dropped weapon positions
-    inline float radarCenterX = 0.227f;      // Radar center X - right side of game radar
-    inline float radarCenterY = 0.142f;      // Radar center Y as percentage of screen height (top area)
-    inline float radarRadius = 0.117f;       // Radar radius as percentage of screen height
-    inline float radarScale = 1.0f;          // Scale for enemy positions (adjust based on map size)
-    inline float radarBgColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };           // Opaque to avoid color-key alpha artifacts
-    inline float radarEnemyColor[4] = { 1.0f, 0.0f, 0.0f, 1.0f };        // Red - enemy dots on radar
-    inline float radarEnemyArrowColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };   // White - enemy direction arrow
-    inline float radarCenterColor[4] = { 0.0f, 1.0f, 0.0f, 1.0f };       // Green - radar center marker (you)
 
     // Menu Toggle Key
     inline int menuToggleKey = VK_F4;        // Menu toggle key (default: F4)
@@ -149,7 +176,14 @@ namespace menu
         config.espFlashIndicator = espFlashIndicator;
         config.antiFlash = antiFlash;
         config.espViewAngle = espViewAngle;
-        config.radarEnabled = radarEnabled;
+        config.webRadarEnabled = webRadarEnabled;
+        config.webRadarLanAccess = webRadarLanAccess;
+        config.webRadarPauseWhenUnfocused =
+            webRadarPauseWhenUnfocused;
+        config.webRadarIncludeSteamIds =
+            webRadarIncludeSteamIds;
+        config.webRadarPort = static_cast<uint16_t>(
+            std::clamp(webRadarPort, 1024, 65535));
         config.espWallCheck = espWallCheck;
         config.espSkeleton = espSkeleton;
         config.grenadeESP = grenadeESP;
@@ -544,7 +578,7 @@ namespace menu
         ImGui::Checkbox("Player ESP", &espEnabled);
         ImGui::Checkbox("Aimbot", &aimbotEnabled);
         ImGui::Checkbox("Triggerbot", &triggerbotEnabled);
-        ImGui::Checkbox("Radar", &radarEnabled);
+        ImGui::Checkbox("Web Radar", &webRadarEnabled);
         ImGui::Checkbox("Bomb timer", &bombTimer);
         EndCard();
         ImGui::EndGroup();
@@ -810,47 +844,80 @@ namespace menu
         }
     }
 
-    // Render Radar tab content
+    // Render the independent fixed-map browser radar controls. There is no
+    // circular in-overlay radar: all map rendering happens in the web client.
     inline void RenderRadarTab()
     {
-        ImGui::Checkbox("Enable Radar", &radarEnabled);
+        ImGui::TextColored(
+            ImVec4(0.330f, 0.800f, 1.000f, 1.0f),
+            "FIXED-MAP WEB RADAR");
+        ImGui::TextWrapped(
+            "North-up map rendering in a browser, served by the embedded "
+            "CivetWeb instance. It runs independently from the SDL overlay.");
+        ImGui::Spacing();
 
-        if (radarEnabled)
-        {
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
+        ImGui::Checkbox("Enable Web Radar", &webRadarEnabled);
+        ImGui::InputInt("HTTP port", &webRadarPort, 1, 100);
+        webRadarPort = std::clamp(webRadarPort, 1024, 65535);
+        ImGui::Checkbox("Allow viewers on this LAN", &webRadarLanAccess);
 
-            ImGui::Checkbox("Show Center Marker", &radarShowCenter);
-            if (radarShowCenter) {
-                ImGui::SameLine();
-                ImGui::ColorEdit4("##RadarCenterColor", radarCenterColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Green dot = you, arrow = your direction)");
+        ImGui::Checkbox(
+            "Pause sampling when CS2 loses focus",
+            &webRadarPauseWhenUnfocused);
+        ImGui::Checkbox(
+            "Share Steam IDs (profile links)",
+            &webRadarIncludeSteamIds);
+
+        if (webRadarLanAccess) {
+            ImGui::Spacing();
+            ImGui::TextColored(
+                ImVec4(0.930f, 0.650f, 0.260f, 1.0f),
+                "LAN MODE");
+            ImGui::TextWrapped(
+                "Anyone who receives the tokenized URL can view the stream. "
+                "Only use it on a trusted private network; do not expose the "
+                "port to the internet.");
+        }
+
+        const WebRadarUiStatus status = getWebRadarStatus();
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::Text("Service: %s", status.running ? "RUNNING" : "STOPPED");
+        ImGui::Text("Bind: %s:%d", status.bindAddress.c_str(), webRadarPort);
+        ImGui::Text("Viewers: %zu", status.viewers);
+
+        if (!status.error.empty()) {
+            ImGui::TextColored(
+                ImVec4(0.930f, 0.420f, 0.430f, 1.0f),
+                "Error: %s",
+                status.error.c_str());
+        }
+
+        const bool canOpen = status.running && !status.viewerUrl.empty();
+        ImGui::BeginDisabled(!canOpen);
+        if (ImGui::Button("Open Radar")) {
+            ShellExecuteA(
+                nullptr,
+                "open",
+                status.viewerUrl.c_str(),
+                nullptr,
+                nullptr,
+                SW_SHOWNORMAL);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Copy viewer URL")) {
+            ImGui::SetClipboardText(status.viewerUrl.c_str());
+        }
+        ImGui::EndDisabled();
+
+        if (canOpen) {
+            ImGui::TextWrapped("%s", status.viewerUrl.c_str());
+            if (webRadarLanAccess) {
+                ImGui::TextWrapped(
+                    "For another device, replace 127.0.0.1 in this URL with "
+                    "this PC's private LAN IPv4 address.");
             }
-
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Colors");
-            ImGui::Text("Background:");
-            ImGui::SameLine();
-            ImGui::ColorEdit4("##RadarBgColor", radarBgColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
-
-            ImGui::Text("Enemy Dot:");
-            ImGui::SameLine();
-            ImGui::ColorEdit4("##RadarEnemyColor", radarEnemyColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
-
-            ImGui::Text("Enemy Arrow:");
-            ImGui::SameLine();
-            ImGui::ColorEdit4("##RadarEnemyArrowColor", radarEnemyArrowColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Position & Size");
-            ImGui::SliderFloat("Center X", &radarCenterX, 0.1f, 0.9f, "%.3f");
-            ImGui::SliderFloat("Center Y", &radarCenterY, 0.1f, 0.9f, "%.3f");
-            ImGui::SliderFloat("Radius", &radarRadius, 0.05f, 0.25f, "%.3f");
-            ImGui::SliderFloat("Scale", &radarScale, 0.1f, 5.0f, "%.1f");
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Scale: smaller = see farther)");
         }
     }
 
@@ -1036,12 +1103,12 @@ namespace menu
     {
         RenderPageHeader(
             "World and match",
-            "Radar, bomb state and moving world entities.");
+            "Shared Web Radar, bomb state and moving world entities.");
         BeginCard(
             "##RadarCard",
-            "Radar",
-            "A player-relative tactical view. Disabled by default.",
-            440.0f);
+            "Web Radar",
+            "A fixed north-up browser map served by embedded CivetWeb.",
+            650.0f);
         RenderRadarTab();
         EndCard();
         ImGui::Spacing();
@@ -1206,7 +1273,7 @@ namespace menu
         NavigationButton("Overview", 0, navigationSize);
         NavigationButton("Combat", 1, navigationSize);
         NavigationButton("Player visuals", 2, navigationSize);
-        NavigationButton("World & radar", 3, navigationSize);
+        NavigationButton("World & Web Radar", 3, navigationSize);
         NavigationButton("System", 4, navigationSize);
 
         const float footerHeight = 104.0f * dpiScale;

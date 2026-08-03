@@ -23,6 +23,9 @@ namespace game_layout
     constexpr uintptr_t BONE_ARRAY_IN_MODEL_STATE = 0x80;
     constexpr size_t BONE_STRIDE = 0x20;
     constexpr uintptr_t GLOBAL_VARS_CURRENT_TIME = 0x2C;
+    // CGlobalVarsBase::mapname is not emitted by cs2-dumper. Keep this
+    // pointer offset isolated and validate the pointed-to string before use.
+    constexpr uintptr_t GLOBAL_VARS_MAP_NAME = 0x188;
 
     constexpr uintptr_t spottedFlagOffset()
     {

@@ -1,0 +1,225 @@
+{
+  "version": 1,
+  "source": {
+    "project": "pnxenopoulos/awpy-data",
+    "release": "2000879"
+  },
+  "maps": [
+    {
+      "id": "ar_baggage",
+      "name": "Baggage",
+      "origin": {
+        "x": -1316.0,
+        "y": 1288.0
+      },
+      "scale": 2.539062,
+      "image": "/maps/ar_baggage/radar.png",
+      "levels": [
+        {
+          "id": "default",
+          "minZ": -5.0,
+          "maxZ": 10000.0,
+          "image": "/maps/ar_baggage/radar.png"
+        },
+        {
+          "id": "lower",
+          "minZ": -10000.0,
+          "maxZ": -5.0,
+          "image": "/maps/ar_baggage/radar_lower.png"
+        }
+      ]
+    },
+    {
+      "id": "ar_shoots",
+      "name": "Shoots",
+      "origin": {
+        "x": -1368.0,
+        "y": 1952.0
+      },
+      "scale": 2.6875,
+      "image": "/maps/ar_shoots/radar.png"
+    },
+    {
+      "id": "ar_shoots_night",
+      "name": "Shoots Night",
+      "origin": {
+        "x": -1368.0,
+        "y": 1952.0
+      },
+      "scale": 2.6875,
+      "image": "/maps/ar_shoots_night/radar.png"
+    },
+    {
+      "id": "cs_italy",
+      "name": "Italy",
+      "origin": {
+        "x": -2647.0,
+        "y": 2592.0
+      },
+      "scale": 4.6,
+      "image": "/maps/cs_italy/radar.png"
+    },
+    {
+      "id": "cs_office",
+      "name": "Office",
+      "origin": {
+        "x": -1838.0,
+        "y": 1858.0
+      },
+      "scale": 4.1,
+      "image": "/maps/cs_office/radar.png"
+    },
+    {
+      "id": "de_ancient",
+      "name": "Ancient",
+      "origin": {
+        "x": -2953.0,
+        "y": 2164.0
+      },
+      "scale": 5.0,
+      "image": "/maps/de_ancient/radar.png"
+    },
+    {
+      "id": "de_ancient_night",
+      "name": "Ancient Night",
+      "origin": {
+        "x": -2953.0,
+        "y": 2164.0
+      },
+      "scale": 5.0,
+      "image": "/maps/de_ancient_night/radar.png"
+    },
+    {
+      "id": "de_anubis",
+      "name": "Anubis",
+      "origin": {
+        "x": -2796.0,
+        "y": 3328.0
+      },
+      "scale": 5.22,
+      "image": "/maps/de_anubis/radar.png"
+    },
+    {
+      "id": "de_cache",
+      "name": "Cache",
+      "origin": {
+        "x": -2000.0,
+        "y": 3250.0
+      },
+      "scale": 5.5,
+      "image": "/maps/de_cache/radar.png"
+    },
+    {
+      "id": "de_dust2",
+      "name": "Dust2",
+      "origin": {
+        "x": -2476.0,
+        "y": 3239.0
+      },
+      "scale": 4.4,
+      "image": "/maps/de_dust2/radar.png"
+    },
+    {
+      "id": "de_inferno",
+      "name": "Inferno",
+      "origin": {
+        "x": -2087.0,
+        "y": 3870.0
+      },
+      "scale": 4.9,
+      "image": "/maps/de_inferno/radar.png"
+    },
+    {
+      "id": "de_mirage",
+      "name": "Mirage",
+      "origin": {
+        "x": -3230.0,
+        "y": 1713.0
+      },
+      "scale": 5.0,
+      "image": "/maps/de_mirage/radar.png"
+    },
+    {
+      "id": "de_nuke",
+      "name": "Nuke",
+      "origin": {
+        "x": -3453.0,
+        "y": 2887.0
+      },
+      "scale": 7.0,
+      "image": "/maps/de_nuke/radar.png",
+      "levels": [
+        {
+          "id": "default",
+          "minZ": -495.0,
+          "maxZ": 10000.0,
+          "image": "/maps/de_nuke/radar.png"
+        },
+        {
+          "id": "lower",
+          "minZ": -10000.0,
+          "maxZ": -495.0,
+          "image": "/maps/de_nuke/radar_lower.png"
+        }
+      ]
+    },
+    {
+      "id": "de_overpass",
+      "name": "Overpass",
+      "origin": {
+        "x": -4831.0,
+        "y": 1781.0
+      },
+      "scale": 5.2,
+      "image": "/maps/de_overpass/radar.png"
+    },
+    {
+      "id": "de_train",
+      "name": "Train",
+      "origin": {
+        "x": -2308.0,
+        "y": 2078.0
+      },
+      "scale": 4.082077,
+      "image": "/maps/de_train/radar.png",
+      "levels": [
+        {
+          "id": "default",
+          "minZ": -50.0,
+          "maxZ": 20000.0,
+          "image": "/maps/de_train/radar.png"
+        },
+        {
+          "id": "lower",
+          "minZ": -5000.0,
+          "maxZ": -50.0,
+          "image": "/maps/de_train/radar_lower.png"
+        }
+      ]
+    },
+    {
+      "id": "de_vertigo",
+      "name": "Vertigo",
+      "origin": {
+        "x": -3168.0,
+        "y": 1762.0
+      },
+      "scale": 4.0,
+      "image": "/maps/de_vertigo/radar.png",
+      "levels": [
+        {
+          "id": "default",
+          "minZ": 11700.0,
+          "maxZ": 20000.0,
+          "image": "/maps/de_vertigo/radar.png"
+        },
+        {
+          "id": "lower",
+          "minZ": -10000.0,
+          "maxZ": 11700.0,
+          "image": "/maps/de_vertigo/radar_lower.png"
+        }
+      ]
+    }
+  ]
+}

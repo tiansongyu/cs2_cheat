@@ -20,7 +20,11 @@ on:
     paths:
       - 'external-cheat-base/**'
       - 'tests/**'
+      - 'web-radar/**'
+      - 'vendor/civetweb/**'
+      - 'scripts/sync_web_radar_maps.py'
       - 'Dockerfile'
+      - '.dockerignore'
       - '.github/workflows/build.yaml'
       - '!external-cheat-base/generated/**'
 
@@ -42,6 +46,59 @@ jobs:
           -o viewport_math_tests
     - name: Run viewport regression tests
       run: ./viewport_math_tests
+    - name: Build Web Radar model regression tests
+      run: |
+        g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+          -Iexternal-cheat-base/src \
+          tests/web_radar_model_tests.cpp \
+          external-cheat-base/src/core/game/web_radar_json.cpp \
+          -o web_radar_model_tests
+    - name: Run Web Radar model regression tests
+      run: ./web_radar_model_tests
+    - name: Build and run embedded service smoke tests
+      run: |
+        mkdir -p /tmp/web-radar-smoke
+        gcc -std=c11 -O2 \
+          -DNO_SSL -DNO_CGI -DUSE_WEBSOCKET -DUSE_IPV6 \
+          -Ivendor/civetweb/include \
+          -c vendor/civetweb/src/civetweb.c \
+          -o /tmp/web-radar-smoke/civetweb.o
+        g++ -std=c++20 -O2 \
+          -DNO_SSL -DNO_CGI -DUSE_WEBSOCKET -DUSE_IPV6 \
+          -Ivendor/civetweb/include \
+          -c vendor/civetweb/src/CivetServer.cpp \
+          -o /tmp/web-radar-smoke/CivetServer.o
+        g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+          -DNO_SSL -DNO_CGI -DUSE_WEBSOCKET -DUSE_IPV6 \
+          -Ivendor/civetweb/include \
+          -Iexternal-cheat-base/src \
+          -Iexternal-cheat-base/src/features/web_radar \
+          external-cheat-base/src/features/web_radar/tests/web_radar_service_smoke_tests.cpp \
+          external-cheat-base/src/features/web_radar/web_radar_service.cpp \
+          /tmp/web-radar-smoke/civetweb.o \
+          /tmp/web-radar-smoke/CivetServer.o \
+          -pthread -ldl \
+          -o /tmp/web-radar-smoke/web_radar_service_smoke_tests
+        /tmp/web-radar-smoke/web_radar_service_smoke_tests
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: npm
+        cache-dependency-path: web-radar/package-lock.json
+    - name: Test and build Web Radar frontend
+      working-directory: web-radar
+      run: |
+        npm ci
+        npm test
+        npm run build
+    - name: Upload Web Radar static bundle
+      uses: actions/upload-artifact@v4
+      with:
+        name: web-radar-static
+        path: web-radar/dist
+        if-no-files-found: error
+        retention-days: 1
 
   build:
     needs: unit-tests
@@ -52,6 +109,12 @@ jobs:
       with:
         ref: ${{ inputs.source_sha || github.sha }}
 
+    - name: Download Web Radar static bundle
+      uses: actions/download-artifact@v4
+      with:
+        name: web-radar-static
+        path: web-radar/dist
+
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v3
 
@@ -59,6 +122,22 @@ jobs:
       shell: cmd
       run: |
         msbuild external-cheat-base.sln /p:Configuration=Release /p:Platform=x64
+
+    - name: Verify release layout
+      shell: pwsh
+      run: |
+        $required = @(
+          "x64/Release/external-cheat-base.exe",
+          "x64/Release/SDL2.dll",
+          "x64/Release/web-radar/dist/index.html",
+          "x64/Release/web-radar/dist/maps/manifest.json",
+          "x64/Release/CIVETWEB-LICENSE.md"
+        )
+        foreach ($path in $required) {
+          if (-not (Test-Path $path)) {
+            throw "Missing release artifact: $path"
+          }
+        }
 
     - name: Compress Release Artifacts
       run: |

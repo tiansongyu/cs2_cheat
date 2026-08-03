@@ -46,11 +46,11 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)external-cheat-base\vendor\SDL2\include;$(SolutionDir)external-cheat-base\vendor\imgui;$(SolutionDir)external-cheat-base\src;$(SolutionDir)external-cheat-base\src\core;$(SolutionDir)external-cheat-base\src\features;$(SolutionDir)external-cheat-base\src\utils;$(SolutionDir)external-cheat-base\generated</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)external-cheat-base\vendor\SDL2\include;$(SolutionDir)external-cheat-base\vendor\imgui;$(SolutionDir)vendor\civetweb\include;$(SolutionDir)external-cheat-base\src;$(SolutionDir)external-cheat-base\src\core;$(SolutionDir)external-cheat-base\src\features;$(SolutionDir)external-cheat-base\src\utils;$(SolutionDir)external-cheat-base\generated</IncludePath>
     <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)external-cheat-base\vendor\SDL2\include;$(SolutionDir)external-cheat-base\vendor\imgui;$(SolutionDir)external-cheat-base\src;$(SolutionDir)external-cheat-base\src\core;$(SolutionDir)external-cheat-base\src\features;$(SolutionDir)external-cheat-base\src\utils;$(SolutionDir)external-cheat-base\generated</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)external-cheat-base\vendor\SDL2\include;$(SolutionDir)external-cheat-base\vendor\imgui;$(SolutionDir)vendor\civetweb\include;$(SolutionDir)external-cheat-base\src;$(SolutionDir)external-cheat-base\src\core;$(SolutionDir)external-cheat-base\src\features;$(SolutionDir)external-cheat-base\src\utils;$(SolutionDir)external-cheat-base\generated</IncludePath>
     <LibraryPath>$(WindowsSDK_LibraryPath_x64);$(VC_LibraryPath_x64);$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64</LibraryPath>
     <ExecutablePath>$(VC_ExecutablePath_x64);$(CommonExecutablePath)</ExecutablePath>
   </PropertyGroup>
@@ -58,7 +58,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;NOMINMAX;USE_WEBSOCKET;USE_IPV6;NO_SSL;NO_CGI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
@@ -66,10 +66,10 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>SDL2.lib;SDL2main.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>SDL2.lib;SDL2main.lib;Ws2_32.lib;Shell32.lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy /Y "$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64\SDL2.dll" "$(OutDir)"</Command>
+      <Command>xcopy /Y "$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64\SDL2.dll" "$(OutDir)"&#xD;&#xA;copy /Y "$(SolutionDir)vendor\civetweb\LICENSE.md" "$(OutDir)CIVETWEB-LICENSE.md"&#xD;&#xA;if exist "$(SolutionDir)web-radar\dist\index.html" xcopy /E /I /Y "$(SolutionDir)web-radar\dist" "$(OutDir)web-radar\dist"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -78,7 +78,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;NOMINMAX;USE_WEBSOCKET;USE_IPV6;NO_SSL;NO_CGI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
@@ -88,10 +88,10 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>false</GenerateDebugInformation>
-      <AdditionalDependencies>SDL2.lib;SDL2main.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>SDL2.lib;SDL2main.lib;Ws2_32.lib;Shell32.lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy /Y "$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64\SDL2.dll" "$(OutDir)"</Command>
+      <Command>xcopy /Y "$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64\SDL2.dll" "$(OutDir)"&#xD;&#xA;copy /Y "$(SolutionDir)vendor\civetweb\LICENSE.md" "$(OutDir)CIVETWEB-LICENSE.md"&#xD;&#xA;if exist "$(SolutionDir)web-radar\dist\index.html" xcopy /E /I /Y "$(SolutionDir)web-radar\dist" "$(OutDir)web-radar\dist"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -99,6 +99,9 @@
     <ClInclude Include="generated\client_dll.hpp" />
     <ClInclude Include="generated\offsets.hpp" />
     <ClInclude Include="src\core\diagnostics.hpp" />
+    <ClInclude Include="src\core\game\fixed_map_radar.hpp" />
+    <ClInclude Include="src\core\game\game_snapshot.hpp" />
+    <ClInclude Include="src\core\game\web_radar_json.hpp" />
     <ClInclude Include="src\core\memory\game_layout.hpp" />
     <ClInclude Include="src\core\memory\memory.hpp" />
     <ClInclude Include="src\core\renderer\sdl_renderer.h" />
@@ -106,6 +109,8 @@
     <ClInclude Include="src\features\esp.hpp" />
     <ClInclude Include="src\features\aimbot.hpp" />
     <ClInclude Include="src\features\menu.hpp" />
+    <ClInclude Include="src\features\web_radar\web_radar_config.hpp" />
+    <ClInclude Include="src\features\web_radar\web_radar_service.hpp" />
     <ClInclude Include="src\utils\math\vector.hpp" />
     <ClInclude Include="vendor\imgui\imconfig.h" />
     <ClInclude Include="vendor\imgui\imgui.h" />
@@ -115,13 +120,17 @@
     <ClInclude Include="vendor\imgui\imstb_truetype.h" />
     <ClInclude Include="vendor\imgui\imgui_impl_sdl2.h" />
     <ClInclude Include="vendor\imgui\imgui_impl_sdlrenderer2.h" />
+    <ClInclude Include="..\vendor\civetweb\include\civetweb.h" />
+    <ClInclude Include="..\vendor\civetweb\include\CivetServer.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\features\esp.cpp" />
     <ClCompile Include="src\features\aimbot.cpp" />
+    <ClCompile Include="src\features\web_radar\web_radar_service.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\core\memory\memory.cpp" />
     <ClCompile Include="src\core\renderer\sdl_renderer.cpp" />
+    <ClCompile Include="src\core\game\web_radar_json.cpp" />
     <ClCompile Include="vendor\imgui\imgui.cpp" />
     <ClCompile Include="vendor\imgui\imgui_demo.cpp" />
     <ClCompile Include="vendor\imgui\imgui_draw.cpp" />
@@ -129,6 +138,10 @@
     <ClCompile Include="vendor\imgui\imgui_widgets.cpp" />
     <ClCompile Include="vendor\imgui\imgui_impl_sdl2.cpp" />
     <ClCompile Include="vendor\imgui\imgui_impl_sdlrenderer2.cpp" />
+    <ClCompile Include="..\vendor\civetweb\src\CivetServer.cpp" />
+    <ClCompile Include="..\vendor\civetweb\src\civetweb.c">
+      <CompileAs>CompileAsC</CompileAs>
+    </ClCompile>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
