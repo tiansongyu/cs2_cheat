@@ -2,6 +2,7 @@
 #include "menu.hpp"
 #include "utils/weapon_names.hpp"
 #include "core/memory/game_layout.hpp"
+#include "core/game/radar_player_sample.hpp"
 #include "core/renderer/viewport_math.hpp"
 #include "imgui.h"
 #include <iostream>
@@ -12,6 +13,7 @@
 #include <cstring>
 #include <optional>
 #include <string_view>
+#include <unordered_map>
 
 namespace
 {
@@ -23,6 +25,69 @@ namespace
             std::abs(value.x) < 10000000.0f &&
             std::abs(value.y) < 10000000.0f &&
             std::abs(value.z) < 10000000.0f;
+    }
+
+    game::WorldPosition toWorldPosition(const vec3& value)
+    {
+        return { value.x, value.y, value.z };
+    }
+
+    vec3 toVec3(const game::WorldPosition& value)
+    {
+        return { value.x, value.y, value.z };
+    }
+
+    game::radar_player_sample::PositionRead readOldWorldPosition(
+        const uintptr_t pawn)
+    {
+        using game::radar_player_sample::PositionRead;
+        PositionRead oldOrigin;
+        vec3 oldValue{};
+        oldOrigin.succeeded = memory::TryRead(
+            pawn +
+                cs2_dumper::schemas::client_dll::
+                    C_BasePlayerPawn::m_vOldOrigin,
+            oldValue);
+        oldOrigin.value = toWorldPosition(oldValue);
+        return oldOrigin;
+    }
+
+    struct RadarSceneSample
+    {
+        std::optional<game::WorldPosition> position;
+        bool ownerMatched{};
+    };
+
+    RadarSceneSample readRadarSceneSample(
+        const uintptr_t pawn,
+        const uintptr_t sceneNode,
+        const game::radar_player_sample::PositionRead& oldOrigin)
+    {
+        using game::radar_player_sample::PositionRead;
+        using game::radar_player_sample::choosePosition;
+
+        RadarSceneSample sample;
+        uintptr_t sceneOwner = 0;
+        sample.ownerMatched = sceneNode && memory::TryRead(
+            sceneNode +
+                cs2_dumper::schemas::client_dll::
+                    CGameSceneNode::m_pOwner,
+            sceneOwner) &&
+            sceneOwner == pawn;
+
+        PositionRead absoluteOrigin;
+        if (sample.ownerMatched) {
+            vec3 value{};
+            absoluteOrigin.succeeded = memory::TryRead(
+                sceneNode +
+                    cs2_dumper::schemas::client_dll::
+                        CGameSceneNode::m_vecAbsOrigin,
+                value);
+            absoluteOrigin.value = toWorldPosition(value);
+        }
+
+        sample.position = choosePosition(absoluteOrigin, oldOrigin);
+        return sample;
     }
 
     bool isUsableViewMatrix(const viewMatrix& matrix)
@@ -281,11 +346,27 @@ namespace
     std::chrono::steady_clock::time_point lastWorldDiscovery{};
     std::chrono::steady_clock::time_point lastWorldPositionRefresh{};
     std::chrono::steady_clock::time_point lastBombRefresh{};
-    std::chrono::steady_clock::time_point lastMapRefresh{};
     std::chrono::steady_clock::time_point lastRadarSnapshotRefresh{};
     game::MapState cachedMapState{};
     std::optional<game::WorldPosition> droppedBombPosition;
     uint64_t snapshotSequence = 0;
+
+    std::unordered_map<
+        uint64_t,
+        game::radar_player_sample::PlayerLastKnownState>
+        radarPlayerLastKnownSamples;
+    uintptr_t radarSamplingLocalPawn = 0;
+    std::string radarSamplingMapId;
+    std::optional<uint32_t> cachedObservedPawnHandle;
+    uint64_t observedPawnHandleSampledAtMs = 0;
+
+    uint64_t steadyMilliseconds(
+        const std::chrono::steady_clock::time_point value)
+    {
+        return static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                value.time_since_epoch()).count());
+    }
 
     struct CachedWorldEntity
     {
@@ -374,11 +455,15 @@ void esp::clearRuntimeState()
     lastWorldDiscovery = {};
     lastWorldPositionRefresh = {};
     lastBombRefresh = {};
-    lastMapRefresh = {};
     lastRadarSnapshotRefresh = {};
     cachedMapState = {};
     droppedBombPosition.reset();
     cachedWorldEntities.clear();
+    radarPlayerLastKnownSamples.clear();
+    radarSamplingLocalPawn = 0;
+    radarSamplingMapId.clear();
+    cachedObservedPawnHandle.reset();
+    observedPawnHandleSampledAtMs = 0;
 }
 
 esp::EnemySnapshot esp::getEnemySnapshot()
@@ -399,6 +484,11 @@ void esp::refreshEntityCache(const menu::RuntimeConfig& config)
         modBase + cs2_dumper::offsets::client_dll::dwEntityList);
     if (!entityList) {
         cachedPawns.clear();
+        radarPlayerLastKnownSamples.clear();
+        radarSamplingLocalPawn = 0;
+        radarSamplingMapId.clear();
+        cachedObservedPawnHandle.reset();
+        observedPawnHandleSampledAtMs = 0;
         return;
     }
 
@@ -406,11 +496,21 @@ void esp::refreshEntityCache(const menu::RuntimeConfig& config)
         modBase + cs2_dumper::offsets::client_dll::dwLocalPlayerPawn);
     if (!localPlayerPawn) {
         cachedPawns.clear();
+        radarPlayerLastKnownSamples.clear();
+        radarSamplingLocalPawn = 0;
+        radarSamplingMapId.clear();
+        cachedObservedPawnHandle.reset();
+        observedPawnHandleSampledAtMs = 0;
         return;
     }
     uint8_t myTeam = memory::Read<uint8_t>(localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseEntity::m_iTeamNum);
     if (!validTeam(myTeam)) {
         cachedPawns.clear();
+        radarPlayerLastKnownSamples.clear();
+        radarSamplingLocalPawn = 0;
+        radarSamplingMapId.clear();
+        cachedObservedPawnHandle.reset();
+        observedPawnHandleSampledAtMs = 0;
         return;
     }
 
@@ -480,7 +580,7 @@ void esp::refreshEntityCache(const menu::RuntimeConfig& config)
                     controllerIsLocal)) {
                 cp.isLocal = cp.isLocal || controllerIsLocal;
             }
-            memory::TryRead(
+            cp.steamIdKnown = memory::TryRead(
                 entityController +
                     cs2_dumper::schemas::client_dll::
                         CBasePlayerController::m_steamID,
@@ -996,16 +1096,19 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
     // read fails while the game changes level or shuts down, keep the previous
     // render snapshot instead of publishing partial/zeroed coordinates.
     viewMatrix localVm{};
-    vec3 localPos{};
     vec3 viewOffset{};
     vec3 localEyeAngles{};
     uint8_t localTeam = 0;
-    if (!memory::TryRead(
+    const game::radar_player_sample::PositionRead localOldOrigin =
+        readOldWorldPosition(localPlayerPawn);
+    const std::optional<game::WorldPosition> localWorldPosition =
+        game::radar_player_sample::choosePosition(
+            game::radar_player_sample::PositionRead{},
+            localOldOrigin);
+    if (!localWorldPosition ||
+        !memory::TryRead(
             modBase + cs2_dumper::offsets::client_dll::dwViewMatrix,
             localVm) ||
-        !memory::TryRead(
-            localPlayerPawn + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin,
-            localPos) ||
         !memory::TryRead(
             localPlayerPawn + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset,
             viewOffset) ||
@@ -1018,7 +1121,6 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
                     C_BaseEntity::m_iTeamNum,
             localTeam) ||
         !isUsableViewMatrix(localVm) ||
-        !isFiniteVec3(localPos) ||
         !isFiniteVec3(viewOffset) ||
         !isFiniteVec3(localEyeAngles) ||
         !validTeam(localTeam)) {
@@ -1026,6 +1128,7 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         return;
     }
     consecutiveReadFailures = 0;
+    const vec3 localPos = toVec3(*localWorldPosition);
 
     // Get local player info and cache it for aimbot/triggerbot
     vec3 eyePos = { localPos.x + viewOffset.x, localPos.y + viewOffset.y, localPos.z + viewOffset.z };
@@ -1065,8 +1168,27 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
     }
 
     const auto updateNow = std::chrono::steady_clock::now();
+    const uint64_t updateNowMs = steadyMilliseconds(updateNow);
+    const bool radarSamplingEnabled = config.radarSnapshotEnabled();
+    if (!radarSamplingEnabled) {
+        radarPlayerLastKnownSamples.clear();
+        radarSamplingLocalPawn = 0;
+        radarSamplingMapId.clear();
+        cachedObservedPawnHandle.reset();
+        observedPawnHandleSampledAtMs = 0;
+    } else if (radarSamplingLocalPawn != localPlayerPawn) {
+        // A local pawn transition defines a new sampling epoch. Clearing here
+        // prevents a fast reconnect/respawn from inheriting another pawn's
+        // short-lived samples even if controller slots are recycled.
+        radarPlayerLastKnownSamples.clear();
+        radarSamplingLocalPawn = localPlayerPawn;
+        radarSamplingMapId.clear();
+        cachedObservedPawnHandle.reset();
+        observedPawnHandleSampledAtMs = 0;
+    }
+
     bool captureRadarSnapshot = false;
-    if (!config.radarSnapshotEnabled()) {
+    if (!radarSamplingEnabled) {
         lastRadarSnapshotRefresh = {};
     } else if (
         lastRadarSnapshotRefresh.time_since_epoch().count() == 0 ||
@@ -1075,7 +1197,16 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         lastRadarSnapshotRefresh = updateNow;
         captureRadarSnapshot = true;
     }
+    const bool radarMetadataIncomplete =
+        radarSamplingEnabled &&
+        std::any_of(
+            cachedPawns.begin(),
+            cachedPawns.end(),
+            [](const CachedPawn& pawn) {
+                return pawn.playerId == 0;
+            });
     if (cachedPawns.empty() ||
+        radarMetadataIncomplete ||
         lastEntityCacheRefresh.time_since_epoch().count() == 0 ||
         updateNow - lastEntityCacheRefresh >=
             std::chrono::milliseconds(100)) {
@@ -1088,18 +1219,86 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
     buffer.reserve(cachedPawns.size());
     std::vector<game::PlayerSnapshot> sampledPlayers;
     std::optional<uint64_t> sampledLocalPlayerId;
+    std::optional<uint64_t> sampledObservedPlayerId;
     std::optional<uint64_t> bombCarrierId;
+    std::optional<uint32_t> sampledObservedPawnHandle;
+    const bool needsHighFrequencyPlayerSamples =
+        config.espEnabled ||
+        config.aimbotEnabled ||
+        config.triggerbotEnabled;
     if (captureRadarSnapshot) {
+        if (radarPlayerLastKnownSamples.bucket_count() < 64) {
+            radarPlayerLastKnownSamples.reserve(64);
+        }
         sampledPlayers.reserve(cachedPawns.size());
-        if (lastMapRefresh.time_since_epoch().count() == 0 ||
-            updateNow - lastMapRefresh >= std::chrono::seconds(1)) {
-            lastMapRefresh = updateNow;
-            cachedMapState = sampleMapState();
+
+        cachedMapState = sampleMapState();
+        const bool mapEpochChanged = cachedMapState.id.empty() ||
+            radarSamplingMapId != cachedMapState.id;
+        if (mapEpochChanged) {
+            // World coordinates and observer handles are map-local. An empty
+            // ID is a loading/read-failure boundary, never the same epoch.
+            radarPlayerLastKnownSamples.clear();
+            cachedObservedPawnHandle.reset();
+            observedPawnHandleSampledAtMs = 0;
+            radarSamplingMapId = cachedMapState.id.empty()
+                ? std::string{}
+                : cachedMapState.id;
+        }
+
+        if (!cachedMapState.id.empty()) {
+            uintptr_t observerServices = 0;
+            const bool observerServicesKnown = memory::TryRead(
+                localPlayerPawn +
+                    cs2_dumper::schemas::client_dll::
+                        C_BasePlayerPawn::m_pObserverServices,
+                observerServices);
+            uint32_t observerTarget = 0;
+            bool observerTargetKnown = false;
+            if (observerServicesKnown) {
+                observerTargetKnown = !observerServices || memory::TryRead(
+                    observerServices +
+                        cs2_dumper::schemas::client_dll::
+                            CPlayer_ObserverServices::m_hObserverTarget,
+                    observerTarget);
+            }
+            if (observerTargetKnown) {
+                if (observerTarget != 0 &&
+                    observerTarget != 0xFFFFFFFF) {
+                    cachedObservedPawnHandle = observerTarget;
+                    observedPawnHandleSampledAtMs = updateNowMs;
+                    sampledObservedPawnHandle = observerTarget;
+                } else {
+                    cachedObservedPawnHandle.reset();
+                    observedPawnHandleSampledAtMs = 0;
+                }
+            } else if (cachedObservedPawnHandle &&
+                observedPawnHandleSampledAtMs <= updateNowMs &&
+                updateNowMs - observedPawnHandleSampledAtMs <=
+                    game::radar_player_sample::
+                        kLastKnownMaximumAgeMs) {
+                sampledObservedPawnHandle =
+                    cachedObservedPawnHandle;
+            } else {
+                cachedObservedPawnHandle.reset();
+                observedPawnHandleSampledAtMs = 0;
+            }
         }
     }
 
     for (const auto& cp : cachedPawns)
     {
+        // Radar snapshots deliberately include every team, corpse, and local
+        // player, but ordinary ESP/aim consumers only use live opponents. Do
+        // not turn those extra Radar cache entries into a 240 Hz RPM cost.
+        if (!captureRadarSnapshot &&
+            (!needsHighFrequencyPlayerSamples ||
+             cp.isLocal ||
+             cp.team == localTeam ||
+             !cp.alive)) {
+            continue;
+        }
+
         const uintptr_t entity = cp.pawnAddress;
 
         // A cached address is only a performance hint. Validate its owning
@@ -1136,10 +1335,23 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
             continue;
         }
 
-        const bool alive = health > 0 && lifeState == 0 && cp.alive;
+        bool controllerPawnAlive = cp.alive;
+        if (captureRadarSnapshot) {
+            bool sampledPawnAlive = false;
+            if (memory::TryRead(
+                    cp.controllerAddress +
+                        cs2_dumper::schemas::client_dll::
+                            CCSPlayerController::m_bPawnIsAlive,
+                    sampledPawnAlive)) {
+                controllerPawnAlive = sampledPawnAlive;
+            }
+        }
+        const bool alive = health > 0 && lifeState == 0 &&
+            controllerPawnAlive;
 
         uintptr_t gameSceneNode = 0;
         bool dormant = true;
+        bool dormantKnown = false;
         const bool sceneNodeKnown = memory::TryRead(
                 entity +
                     cs2_dumper::schemas::client_dll::
@@ -1147,28 +1359,42 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
                 gameSceneNode) &&
             gameSceneNode;
         if (sceneNodeKnown) {
-            memory::TryRead(
+            bool sampledDormant = false;
+            dormantKnown = memory::TryRead(
                 gameSceneNode +
                     cs2_dumper::schemas::client_dll::
                         CGameSceneNode::m_bDormant,
-                dormant);
+                sampledDormant);
+            if (dormantKnown) {
+                dormant = sampledDormant;
+            }
         }
 
-        vec3 feetPos{};
-        vec3 vOffset{};
-        const bool positionKnown = memory::TryRead(
-                entity + cs2_dumper::schemas::client_dll::C_BasePlayerPawn::m_vOldOrigin,
-                feetPos) ||
-            (sceneNodeKnown && memory::TryRead(
-                gameSceneNode +
-                    cs2_dumper::schemas::client_dll::
-                        CGameSceneNode::m_vecAbsOrigin,
-                feetPos));
-        const bool validPosition = positionKnown && isFiniteVec3(feetPos);
-        const bool viewOffsetKnown = memory::TryRead(
-                entity + cs2_dumper::schemas::client_dll::C_BaseModelEntity::m_vecViewOffset,
-                vOffset) &&
-            isFiniteVec3(vOffset);
+        // Preserve the ordinary 240Hz ESP path: one old-origin RPM per remote
+        // pawn. The local pawn reuses the coherent sample from this update.
+        const game::radar_player_sample::PositionRead oldOrigin = cp.isLocal
+            ? localOldOrigin
+            : readOldWorldPosition(entity);
+        const std::optional<game::WorldPosition> oldWorldPosition =
+            game::radar_player_sample::choosePosition(
+                game::radar_player_sample::PositionRead{},
+                oldOrigin);
+        vec3 feetPos = oldWorldPosition
+            ? toVec3(*oldWorldPosition)
+            : vec3{};
+        const bool validPosition = oldWorldPosition.has_value();
+
+        RadarSceneSample radarScene;
+        bool radarDormant = true;
+        if (captureRadarSnapshot) {
+            radarScene = readRadarSceneSample(
+                entity,
+                sceneNodeKnown ? gameSceneNode : 0,
+                oldOrigin);
+            radarDormant = radarScene.ownerMatched && dormantKnown
+                ? dormant
+                : true;
+        }
 
         float enemyYaw = 0.0f;
         float angleToPlayer = 180.0f;
@@ -1194,27 +1420,58 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
             }
         }
 
+        std::optional<game::WorldPosition> radarPosition;
+        std::optional<float> radarYaw;
+        if (captureRadarSnapshot) {
+            radarPosition = radarScene.position;
+            if (viewAngleKnown) {
+                radarYaw = enemyYaw;
+            }
+        }
+
+        if (captureRadarSnapshot &&
+            !cachedMapState.id.empty() &&
+            cp.playerId != 0) {
+            const game::radar_player_sample::PlayerSampleIdentity identity{
+                cp.playerId,
+                cp.controllerAddress,
+                cp.pawnAddress,
+                livePawnHandle,
+                liveTeam,
+                cp.steamId,
+                cp.steamIdKnown
+            };
+            auto [sampleIterator, inserted] =
+                radarPlayerLastKnownSamples.try_emplace(cp.playerId);
+            game::radar_player_sample::PlayerLastKnownState& lastKnown =
+                sampleIterator->second;
+            (void)inserted;
+            const game::radar_player_sample::RetainedPlayerSample retained =
+                game::radar_player_sample::retainPlayerSample(
+                    lastKnown,
+                    identity,
+                    updateNowMs,
+                    alive,
+                    radarDormant,
+                    radarPosition,
+                    radarYaw);
+            radarPosition = retained.position;
+            radarYaw = retained.yaw;
+        }
+
         if (captureRadarSnapshot) {
             game::PlayerSnapshot player;
             player.id = cp.playerId;
-            if (cp.steamId != 0) {
+            if (cp.steamIdKnown && cp.steamId != 0) {
                 player.steamId = cp.steamId;
             }
             player.name = cp.playerName;
             player.team = snapshotTeam(liveTeam);
             player.competitiveColor = cp.competitiveColor;
             player.alive = alive;
-            player.dormant = dormant;
-            if (validPosition) {
-                player.position = game::WorldPosition{
-                    feetPos.x,
-                    feetPos.y,
-                    feetPos.z
-                };
-            }
-            if (viewAngleKnown) {
-                player.yaw = enemyYaw;
-            }
+            player.dormant = radarDormant;
+            player.position = radarPosition;
+            player.yaw = radarYaw;
             player.health = alive ? health : 0;
             player.armor = cp.armor;
             player.money = cp.money;
@@ -1226,17 +1483,32 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
             if (cp.isLocal) {
                 sampledLocalPlayerId = cp.playerId;
             }
+            if (sampledObservedPawnHandle &&
+                *sampledObservedPawnHandle == livePawnHandle &&
+                alive) {
+                sampledObservedPlayerId = cp.playerId;
+            }
             if (cp.hasBomb) {
                 bombCarrierId = cp.playerId;
             }
             sampledPlayers.push_back(std::move(player));
         }
 
-        if (!alive ||
+        if (!needsHighFrequencyPlayerSamples ||
+            !alive ||
             liveTeam == localTeam ||
             dormant ||
-            !validPosition ||
-            !viewOffsetKnown) {
+            !validPosition) {
+            continue;
+        }
+        vec3 vOffset{};
+        const bool viewOffsetKnown = memory::TryRead(
+                entity +
+                    cs2_dumper::schemas::client_dll::
+                        C_BaseModelEntity::m_vecViewOffset,
+                vOffset) &&
+            isFiniteVec3(vOffset);
+        if (!viewOffsetKnown) {
             continue;
         }
         vec3 headPos = feetPos + vOffset;
@@ -1331,6 +1603,21 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         buffer.push_back(enemy);
     }
 
+    if (captureRadarSnapshot) {
+        for (auto iterator = radarPlayerLastKnownSamples.begin();
+             iterator != radarPlayerLastKnownSamples.end();) {
+            const uint64_t lastObserved = iterator->second.lastObservedAtMs;
+            if (lastObserved > updateNowMs ||
+                updateNowMs - lastObserved >
+                    game::radar_player_sample::
+                        kLastKnownMaximumAgeMs) {
+                iterator = radarPlayerLastKnownSamples.erase(iterator);
+            } else {
+                ++iterator;
+            }
+        }
+    }
+
     {
         std::lock_guard<std::mutex> lock(dataMutex);
         enemies = std::make_shared<
@@ -1397,6 +1684,7 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         snapshot->map = cachedMapState;
         snapshot->map.connected = true;
         snapshot->localPlayerId = sampledLocalPlayerId;
+        snapshot->observedPlayerId = sampledObservedPlayerId;
         snapshot->localTeam = snapshotTeam(localTeam);
         snapshot->players = std::move(sampledPlayers);
 

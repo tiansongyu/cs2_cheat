@@ -83,6 +83,94 @@ namespace game::fixed_map_radar
             && level.minimumZ < level.maximumZ;
     }
 
+    // Choose the floor background from a player who can still provide a
+    // useful point of view. A dead local player must not pin a layered map to
+    // the floor where they died while a live player is being observed.
+    [[nodiscard]] inline std::optional<float> selectReferenceZ(
+        const GameSnapshot& snapshot) noexcept
+    {
+        const auto validZ = [](const PlayerSnapshot& player)
+            -> std::optional<float>
+        {
+            if (!player.position || !isFinite(*player.position))
+                return std::nullopt;
+            return player.position->z;
+        };
+
+        const auto findPlayer = [&snapshot](
+            const std::optional<std::uint64_t>& id) -> const PlayerSnapshot*
+        {
+            if (!id)
+                return nullptr;
+            const auto player = std::find_if(
+                snapshot.players.begin(),
+                snapshot.players.end(),
+                [id](const PlayerSnapshot& candidate)
+                {
+                    return candidate.id == *id;
+                });
+            return player == snapshot.players.end() ? nullptr : &*player;
+        };
+
+        const PlayerSnapshot* localPlayer =
+            findPlayer(snapshot.localPlayerId);
+        const PlayerSnapshot* observedPlayer =
+            findPlayer(snapshot.observedPlayerId);
+
+        if (localPlayer && localPlayer->alive)
+        {
+            if (const auto z = validZ(*localPlayer))
+                return z;
+        }
+
+        if (observedPlayer && observedPlayer->alive)
+        {
+            if (const auto z = validZ(*observedPlayer))
+                return z;
+        }
+
+        const Team referenceTeam = localPlayer &&
+                (localPlayer->team == Team::Terrorists ||
+                 localPlayer->team == Team::CounterTerrorists)
+            ? localPlayer->team
+            : snapshot.localTeam;
+        if (referenceTeam == Team::Terrorists ||
+            referenceTeam == Team::CounterTerrorists)
+        {
+            for (const PlayerSnapshot& player : snapshot.players)
+            {
+                if (player.alive && player.team == referenceTeam)
+                {
+                    if (const auto z = validZ(player))
+                        return z;
+                }
+            }
+        }
+
+        for (const PlayerSnapshot& player : snapshot.players)
+        {
+            if (player.alive)
+            {
+                if (const auto z = validZ(player))
+                    return z;
+            }
+        }
+
+        // End-of-round/death-cam fallback: retain the local player's last
+        // valid floor when nobody alive has a position, then use any player.
+        if (localPlayer)
+        {
+            if (const auto z = validZ(*localPlayer))
+                return z;
+        }
+        for (const PlayerSnapshot& player : snapshot.players)
+        {
+            if (const auto z = validZ(player))
+                return z;
+        }
+        return std::nullopt;
+    }
+
     [[nodiscard]] inline std::optional<std::size_t> selectLevel(
         const MapDefinition& map,
         float z) noexcept

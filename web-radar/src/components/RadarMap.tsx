@@ -6,16 +6,24 @@ import {
   projectWorldPoint,
   resolveMapImage,
   selectMapLevel,
+  selectReferenceZ,
   unwrapHeading,
 } from '../lib/coordinates';
 import { bombStateLabel } from '../lib/format';
-import type { BombSnapshot, MapDefinition, PlayerSnapshot } from '../types/protocol';
+import type {
+  BombSnapshot,
+  MapDefinition,
+  PlayerSnapshot,
+  Team,
+} from '../types/protocol';
 
 interface RadarMapProps {
   mapId: string;
   map: MapDefinition | undefined;
   players: PlayerSnapshot[];
   localPlayerId?: string | null;
+  observedPlayerId?: string | null;
+  localTeam?: Team | null;
   bomb: BombSnapshot;
   capturedAtMs: number | null;
   receivedAtPerformanceMs: number | null;
@@ -47,6 +55,8 @@ export function RadarMap({
   map,
   players,
   localPlayerId,
+  observedPlayerId,
+  localTeam,
   bomb,
   capturedAtMs,
   receivedAtPerformanceMs,
@@ -60,15 +70,38 @@ export function RadarMap({
 }: RadarMapProps) {
   const [imageFailed, setImageFailed] = useState(false);
   const [imageRevision, setImageRevision] = useState(0);
-  const playerHeadings = useRef(new Map<string, number>());
-  const localPlayer = players.find((player) => player.id === localPlayerId);
-  const referenceZ =
-    localPlayer?.position?.z ?? players.find((player) => player.alive && player.position)?.position?.z;
+  const playerHeadings = useRef({
+    mapId,
+    values: new Map<string, number>(),
+  });
+  const referenceZ = selectReferenceZ(
+    players,
+    localPlayerId,
+    observedPlayerId,
+    localTeam,
+  );
   const imageUrl = map ? resolveMapImage(map, referenceZ) : '';
   const imageSrc = imageRevision === 0
     ? imageUrl
     : `${imageUrl}${imageUrl.includes('?') ? '&' : '?'}radar_retry=${imageRevision}`;
   const level = map && referenceZ !== undefined ? selectMapLevel(map.levels, referenceZ) : undefined;
+  const headingFrame = useMemo(() => {
+    const previous = playerHeadings.current.mapId === mapId
+      ? playerHeadings.current.values
+      : undefined;
+    const next = new Map<string, number>();
+    for (const player of players) {
+      if (!player.alive || player.yaw === null) continue;
+      next.set(
+        player.id,
+        unwrapHeading(
+          previous?.get(player.id),
+          cssHeadingFromGameYaw(player.yaw),
+        ),
+      );
+    }
+    return next;
+  }, [mapId, players]);
 
   useEffect(() => {
     setImageFailed(false);
@@ -76,15 +109,12 @@ export function RadarMap({
   }, [imageUrl]);
 
   useEffect(() => {
-    const activePlayers = new Set(players.map((player) => player.id));
-    for (const playerId of playerHeadings.current.keys()) {
-      if (!activePlayers.has(playerId)) playerHeadings.current.delete(playerId);
-    }
-  }, [players]);
-
-  useEffect(() => {
-    playerHeadings.current.clear();
-  }, [mapId]);
+    // Commit only the completed render's headings. An interrupted concurrent
+    // render cannot mutate the history used by the next frame, and a map
+    // change starts from wrapped headings immediately instead of one effect
+    // later.
+    playerHeadings.current = { mapId, values: headingFrame };
+  }, [headingFrame, mapId]);
 
   useEffect(() => {
     if (!imageFailed) return undefined;
@@ -165,13 +195,7 @@ export function RadarMap({
                     ? 'upper'
                     : null
                 : null;
-              const heading = player.yaw === null
-                ? undefined
-                : unwrapHeading(
-                    playerHeadings.current.get(player.id),
-                    cssHeadingFromGameYaw(player.yaw),
-                  );
-              if (heading !== undefined) playerHeadings.current.set(player.id, heading);
+              const heading = headingFrame.get(player.id);
               const style = {
                 left: `${point.x * 100}%`,
                 top: `${point.y * 100}%`,
@@ -179,6 +203,9 @@ export function RadarMap({
                 '--player-accent': playerAccent(player),
                 '--heading': `${heading ?? 0}deg`,
               } as CSSProperties;
+              // Remount across maps so CSS cannot interpolate a numerically
+              // unwrapped old-map angle into the new map.
+              const markerKey = `${mapId}:${player.id}`;
               return (
                 <div
                   className={`map-player team-${player.team.toLowerCase()} ${
@@ -187,7 +214,7 @@ export function RadarMap({
                     player.id === localPlayerId ? 'is-local' : ''
                   }`}
                   style={style}
-                  key={player.id}
+                  key={markerKey}
                   title={`${player.name || 'ANONYMOUS'} · ${player.health} HP`}
                 >
                   {player.alive ? (

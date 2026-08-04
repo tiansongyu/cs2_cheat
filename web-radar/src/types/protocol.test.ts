@@ -8,6 +8,7 @@ const validSnapshot = {
   capturedAtMs: 100_500,
   map: { id: 'de_example' },
   localPlayerId: 'p1',
+  observedPlayerId: 'p1',
   players: [
     {
       id: 'p1',
@@ -32,6 +33,17 @@ describe('parseServerMessage', () => {
     if (parsed?.type === 'snapshot') expect(parsed.players[0].name).toBe('Player');
   });
 
+  it('accepts an older v1 snapshot without observedPlayerId', () => {
+    const legacySnapshot = structuredClone(validSnapshot);
+    Reflect.deleteProperty(legacySnapshot, 'observedPlayerId');
+
+    const parsed = parseServerMessage(JSON.stringify(legacySnapshot));
+    expect(parsed?.type).toBe('snapshot');
+    if (parsed?.type === 'snapshot') {
+      expect(parsed.observedPlayerId).toBeUndefined();
+    }
+  });
+
   it('rejects other versions, malformed teams and invalid JSON', () => {
     expect(parseServerMessage(JSON.stringify({ ...validSnapshot, v: 2 }))).toBeNull();
     const invalidTeam = structuredClone(validSnapshot);
@@ -52,6 +64,7 @@ describe('parseServerMessage', () => {
       ...validSnapshot,
       protocolVersion: 1,
       localPlayerId: null,
+      observedPlayerId: null,
       localTeam: 'NONE',
       map: {
         id: 'de_example',
@@ -100,5 +113,19 @@ describe('parseServerMessage', () => {
       },
     };
     expect(parseServerMessage(JSON.stringify(message))?.type).toBe('snapshot');
+  });
+
+  it('rejects a non-string observed player identifier', () => {
+    expect(parseServerMessage(JSON.stringify({
+      ...validSnapshot,
+      observedPlayerId: 123,
+    }))).toBeNull();
+  });
+
+  it('rejects a local team outside the v1 team enum', () => {
+    expect(parseServerMessage(JSON.stringify({
+      ...validSnapshot,
+      localTeam: 'BLUE',
+    }))).toBeNull();
   });
 });

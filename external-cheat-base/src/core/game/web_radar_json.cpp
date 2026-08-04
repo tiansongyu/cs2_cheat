@@ -486,6 +486,8 @@ std::string game::web_radar_json::serializeSnapshotV1(
     writer.boolean(snapshot.map.connected);
     writer.raw("},\"localPlayerId\":");
     appendOptionalIdentifier(writer, snapshot.localPlayerId);
+    writer.raw(",\"observedPlayerId\":");
+    appendOptionalIdentifier(writer, snapshot.observedPlayerId);
     writer.raw(",\"localTeam\":");
     writer.string(toString(snapshot.localTeam));
     writer.raw(",\"players\":[");

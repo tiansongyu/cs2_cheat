@@ -38,7 +38,8 @@ The frontend accepts these server messages and ignores unknown additional fields
 type ServerMessage =
   | { v: 1; type: 'hello'; serverTimeMs: number; updateHz?: number }
   | { v: 1; type: 'snapshot'; seq: number; capturedAtMs: number; map: MapState;
-      localPlayerId?: string | null; players: Player[]; bomb: Bomb }
+      localPlayerId?: string | null; observedPlayerId?: string | null;
+      localTeam?: Team; players: Player[]; bomb: Bomb }
   | { v: 1; type: 'error'; code: string; message: string };
 ```
 

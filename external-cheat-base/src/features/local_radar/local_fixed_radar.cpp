@@ -30,6 +30,7 @@ namespace
     constexpr UINT MAX_TEXTURE_DIMENSION = 4096;
     constexpr UINT RADAR_TEXTURE_DIMENSION = 1024;
     constexpr std::uint64_t STALE_AFTER_MILLISECONDS = 1500;
+    constexpr std::size_t MAX_CACHED_RADAR_TEXTURES = 4;
 
     template <typename Interface>
     class ComObject final
@@ -95,13 +96,23 @@ namespace
         bool ownsInitialization_{};
     };
 
-    struct TextureCache
+    struct TextureCacheEntry
     {
         SDL_Texture* texture = nullptr;
-        std::uint64_t rendererRevision = 0;
         std::string imagePath;
         std::string error;
         std::chrono::steady_clock::time_point retryAfter{};
+        std::uint64_t lastUsed = 0;
+    };
+
+    struct TextureCache
+    {
+        std::uint64_t rendererRevision = 0;
+        std::uint64_t usageSerial = 0;
+        std::vector<TextureCacheEntry> entries;
+        // The render path displays only the error for the image requested in
+        // the current frame; failures cached for other floors remain isolated.
+        std::string error;
     };
 
     TextureCache textureCache;
@@ -278,36 +289,71 @@ namespace
         const std::uint64_t revision =
             sdl_renderer::getRendererRevision();
         if (textureCache.rendererRevision != revision) {
-            // SDL_DestroyRenderer already released textures owned by the old
-            // renderer. Never dereference the stale handle.
+            // SDL_DestroyRenderer already released every texture owned by the
+            // old renderer. Discard stale handles without destroying them a
+            // second time, then lazily populate the new renderer's cache.
             textureCache = {};
             textureCache.rendererRevision = revision;
         }
 
         const auto now = std::chrono::steady_clock::now();
-        if (textureCache.imagePath == imagePath &&
-            (textureCache.texture || now < textureCache.retryAfter)) {
-            return textureCache.texture;
+        const auto cached = std::find_if(
+            textureCache.entries.begin(),
+            textureCache.entries.end(),
+            [imagePath](const TextureCacheEntry& entry)
+            {
+                return entry.imagePath == imagePath;
+            });
+        if (cached != textureCache.entries.end()) {
+            cached->lastUsed = ++textureCache.usageSerial;
+            if (!cached->texture && now >= cached->retryAfter) {
+                cached->error.clear();
+                cached->retryAfter = {};
+                cached->texture = loadPngTexture(
+                    sdl_renderer::renderer,
+                    imageFilePath(imagePath),
+                    cached->error);
+                if (!cached->texture) {
+                    cached->retryAfter = now + std::chrono::seconds(2);
+                }
+            }
+            textureCache.error = cached->error;
+            return cached->texture;
         }
 
-        if (textureCache.texture) {
-            SDL_DestroyTexture(textureCache.texture);
-            textureCache.texture = nullptr;
+        if (textureCache.entries.size() >= MAX_CACHED_RADAR_TEXTURES) {
+            const auto leastRecentlyUsed = std::min_element(
+                textureCache.entries.begin(),
+                textureCache.entries.end(),
+                [](const TextureCacheEntry& left,
+                   const TextureCacheEntry& right)
+                {
+                    return left.lastUsed < right.lastUsed;
+                });
+            if (leastRecentlyUsed != textureCache.entries.end()) {
+                if (leastRecentlyUsed->texture && sdl_renderer::renderer) {
+                    SDL_DestroyTexture(leastRecentlyUsed->texture);
+                }
+                textureCache.entries.erase(leastRecentlyUsed);
+            }
         }
-        textureCache.imagePath.assign(imagePath);
-        textureCache.error.clear();
-        textureCache.retryAfter = {};
-        textureCache.texture = loadPngTexture(
+
+        TextureCacheEntry entry;
+        entry.imagePath.assign(imagePath);
+        entry.lastUsed = ++textureCache.usageSerial;
+        entry.texture = loadPngTexture(
             sdl_renderer::renderer,
             imageFilePath(imagePath),
-            textureCache.error);
-        if (!textureCache.texture) {
+            entry.error);
+        if (!entry.texture) {
             // A temporarily unavailable file or WIC service must not leave the
             // overlay permanently blank, but retrying a decoder every frame
             // would be unnecessarily expensive.
-            textureCache.retryAfter = now + std::chrono::seconds(2);
+            entry.retryAfter = now + std::chrono::seconds(2);
         }
-        return textureCache.texture;
+        textureCache.error = entry.error;
+        textureCache.entries.push_back(std::move(entry));
+        return textureCache.entries.back().texture;
     }
 
     ImU32 withAlpha(const ImU32 color, const std::uint8_t alpha)
@@ -339,25 +385,6 @@ namespace
             return IM_COL32(241, 185, 91, 255);
         }
         return IM_COL32(161, 168, 175, 255);
-    }
-
-    std::optional<float> referenceHeight(
-        const game::GameSnapshot& snapshot)
-    {
-        if (snapshot.localPlayerId) {
-            for (const game::PlayerSnapshot& player : snapshot.players) {
-                if (player.id == *snapshot.localPlayerId &&
-                    player.position) {
-                    return player.position->z;
-                }
-            }
-        }
-        for (const game::PlayerSnapshot& player : snapshot.players) {
-            if (player.alive && player.position) {
-                return player.position->z;
-            }
-        }
-        return std::nullopt;
     }
 
     std::optional<game::WorldPosition> bombPosition(
@@ -566,7 +593,8 @@ void local_fixed_radar::render(
         return;
     }
 
-    const std::optional<float> referenceZ = referenceHeight(snapshot);
+    const std::optional<float> referenceZ =
+        game::fixed_map_radar::selectReferenceZ(snapshot);
     const std::optional<std::size_t> levelIndex = referenceZ
         ? game::fixed_map_radar::selectLevel(*map, *referenceZ)
         : std::nullopt;
@@ -729,11 +757,14 @@ void local_fixed_radar::render(
 
 void local_fixed_radar::reset() noexcept
 {
-    if (textureCache.texture &&
-        textureCache.rendererRevision ==
+    if (textureCache.rendererRevision ==
             sdl_renderer::getRendererRevision() &&
         sdl_renderer::renderer) {
-        SDL_DestroyTexture(textureCache.texture);
+        for (const TextureCacheEntry& entry : textureCache.entries) {
+            if (entry.texture) {
+                SDL_DestroyTexture(entry.texture);
+            }
+        }
     }
     textureCache = {};
 }

@@ -36,6 +36,9 @@
     <ClInclude Include="src\core\game\game_snapshot.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\core\game\radar_player_sample.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\core\game\web_radar_json.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>

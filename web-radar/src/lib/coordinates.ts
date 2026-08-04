@@ -1,4 +1,10 @@
-import type { MapDefinition, MapLevelDefinition, Vector3 } from '../types/protocol';
+import type {
+  MapDefinition,
+  MapLevelDefinition,
+  PlayerSnapshot,
+  Team,
+  Vector3,
+} from '../types/protocol';
 
 export interface RadarPoint {
   x: number;
@@ -48,6 +54,70 @@ export function selectMapLevel(
       z < nearest.minZ ? nearest.minZ - z : z - nearest.maxZ;
     return distance < nearestDistance ? level : nearest;
   }, undefined);
+}
+
+type FloorReferencePlayer = Pick<
+  PlayerSnapshot,
+  'id' | 'team' | 'alive' | 'position'
+>;
+
+export function selectReferenceZ(
+  players: readonly FloorReferencePlayer[],
+  localPlayerId?: string | null,
+  observedPlayerId?: string | null,
+  localTeam?: Team | null,
+): number | undefined {
+  const validZ = (player: FloorReferencePlayer | undefined): number | undefined => {
+    const position = player?.position;
+    return position &&
+      Number.isFinite(position.x) &&
+      Number.isFinite(position.y) &&
+      Number.isFinite(position.z)
+      ? position.z
+      : undefined;
+  };
+  const localPlayer = players.find((player) => player.id === localPlayerId);
+  const observedPlayer = players.find((player) => player.id === observedPlayerId);
+
+  if (localPlayer?.alive) {
+    const z = validZ(localPlayer);
+    if (z !== undefined) return z;
+  }
+  if (observedPlayer?.alive) {
+    const observedZ = validZ(observedPlayer);
+    if (observedZ !== undefined) return observedZ;
+  }
+
+  const isPlayingTeam = (team: Team | null | undefined): team is 'T' | 'CT' =>
+    team === 'T' || team === 'CT';
+  const referenceTeam = isPlayingTeam(localPlayer?.team)
+    ? localPlayer.team
+    : isPlayingTeam(localTeam)
+      ? localTeam
+      : undefined;
+  if (referenceTeam) {
+    for (const player of players) {
+      if (!player.alive || player.team !== referenceTeam) continue;
+      const z = validZ(player);
+      if (z !== undefined) return z;
+    }
+  }
+
+  for (const player of players) {
+    if (!player.alive) continue;
+    const z = validZ(player);
+    if (z !== undefined) return z;
+  }
+
+  // With nobody alive, retain the local player's last valid floor before
+  // falling back to any positioned player.
+  const localZ = validZ(localPlayer);
+  if (localZ !== undefined) return localZ;
+  for (const player of players) {
+    const z = validZ(player);
+    if (z !== undefined) return z;
+  }
+  return undefined;
 }
 
 export function resolveMapImage(map: MapDefinition, z?: number): string {

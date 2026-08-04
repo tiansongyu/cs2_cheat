@@ -87,6 +87,8 @@ function RadarWorkspace({
           map={map}
           players={players}
           localPlayerId={snapshot?.localPlayerId}
+          observedPlayerId={snapshot?.observedPlayerId}
+          localTeam={snapshot?.localTeam}
           bomb={snapshot?.bomb ?? { state: 'unknown' }}
           capturedAtMs={snapshot?.capturedAtMs ?? null}
           receivedAtPerformanceMs={frame?.receivedAtPerformanceMs ?? null}

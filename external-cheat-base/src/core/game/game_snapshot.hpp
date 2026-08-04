@@ -146,6 +146,9 @@ namespace game
 
         MapState map;
         std::optional<std::uint64_t> localPlayerId;
+        // Player currently followed by the local spectator/death camera.
+        // Optional so older samplers and non-spectating states remain valid.
+        std::optional<std::uint64_t> observedPlayerId;
         Team localTeam{ Team::Unknown };
         std::vector<PlayerSnapshot> players;
         BombSnapshot bomb;

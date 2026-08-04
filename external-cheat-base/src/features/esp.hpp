@@ -118,6 +118,7 @@ struct CachedPawn
     uint8_t team = 0;
     uint64_t playerId = 0;
     uint64_t steamId = 0;
+    bool steamIdKnown = false;
     std::string playerName;
     int competitiveColor = -1;
     int armor = 0;

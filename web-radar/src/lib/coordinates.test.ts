@@ -4,6 +4,7 @@ import {
   projectWorldPoint,
   resolveMapImage,
   selectMapLevel,
+  selectReferenceZ,
   unwrapHeading,
 } from './coordinates';
 import type { MapDefinition } from '../types/protocol';
@@ -55,6 +56,69 @@ describe('map resources and headings', () => {
     expect(resolveMapImage({ ...map, image: undefined, levels: undefined })).toBe(
       '/maps/de_example/radar.png',
     );
+  });
+
+  it('uses a live teammate floor when the local player is dead', () => {
+    const players = [
+      { id: 'local', team: 'CT' as const, alive: false, position: { x: 0, y: 0, z: -50 } },
+      { id: 'other', team: 'T' as const, alive: true, position: { x: 0, y: 0, z: -25 } },
+      { id: 'observed', team: 'CT' as const, alive: true, position: { x: 0, y: 0, z: 50 } },
+    ];
+
+    expect(selectReferenceZ(players, 'local', 'observed')).toBe(50);
+    expect(resolveMapImage(map, selectReferenceZ(players, 'local', 'observed'))).toBe(
+      '/maps/de_example/upper.png',
+    );
+
+    players[0].alive = true;
+    expect(selectReferenceZ(players, 'local', 'observed')).toBe(-50);
+
+    players[0].alive = false;
+    players[1].alive = false;
+    players[2].alive = false;
+    expect(selectReferenceZ(players, 'local')).toBe(-50);
+  });
+
+  it('ignores a dead observed player and prefers a live local teammate', () => {
+    const players = [
+      {
+        id: 'local',
+        team: 'CT' as const,
+        alive: false,
+        position: { x: 0, y: 0, z: 50 },
+      },
+      {
+        id: 'observed',
+        team: 'T' as const,
+        alive: false,
+        position: { x: 0, y: 0, z: 50 },
+      },
+      {
+        id: 'live-enemy',
+        team: 'T' as const,
+        alive: true,
+        position: { x: 0, y: 0, z: 25 },
+      },
+      {
+        id: 'live-teammate',
+        team: 'CT' as const,
+        alive: true,
+        position: { x: 0, y: 0, z: -50 },
+      },
+    ];
+
+    const referenceZ = selectReferenceZ(
+      players,
+      'local',
+      'observed',
+      'CT',
+    );
+    expect(referenceZ).toBe(-50);
+    expect(resolveMapImage(map, referenceZ)).toBe('/maps/de_example/lower.png');
+
+    players[1].alive = true;
+    players[1].position = { x: Number.NaN, y: 0, z: 50 };
+    expect(selectReferenceZ(players, 'local', 'observed', 'CT')).toBe(-50);
   });
 
   it('converts counter-clockwise game yaw to clockwise CSS rotation', () => {

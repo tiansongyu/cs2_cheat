@@ -102,6 +102,7 @@
     <ClInclude Include="src\core\game\fixed_map_catalog.hpp" />
     <ClInclude Include="src\core\game\fixed_map_radar.hpp" />
     <ClInclude Include="src\core\game\game_snapshot.hpp" />
+    <ClInclude Include="src\core\game\radar_player_sample.hpp" />
     <ClInclude Include="src\core\game\web_radar_json.hpp" />
     <ClInclude Include="src\core\memory\game_layout.hpp" />
     <ClInclude Include="src\core\memory\memory.hpp" />

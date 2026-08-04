@@ -94,6 +94,7 @@ export interface SnapshotMessage {
     connected?: boolean;
   };
   localPlayerId?: string | null;
+  observedPlayerId?: string | null;
   localTeam?: Team;
   players: PlayerSnapshot[];
   bomb: BombSnapshot;
@@ -237,6 +238,20 @@ export function parseServerMessage(raw: string): ServerMessage | null {
     value.localPlayerId !== undefined &&
     value.localPlayerId !== null &&
     typeof value.localPlayerId !== 'string'
+  ) {
+    return null;
+  }
+  if (
+    value.observedPlayerId !== undefined &&
+    value.observedPlayerId !== null &&
+    typeof value.observedPlayerId !== 'string'
+  ) {
+    return null;
+  }
+  if (
+    value.localTeam !== undefined &&
+    (typeof value.localTeam !== 'string' ||
+      !teams.has(value.localTeam as Team))
   ) {
     return null;
   }
