@@ -415,7 +415,10 @@ namespace
         writer.raw(",\"position\":");
         appendPosition(writer, player.position);
         writer.raw(",\"yaw\":");
-        writer.number(player.yaw);
+        if (player.yaw)
+            writer.number(*player.yaw);
+        else
+            writer.raw("null");
         writer.raw(",\"health\":");
         writer.integer(player.health);
         writer.raw(",\"armor\":");

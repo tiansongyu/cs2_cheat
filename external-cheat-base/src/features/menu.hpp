@@ -82,6 +82,12 @@ namespace menu
         bool espFlashIndicator = false;
         bool antiFlash = false;
         bool espViewAngle = true;
+        bool localRadarEnabled = false;
+        bool localRadarShowNames = true;
+        float localRadarAnchorX = 0.02f;
+        float localRadarAnchorY = 0.08f;
+        float localRadarSize = 0.32f;
+        float localRadarMarkerSize = 12.0f;
         bool webRadarEnabled = false;
         bool webRadarLanAccess = false;
         bool webRadarPauseWhenUnfocused = true;
@@ -118,7 +124,8 @@ namespace menu
 
         [[nodiscard]] bool radarSnapshotEnabled() const noexcept
         {
-            return webRadarEnabled || publicRelayEnabled;
+            return localRadarEnabled || webRadarEnabled ||
+                publicRelayEnabled;
         }
     };
 
@@ -185,8 +192,19 @@ namespace menu
     // 2=force 4:3 black bars, 3=force 16:10 black bars.
     inline int viewportMode = 0;
 
-    // Fixed-map Web Radar settings. The HTTP service is local-only unless the
-    // user explicitly enables LAN access; stream URLs always carry a token.
+    // The local overlay and browser use the same fixed north-up map catalogue
+    // and full GameSnapshot. Position values are normalized to the available
+    // viewport so resolution and black-bar changes do not move the panel out
+    // of bounds.
+    inline bool localRadarEnabled = false;
+    inline bool localRadarShowNames = true;
+    inline float localRadarAnchorX = 0.02f;
+    inline float localRadarAnchorY = 0.08f;
+    inline float localRadarSize = 0.32f;
+    inline float localRadarMarkerSize = 12.0f;
+
+    // Fixed-map browser Radar settings. The HTTP service is local-only unless
+    // the user explicitly enables LAN access; stream URLs always carry a token.
     inline bool webRadarEnabled = false;
     inline bool webRadarLanAccess = false;
     inline bool webRadarPauseWhenUnfocused = true;
@@ -280,6 +298,24 @@ namespace menu
         config.espFlashIndicator = espFlashIndicator;
         config.antiFlash = antiFlash;
         config.espViewAngle = espViewAngle;
+        config.localRadarEnabled = localRadarEnabled;
+        config.localRadarShowNames = localRadarShowNames;
+        config.localRadarAnchorX = std::clamp(
+            localRadarAnchorX,
+            0.0f,
+            1.0f);
+        config.localRadarAnchorY = std::clamp(
+            localRadarAnchorY,
+            0.0f,
+            1.0f);
+        config.localRadarSize = std::clamp(
+            localRadarSize,
+            0.18f,
+            0.65f);
+        config.localRadarMarkerSize = std::clamp(
+            localRadarMarkerSize,
+            6.0f,
+            24.0f);
         config.webRadarEnabled = webRadarEnabled;
         config.webRadarLanAccess = webRadarLanAccess;
         config.webRadarPauseWhenUnfocused =
@@ -701,6 +737,7 @@ namespace menu
         ImGui::Checkbox("Player ESP", &espEnabled);
         ImGui::Checkbox("Aimbot", &aimbotEnabled);
         ImGui::Checkbox("Triggerbot", &triggerbotEnabled);
+        ImGui::Checkbox("Local map Radar", &localRadarEnabled);
         ImGui::Checkbox("Web Radar", &webRadarEnabled);
         ImGui::Checkbox("Bomb timer", &bombTimer);
         EndCard();
@@ -967,16 +1004,57 @@ namespace menu
         }
     }
 
-    // Render the independent fixed-map browser radar controls. There is no
-    // circular in-overlay radar: all map rendering happens in the web client.
+    // Local and browser modes consume the same complete GameSnapshot and map
+    // catalogue. Neither mode rotates or distance-crops the north-up map.
     inline void RenderRadarTab()
     {
         ImGui::TextColored(
             ImVec4(0.330f, 0.800f, 1.000f, 1.0f),
-            "FIXED-MAP WEB RADAR");
+            "LOCAL FIXED-MAP OVERLAY");
         ImGui::TextWrapped(
-            "North-up map rendering in a browser, served by the embedded "
-            "CivetWeb instance. It runs independently from the SDL overlay.");
+            "Draws the complete north-up map inside the game overlay. It "
+            "uses the same images and calibration as Web Radar; only player "
+            "direction markers rotate.");
+        ImGui::Spacing();
+
+        ImGui::Checkbox("Enable local map overlay", &localRadarEnabled);
+        if (localRadarEnabled) {
+            ImGui::Checkbox("Show player names", &localRadarShowNames);
+            ImGui::SliderFloat(
+                "Horizontal position",
+                &localRadarAnchorX,
+                0.0f,
+                1.0f,
+                "%.2f");
+            ImGui::SliderFloat(
+                "Vertical position",
+                &localRadarAnchorY,
+                0.0f,
+                1.0f,
+                "%.2f");
+            ImGui::SliderFloat(
+                "Map size",
+                &localRadarSize,
+                0.18f,
+                0.65f,
+                "%.2f");
+            ImGui::SliderFloat(
+                "Player marker size",
+                &localRadarMarkerSize,
+                6.0f,
+                24.0f,
+                "%.0f px");
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::TextColored(
+            ImVec4(0.330f, 0.800f, 1.000f, 1.0f),
+            "EMBEDDED BROWSER RADAR");
+        ImGui::TextWrapped(
+            "Serves the same fixed map through the embedded CivetWeb service "
+            "for a local browser or trusted LAN viewers.");
         ImGui::Spacing();
 
         ImGui::Checkbox("Enable Web Radar", &webRadarEnabled);
@@ -985,8 +1063,11 @@ namespace menu
         ImGui::Checkbox("Allow viewers on this LAN", &webRadarLanAccess);
 
         ImGui::Checkbox(
-            "Pause all Radar sampling when CS2 loses focus",
+            "Pause browser/Relay sampling when CS2 loses focus",
             &webRadarPauseWhenUnfocused);
+        ImGui::TextWrapped(
+            "The local overlay always pauses when CS2 is unfocused; only "
+            "explicitly shared viewers can opt into background sampling.");
         ImGui::Checkbox(
             "Share Steam IDs (profile links)",
             &webRadarIncludeSteamIds);
@@ -1314,9 +1395,9 @@ namespace menu
             "Shared Web Radar, bomb state and moving world entities.");
         BeginCard(
             "##RadarCard",
-            "Web Radar",
-            "A fixed north-up browser map served by embedded CivetWeb.",
-            650.0f);
+            "Fixed-map Radar",
+            "One north-up map model for the local overlay, CivetWeb and Relay.",
+            870.0f);
         RenderRadarTab();
         EndCard();
         ImGui::Spacing();
@@ -1481,7 +1562,7 @@ namespace menu
         NavigationButton("Overview", 0, navigationSize);
         NavigationButton("Combat", 1, navigationSize);
         NavigationButton("Player visuals", 2, navigationSize);
-        NavigationButton("World & Web Radar", 3, navigationSize);
+        NavigationButton("World & Radar", 3, navigationSize);
         NavigationButton("System", 4, navigationSize);
 
         const float footerHeight = 104.0f * dpiScale;

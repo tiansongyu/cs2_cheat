@@ -31,8 +31,13 @@ interface RadarMapProps {
 const competitivePalette = ['#9aa4b2', '#5ab4ff', '#b88cff', '#72d69d', '#ffd166', '#ff8c69'];
 
 function playerAccent(player: PlayerSnapshot): string {
-  if (player.competitiveColor !== undefined) {
-    return competitivePalette[Math.abs(player.competitiveColor) % competitivePalette.length];
+  if (
+    Number.isInteger(player.competitiveColor) &&
+    player.competitiveColor !== undefined &&
+    player.competitiveColor >= 0 &&
+    player.competitiveColor < competitivePalette.length
+  ) {
+    return competitivePalette[player.competitiveColor];
   }
   return player.team === 'CT' ? '#56c7f2' : player.team === 'T' ? '#f1b95b' : '#a1a8af';
 }
@@ -156,22 +161,23 @@ export function RadarMap({
               const floorOffset = level
                 ? player.position.z < level.minZ
                   ? 'lower'
-                  : player.position.z > level.maxZ
+                  : player.position.z >= level.maxZ
                     ? 'upper'
                     : null
                 : null;
-              const wrappedHeading = cssHeadingFromGameYaw(player.yaw ?? 0);
-              const heading = unwrapHeading(
-                playerHeadings.current.get(player.id),
-                wrappedHeading,
-              );
-              playerHeadings.current.set(player.id, heading);
+              const heading = player.yaw === null
+                ? undefined
+                : unwrapHeading(
+                    playerHeadings.current.get(player.id),
+                    cssHeadingFromGameYaw(player.yaw),
+                  );
+              if (heading !== undefined) playerHeadings.current.set(player.id, heading);
               const style = {
                 left: `${point.x * 100}%`,
                 top: `${point.y * 100}%`,
                 '--player-size': `${settings.playerSize}px`,
                 '--player-accent': playerAccent(player),
-                '--heading': `${heading}deg`,
+                '--heading': `${heading ?? 0}deg`,
               } as CSSProperties;
               return (
                 <div
@@ -184,7 +190,9 @@ export function RadarMap({
                   key={player.id}
                   title={`${player.name || 'ANONYMOUS'} · ${player.health} HP`}
                 >
-                  {player.alive ? <i className="direction-arrow" /> : <i className="death-mark">×</i>}
+                  {player.alive ? (
+                    <i className={`direction-arrow ${heading === undefined ? 'has-no-heading' : ''}`} />
+                  ) : <i className="death-mark">×</i>}
                   {floorOffset && (
                     <i className={`floor-mark is-${floorOffset}`}>
                       {floorOffset === 'upper' ? '↑' : '↓'}

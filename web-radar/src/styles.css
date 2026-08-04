@@ -901,7 +901,6 @@ input:focus-visible {
   height: 100%;
   object-fit: fill;
   user-select: none;
-  filter: saturate(0.62) contrast(1.07) brightness(0.75);
 }
 
 .map-player {
@@ -939,6 +938,10 @@ input:focus-visible {
   content: "";
   filter: drop-shadow(1px 0 0 #101417);
   transform: translateY(-50%);
+}
+
+.direction-arrow.has-no-heading::after {
+  display: none;
 }
 
 .map-player.is-local .direction-arrow {

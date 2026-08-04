@@ -46,6 +46,7 @@ namespace sdl_renderer
     void setInteractiveRect(float x, float y, float width, float height);
     float getDpiScale();
     uint32_t getDpiRevision();
+    uint64_t getRendererRevision();
 
     bool initImGui();
     void shutdownImGui();

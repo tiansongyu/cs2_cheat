@@ -25,7 +25,7 @@ on:
       - 'deploy/public-relay/**'
       - 'docs/public-radar-relay-design.md'
       - 'vendor/civetweb/**'
-      - 'scripts/sync_web_radar_maps.py'
+      - 'scripts/**'
       - 'Dockerfile'
       - '.dockerignore'
       - 'LICENSE'
@@ -42,6 +42,8 @@ jobs:
     - uses: actions/checkout@v5
       with:
         ref: ${{ inputs.source_sha || github.sha }}
+    - name: Verify generated fixed-map catalog
+      run: python3 scripts/generate_fixed_map_catalog.py --check
     - name: Build viewport regression tests
       run: |
         g++ -std=c++20 -O2 -Wall -Wextra -Werror \
@@ -103,6 +105,9 @@ jobs:
         npm ci
         npm test
         npm run build
+    - name: Validate Web Radar static bundle
+      working-directory: web-radar
+      run: node scripts/validate-bundle.mjs dist
     - name: Upload Web Radar static bundle
       uses: actions/upload-artifact@v4
       with:
@@ -183,6 +188,11 @@ jobs:
         name: web-radar-static
         path: web-radar/dist
 
+    - name: Setup Node.js for bundle validation
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v3
 
@@ -199,12 +209,19 @@ jobs:
           "x64/Release/SDL2.dll",
           "x64/Release/web-radar/dist/index.html",
           "x64/Release/web-radar/dist/maps/manifest.json",
+          "x64/Release/web-radar/dist/maps/de_dust2/radar.png",
+          "x64/Release/web-radar/dist/maps/NOTICE.txt",
+          "x64/Release/web-radar/dist/maps/SOURCE.json",
           "x64/Release/CIVETWEB-LICENSE.md"
         )
         foreach ($path in $required) {
           if (-not (Test-Path $path)) {
             throw "Missing release artifact: $path"
           }
+        }
+        node web-radar/scripts/validate-bundle.mjs x64/Release/web-radar/dist
+        if ($LASTEXITCODE -ne 0) {
+          throw "Copied Web Radar bundle validation failed"
         }
 
     - name: Compress Release Artifacts

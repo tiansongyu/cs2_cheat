@@ -4,6 +4,7 @@
 #include "features/menu.hpp"
 #include "features/web_radar/public_relay_producer.hpp"
 #include "features/web_radar/web_radar_service.hpp"
+#include "features/local_radar/local_fixed_radar.hpp"
 #include "core/game/web_radar_json.hpp"
 #include "core/diagnostics.hpp"
 #include <algorithm>
@@ -715,6 +716,7 @@ int main(int argc, char* argv[])
         }
         if (!sdl_renderer::initImGui()) {
             showFatalError(L"Unable to initialize ImGui.");
+            local_fixed_radar::reset();
             sdl_renderer::destroy();
             memory::Close();
             return -1;
@@ -749,6 +751,7 @@ int main(int argc, char* argv[])
         }
 
         sdl_renderer::shutdownImGui();
+        local_fixed_radar::reset();
         sdl_renderer::destroy();
         if (!sdl_renderer::running) {
             break;
@@ -762,6 +765,7 @@ int main(int argc, char* argv[])
             diagnostics::log(
                 L"Game attach failed or raced with shutdown; retrying.");
             sdl_renderer::shutdownImGui();
+            local_fixed_radar::reset();
             sdl_renderer::destroy();
             esp::clearRuntimeState();
             memory::Close();
@@ -770,9 +774,9 @@ int main(int argc, char* argv[])
             continue;
         }
 
-        // ESP/aim sampling remains 240 Hz. The browser stream is serialized at
-        // 20 Hz, and background sampling is opt-in; input features always stay
-        // foreground-gated even when shared radar sampling continues.
+        // ESP/aim sampling remains 240 Hz. Complete Radar snapshots and shared
+        // streams update at 20 Hz, while background sampling is opt-in; input
+        // features always stay foreground-gated when shared Radar continues.
         std::atomic<bool> dataRunning{true};
         std::thread dataThread(
             [&dataRunning, &webRadar, &publicRelay]() {
@@ -791,7 +795,8 @@ int main(int argc, char* argv[])
                 const bool radarSamplingEnabled =
                     config.radarSnapshotEnabled();
                 const bool backgroundRadarSampling =
-                    radarSamplingEnabled &&
+                    (config.webRadarEnabled ||
+                     config.publicRelayEnabled) &&
                     !config.webRadarPauseWhenUnfocused;
                 if (!gameForeground && !backgroundRadarSampling) {
                     if (!stateClearedWhileInactive) {
@@ -897,6 +902,25 @@ int main(int argc, char* argv[])
                  menu::aimbotShowFOV)) {
                 esp::render();
             }
+            const menu::RuntimeConfig renderConfig =
+                menu::getRuntimeConfig();
+            if (renderConfig.localRadarEnabled) {
+                const esp::GameSnapshot snapshot =
+                    esp::getGameSnapshot();
+                if (snapshot) {
+                    local_fixed_radar::render(
+                        *snapshot,
+                        local_fixed_radar::RenderConfig{
+                            renderConfig.localRadarAnchorX,
+                            renderConfig.localRadarAnchorY,
+                            renderConfig.localRadarSize,
+                            renderConfig.localRadarMarkerSize,
+                            renderConfig.localRadarShowNames
+                        });
+                }
+            } else {
+                local_fixed_radar::reset();
+            }
             esp::renderBombTimer();
             menu::render();
             {
@@ -927,6 +951,7 @@ int main(int argc, char* argv[])
         dataRunning.store(false, std::memory_order_relaxed);
         dataThread.join();
         sdl_renderer::shutdownImGui();
+        local_fixed_radar::reset();
         sdl_renderer::destroy();
         esp::clearRuntimeState();
         {

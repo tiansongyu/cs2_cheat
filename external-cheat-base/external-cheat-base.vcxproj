@@ -66,10 +66,10 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>SDL2.lib;SDL2main.lib;Ws2_32.lib;Shell32.lib;Bcrypt.lib;Winhttp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>SDL2.lib;SDL2main.lib;Ws2_32.lib;Shell32.lib;Bcrypt.lib;Winhttp.lib;Ole32.lib;Windowscodecs.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy /Y "$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64\SDL2.dll" "$(OutDir)"&#xD;&#xA;copy /Y "$(SolutionDir)vendor\civetweb\LICENSE.md" "$(OutDir)CIVETWEB-LICENSE.md"&#xD;&#xA;if exist "$(SolutionDir)web-radar\dist\index.html" xcopy /E /I /Y "$(SolutionDir)web-radar\dist" "$(OutDir)web-radar\dist"</Command>
+      <Command>xcopy /Y "$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64\SDL2.dll" "$(OutDir)"&#xD;&#xA;copy /Y "$(SolutionDir)vendor\civetweb\LICENSE.md" "$(OutDir)CIVETWEB-LICENSE.md"&#xD;&#xA;if not exist "$(SolutionDir)web-radar\dist\index.html" (echo Build web-radar before MSBuild. &amp; exit /b 1)&#xD;&#xA;node "$(SolutionDir)web-radar\scripts\validate-bundle.mjs" "$(SolutionDir)web-radar\dist" || exit /b 1&#xD;&#xA;if exist "$(OutDir)web-radar\dist" rmdir /S /Q "$(OutDir)web-radar\dist"&#xD;&#xA;xcopy /E /I /Y "$(SolutionDir)web-radar\dist" "$(OutDir)web-radar\dist"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -88,10 +88,10 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>false</GenerateDebugInformation>
-      <AdditionalDependencies>SDL2.lib;SDL2main.lib;Ws2_32.lib;Shell32.lib;Bcrypt.lib;Winhttp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>SDL2.lib;SDL2main.lib;Ws2_32.lib;Shell32.lib;Bcrypt.lib;Winhttp.lib;Ole32.lib;Windowscodecs.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy /Y "$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64\SDL2.dll" "$(OutDir)"&#xD;&#xA;copy /Y "$(SolutionDir)vendor\civetweb\LICENSE.md" "$(OutDir)CIVETWEB-LICENSE.md"&#xD;&#xA;if exist "$(SolutionDir)web-radar\dist\index.html" xcopy /E /I /Y "$(SolutionDir)web-radar\dist" "$(OutDir)web-radar\dist"</Command>
+      <Command>xcopy /Y "$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64\SDL2.dll" "$(OutDir)"&#xD;&#xA;copy /Y "$(SolutionDir)vendor\civetweb\LICENSE.md" "$(OutDir)CIVETWEB-LICENSE.md"&#xD;&#xA;if not exist "$(SolutionDir)web-radar\dist\index.html" (echo Build web-radar before MSBuild. &amp; exit /b 1)&#xD;&#xA;node "$(SolutionDir)web-radar\scripts\validate-bundle.mjs" "$(SolutionDir)web-radar\dist" || exit /b 1&#xD;&#xA;if exist "$(OutDir)web-radar\dist" rmdir /S /Q "$(OutDir)web-radar\dist"&#xD;&#xA;xcopy /E /I /Y "$(SolutionDir)web-radar\dist" "$(OutDir)web-radar\dist"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -99,6 +99,7 @@
     <ClInclude Include="generated\client_dll.hpp" />
     <ClInclude Include="generated\offsets.hpp" />
     <ClInclude Include="src\core\diagnostics.hpp" />
+    <ClInclude Include="src\core\game\fixed_map_catalog.hpp" />
     <ClInclude Include="src\core\game\fixed_map_radar.hpp" />
     <ClInclude Include="src\core\game\game_snapshot.hpp" />
     <ClInclude Include="src\core\game\web_radar_json.hpp" />
@@ -108,6 +109,7 @@
     <ClInclude Include="src\core\renderer\viewport_math.hpp" />
     <ClInclude Include="src\features\esp.hpp" />
     <ClInclude Include="src\features\aimbot.hpp" />
+    <ClInclude Include="src\features\local_radar\local_fixed_radar.hpp" />
     <ClInclude Include="src\features\menu.hpp" />
     <ClInclude Include="src\features\web_radar\public_relay_config.hpp" />
     <ClInclude Include="src\features\web_radar\public_relay_producer.hpp" />
@@ -128,6 +130,7 @@
   <ItemGroup>
     <ClCompile Include="src\features\esp.cpp" />
     <ClCompile Include="src\features\aimbot.cpp" />
+    <ClCompile Include="src\features\local_radar\local_fixed_radar.cpp" />
     <ClCompile Include="src\features\web_radar\public_relay_producer.cpp" />
     <ClCompile Include="src\features\web_radar\web_radar_service.cpp" />
     <ClCompile Include="src\main.cpp" />

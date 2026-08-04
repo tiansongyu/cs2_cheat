@@ -50,6 +50,13 @@ namespace game::fixed_map_radar
         std::optional<std::size_t> levelIndex;
     };
 
+    struct ScreenDirection
+    {
+        float x{};
+        float y{};
+        bool valid{};
+    };
+
     [[nodiscard]] inline bool isFinite(const WorldPosition& position) noexcept
     {
         return std::isfinite(position.x)
@@ -159,5 +166,24 @@ namespace game::fixed_map_radar
         }
 
         return wrapDegrees(90.0f - yawDegrees + spriteOffsetDegrees);
+    }
+
+    // On a fixed north-up map, CS yaw 0 points to screen-right/east and
+    // positive yaw turns toward screen-up/north. This vector is independent
+    // from the authored orientation of any icon sprite.
+    [[nodiscard]] inline ScreenDirection yawToScreenDirection(
+        float yawDegrees) noexcept
+    {
+        if (!std::isfinite(yawDegrees))
+            return {};
+
+        constexpr float degreesToRadians =
+            3.14159265358979323846f / 180.0f;
+        const float radians = yawDegrees * degreesToRadians;
+        return ScreenDirection{
+            std::cos(radians),
+            -std::sin(radians),
+            true
+        };
     }
 }

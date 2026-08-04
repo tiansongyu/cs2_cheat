@@ -8,8 +8,10 @@ RUN npm ci
 COPY web-radar/index.html web-radar/vite.config.ts web-radar/tsconfig*.json ./
 COPY web-radar/src/ src/
 COPY web-radar/public/ public/
+COPY web-radar/scripts/ scripts/
 RUN npm test \
-    && npm run build
+    && npm run build \
+    && node scripts/validate-bundle.mjs dist
 
 FROM ubuntu:24.04 AS builder
 
@@ -21,6 +23,7 @@ RUN apt-get update \
         gcc-mingw-w64-x86-64-posix \
         g++ \
         g++-mingw-w64-x86-64-posix \
+        python3 \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -32,7 +35,11 @@ WORKDIR /workspace
 COPY external-cheat-base/ external-cheat-base/
 COPY tests/ tests/
 COPY vendor/ vendor/
+COPY scripts/generate_fixed_map_catalog.py scripts/generate_fixed_map_catalog.py
 COPY --from=web-radar-builder /web-radar/dist/ web-radar/dist/
+COPY --from=web-radar-builder /web-radar/public/maps/ web-radar/public/maps/
+
+RUN python3 scripts/generate_fixed_map_catalog.py --check
 
 RUN g++ \
         -std=c++20 \
@@ -145,6 +152,7 @@ RUN set -eu; \
     && for source in \
         external-cheat-base/src/features/esp.cpp \
         external-cheat-base/src/features/aimbot.cpp \
+        external-cheat-base/src/features/local_radar/local_fixed_radar.cpp \
         external-cheat-base/src/features/web_radar/public_relay_producer.cpp \
         external-cheat-base/src/features/web_radar/web_radar_service.cpp \
         external-cheat-base/src/main.cpp \
@@ -207,6 +215,7 @@ RUN mkdir -p /artifacts \
         -Iexternal-cheat-base/generated \
         external-cheat-base/src/features/esp.cpp \
         external-cheat-base/src/features/aimbot.cpp \
+        external-cheat-base/src/features/local_radar/local_fixed_radar.cpp \
         external-cheat-base/src/features/web_radar/public_relay_producer.cpp \
         external-cheat-base/src/features/web_radar/web_radar_service.cpp \
         external-cheat-base/src/main.cpp \
@@ -229,6 +238,9 @@ RUN mkdir -p /artifacts \
         -lshell32 \
         -lbcrypt \
         -lwinhttp \
+        -lole32 \
+        -lwindowscodecs \
+        -luuid \
         -pthread \
         -static \
         -static-libgcc \

@@ -6,7 +6,10 @@ RUN npm ci
 COPY web-radar/index.html web-radar/vite.config.ts web-radar/tsconfig*.json ./
 COPY web-radar/src ./src
 COPY web-radar/public ./public
-RUN npm test && npm run build
+COPY web-radar/scripts ./scripts
+RUN npm test \
+    && npm run build \
+    && node scripts/validate-bundle.mjs dist
 
 FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build
 

@@ -79,13 +79,25 @@ Step-by-step tutorials on game reverse engineering:
 2. Run the program, press **F4** to open menu
 3. Press **F4** to hide menu for normal gameplay
 
-### Fixed-map Web Radar
+### Fixed-map Radar
 
-Web Radar is a standalone browser page, not a circular overlay radar. It keeps the complete map north-up while rotating only player direction markers, and supports multi-level maps, team panels, and C4 timing.
+Radar no longer uses a player-centred circular or rotating view. The local SDL
+overlay, embedded CivetWeb page, and public Relay share one north-up full-map
+catalogue, calibration model, and complete player snapshot. The map stays fixed;
+all available T/CT players are placed in world coordinates and living-player
+markers rotate with yaw. Death, dormant, floor, and C4 states have distinct marks.
 
-1. Press **F4** and enable the embedded service under the Web Radar settings.
-2. Open the token-bearing URL shown in the menu. The default endpoint is `127.0.0.1:22006`, so only the same computer can access it.
+1. Press **F4**, open **World & Radar**, and enable **Local map overlay** to
+   render the full fixed map in the game overlay. Position, size, marker size,
+   and player names are configurable.
+2. For a browser view, enable **Web Radar** and open the token-bearing URL shown
+   in the menu. The default endpoint is `127.0.0.1:22006`, so only the same
+   computer can access it.
 3. To view it on a phone or tablet on the same trusted LAN, explicitly enable LAN binding and replace `127.0.0.1` in the copied URL with this PC's private LAN IPv4 address. Keep the token in the URL.
+
+The local overlay loads the exact same 1024×1024 PNG files from
+`web-radar/dist/maps` next to the executable. Always distribute the complete
+`web-radar/dist` directory with the program.
 
 The LAN token prevents access by clients that do not have the link; it does not add TLS to HTTP/WS. Never port-forward the service, expose it through a public tunnel, or share it over an untrusted Wi-Fi network. Restrict any Windows Firewall rule to private networks. See the [Web Radar design](docs/web-radar-design.md) for the architecture, security boundaries, and optimization roadmap.
 

@@ -1,6 +1,6 @@
 # Fixed Web Radar
 
-Clean-room React/Vite frontend for both the embedded CivetWeb service and the public Radar Relay. The map is always north-up; player markers rotate instead of the map.
+Clean-room React/Vite frontend for both the embedded CivetWeb service and the public Radar Relay. Its map catalogue and PNG files are also consumed by the optional native SDL overlay. The map is always north-up; player markers rotate instead of the map.
 
 ## Build and verify
 
@@ -10,9 +10,14 @@ Requires Node.js 20.19+ (or 22.12+).
 npm ci
 npm test
 npm run build
+node scripts/validate-bundle.mjs dist
 ```
 
 `dist/` is the CivetWeb static root. Vite copies `public/maps/` to `dist/maps/` during the build.
+The validator checks every manifest image, enforces safe map-relative paths and
+1024×1024 PNGs, and verifies the required map attribution metadata. The whole
+directory must remain next to the Windows executable because the local overlay
+loads the same map files through WIC.
 
 ## Endpoints
 

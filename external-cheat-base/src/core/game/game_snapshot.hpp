@@ -83,7 +83,10 @@ namespace game
         bool dormant{};
 
         std::optional<WorldPosition> position;
-        float yaw{};
+        // Missing when the current pawn angle could not be sampled. Keeping
+        // this distinct from a real 0-degree/east heading prevents renderers
+        // from inventing a direction arrow.
+        std::optional<float> yaw;
 
         int health{};
         int armor{};

@@ -64,6 +64,7 @@ namespace
     std::atomic<bool> dpiAwarenessReliable{ false };
     std::atomic<bool> gameOnSingleMonitor{ true };
     std::atomic<int> targetRefreshRate{ 144 };
+    std::atomic<uint64_t> rendererRevision{ 0 };
     RECT interactiveRect{};
     WNDPROC originalWindowProc = nullptr;
 
@@ -1026,6 +1027,9 @@ namespace
         acceleratedRenderer.store(
             accelerated,
             std::memory_order_relaxed);
+        if (newRenderer) {
+            rendererRevision.fetch_add(1, std::memory_order_relaxed);
+        }
         return newRenderer;
     }
 
@@ -1693,6 +1697,11 @@ void sdl_renderer::setInteractiveRect(
 uint32_t sdl_renderer::getDpiRevision()
 {
     return dpiRevision;
+}
+
+uint64_t sdl_renderer::getRendererRevision()
+{
+    return rendererRevision.load(std::memory_order_relaxed);
 }
 
 void sdl_renderer::draw::line(int x1, int y1, int x2, int y2, uint8_t r, uint8_t g, uint8_t b, uint8_t a)

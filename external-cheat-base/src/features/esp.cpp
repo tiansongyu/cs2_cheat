@@ -282,7 +282,7 @@ namespace
     std::chrono::steady_clock::time_point lastWorldPositionRefresh{};
     std::chrono::steady_clock::time_point lastBombRefresh{};
     std::chrono::steady_clock::time_point lastMapRefresh{};
-    std::chrono::steady_clock::time_point lastWebSnapshotRefresh{};
+    std::chrono::steady_clock::time_point lastRadarSnapshotRefresh{};
     game::MapState cachedMapState{};
     std::optional<game::WorldPosition> droppedBombPosition;
     uint64_t snapshotSequence = 0;
@@ -375,7 +375,7 @@ void esp::clearRuntimeState()
     lastWorldPositionRefresh = {};
     lastBombRefresh = {};
     lastMapRefresh = {};
-    lastWebSnapshotRefresh = {};
+    lastRadarSnapshotRefresh = {};
     cachedMapState = {};
     droppedBombPosition.reset();
     cachedWorldEntities.clear();
@@ -1065,15 +1065,15 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
     }
 
     const auto updateNow = std::chrono::steady_clock::now();
-    bool captureWebSnapshot = false;
+    bool captureRadarSnapshot = false;
     if (!config.radarSnapshotEnabled()) {
-        lastWebSnapshotRefresh = {};
+        lastRadarSnapshotRefresh = {};
     } else if (
-        lastWebSnapshotRefresh.time_since_epoch().count() == 0 ||
-        updateNow - lastWebSnapshotRefresh >=
+        lastRadarSnapshotRefresh.time_since_epoch().count() == 0 ||
+        updateNow - lastRadarSnapshotRefresh >=
             std::chrono::milliseconds(50)) {
-        lastWebSnapshotRefresh = updateNow;
-        captureWebSnapshot = true;
+        lastRadarSnapshotRefresh = updateNow;
+        captureRadarSnapshot = true;
     }
     if (cachedPawns.empty() ||
         lastEntityCacheRefresh.time_since_epoch().count() == 0 ||
@@ -1089,7 +1089,7 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
     std::vector<game::PlayerSnapshot> sampledPlayers;
     std::optional<uint64_t> sampledLocalPlayerId;
     std::optional<uint64_t> bombCarrierId;
-    if (captureWebSnapshot) {
+    if (captureRadarSnapshot) {
         sampledPlayers.reserve(cachedPawns.size());
         if (lastMapRefresh.time_since_epoch().count() == 0 ||
             updateNow - lastMapRefresh >= std::chrono::seconds(1)) {
@@ -1173,7 +1173,7 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         float enemyYaw = 0.0f;
         float angleToPlayer = 180.0f;
         bool viewAngleKnown = false;
-        if (captureWebSnapshot ||
+        if (captureRadarSnapshot ||
             (config.espEnabled && config.espViewAngle) ||
             (config.headOffsetEnabled && config.aimbotEnabled)) {
             vec3 eyeAngles{};
@@ -1194,7 +1194,7 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
             }
         }
 
-        if (captureWebSnapshot) {
+        if (captureRadarSnapshot) {
             game::PlayerSnapshot player;
             player.id = cp.playerId;
             if (cp.steamId != 0) {
@@ -1212,7 +1212,9 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
                     feetPos.z
                 };
             }
-            player.yaw = viewAngleKnown ? enemyYaw : 0.0f;
+            if (viewAngleKnown) {
+                player.yaw = enemyYaw;
+            }
             player.health = alive ? health : 0;
             player.armor = cp.armor;
             player.money = cp.money;
@@ -1380,7 +1382,7 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         updateBombInfo();
     }
 
-    if (captureWebSnapshot) {
+    if (captureRadarSnapshot) {
         BombInfo sampledBomb;
         {
             std::lock_guard<std::mutex> lock(dataMutex);
