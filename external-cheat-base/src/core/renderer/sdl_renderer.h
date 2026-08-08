@@ -41,6 +41,7 @@ namespace sdl_renderer
     bool isGameDisconnected();
     int getTargetRefreshRate();
     bool isAcceleratedRenderer();
+    bool isVsyncEnabled();
     bool isDpiAwarenessReliable();
     bool isGameOnSingleMonitor();
     void setInteractiveRect(float x, float y, float width, float height);

@@ -61,6 +61,7 @@ namespace
     std::atomic<bool> inputAllowed{ false };
     std::atomic<bool> gameDisconnected{ false };
     std::atomic<bool> acceleratedRenderer{ false };
+    std::atomic<bool> vsyncEnabled{ false };
     std::atomic<bool> dpiAwarenessReliable{ false };
     std::atomic<bool> gameOnSingleMonitor{ true };
     std::atomic<int> targetRefreshRate{ 144 };
@@ -1007,7 +1008,14 @@ namespace
         SDL_Renderer* newRenderer = SDL_CreateRenderer(
             sdl_renderer::window,
             -1,
-            SDL_RENDERER_ACCELERATED);
+            SDL_RENDERER_ACCELERATED |
+                SDL_RENDERER_PRESENTVSYNC);
+        if (!newRenderer) {
+            newRenderer = SDL_CreateRenderer(
+                sdl_renderer::window,
+                -1,
+                SDL_RENDERER_ACCELERATED);
+        }
         if (!newRenderer) {
             newRenderer = SDL_CreateRenderer(
                 sdl_renderer::window,
@@ -1024,8 +1032,14 @@ namespace
             newRenderer &&
             SDL_GetRendererInfo(newRenderer, &rendererInfo) == 0 &&
             (rendererInfo.flags & SDL_RENDERER_ACCELERATED) != 0;
+        const bool synchronized =
+            newRenderer &&
+            (rendererInfo.flags & SDL_RENDERER_PRESENTVSYNC) != 0;
         acceleratedRenderer.store(
             accelerated,
+            std::memory_order_relaxed);
+        vsyncEnabled.store(
+            synchronized,
             std::memory_order_relaxed);
         if (newRenderer) {
             rendererRevision.fetch_add(1, std::memory_order_relaxed);
@@ -1290,6 +1304,7 @@ void sdl_renderer::destroy()
     gameForeground.store(false, std::memory_order_relaxed);
     inputAllowed.store(false, std::memory_order_relaxed);
     acceleratedRenderer.store(false, std::memory_order_relaxed);
+    vsyncEnabled.store(false, std::memory_order_relaxed);
     gameOnSingleMonitor.store(true, std::memory_order_relaxed);
     interactiveRect = {};
     originalWindowProc = nullptr;
@@ -1668,6 +1683,11 @@ int sdl_renderer::getTargetRefreshRate()
 bool sdl_renderer::isAcceleratedRenderer()
 {
     return acceleratedRenderer.load(std::memory_order_relaxed);
+}
+
+bool sdl_renderer::isVsyncEnabled()
+{
+    return vsyncEnabled.load(std::memory_order_relaxed);
 }
 
 bool sdl_renderer::isDpiAwarenessReliable()

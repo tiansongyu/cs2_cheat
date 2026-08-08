@@ -59,6 +59,17 @@ RUN g++ \
         -Wextra \
         -Werror \
         -Iexternal-cheat-base/src \
+        tests/runtime_timing_tests.cpp \
+        -o /tmp/runtime_timing_tests \
+    && /tmp/runtime_timing_tests
+
+RUN g++ \
+        -std=c++20 \
+        -O2 \
+        -Wall \
+        -Wextra \
+        -Werror \
+        -Iexternal-cheat-base/src \
         tests/web_radar_model_tests.cpp \
         external-cheat-base/src/core/game/web_radar_json.cpp \
         -o /tmp/web_radar_model_tests \
@@ -190,6 +201,13 @@ RUN set -eu; \
             -o "/tmp/strict/$(basename "$source").o"; \
     done
 
+RUN x86_64-w64-mingw32-windres \
+        -DMINGW_BUILD \
+        -Iexternal-cheat-base \
+        -O coff \
+        external-cheat-base/resources/app.rc \
+        -o /tmp/app-resources.o
+
 RUN mkdir -p /artifacts \
     && x86_64-w64-mingw32-g++-posix \
         -std=c++20 \
@@ -232,6 +250,7 @@ RUN mkdir -p /artifacts \
         /tmp/third-party/civetweb.o \
         /tmp/third-party/CivetServer.o \
         external-cheat-base/vendor/SDL2/lib/x64/SDL2.lib \
+        /tmp/app-resources.o \
         -ldwmapi \
         -lgdi32 \
         -lws2_32 \

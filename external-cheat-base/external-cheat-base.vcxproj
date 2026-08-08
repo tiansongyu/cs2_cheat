@@ -110,6 +110,7 @@
     <ClInclude Include="src\core\memory\memory.hpp" />
     <ClInclude Include="src\core\renderer\sdl_renderer.h" />
     <ClInclude Include="src\core\renderer\viewport_math.hpp" />
+    <ClInclude Include="src\core\runtime_timing.hpp" />
     <ClInclude Include="src\features\esp.hpp" />
     <ClInclude Include="src\features\aimbot.hpp" />
     <ClInclude Include="src\features\local_radar\local_fixed_radar.hpp" />
@@ -151,6 +152,14 @@
     <ClCompile Include="..\vendor\civetweb\src\civetweb.c">
       <CompileAs>CompileAsC</CompileAs>
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="resources\app.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="resources\cs2.ico" />
+    <None Include="resources\app.manifest" />
+    <None Include="resources\NOTICE.txt" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

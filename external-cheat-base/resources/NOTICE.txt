@@ -1,0 +1,8 @@
+The cs2.ico application icon is derived from the official Counter-Strike 2
+Steam app icon retrieved from:
+
+https://shared.akamai.steamstatic.com/community_assets/images/apps/730/8dbc71957312bbd3baea65848b545be9eae2a355.jpg
+
+Counter-Strike 2 and its associated artwork are trademarks and/or copyrighted
+works of Valve Corporation. They are not covered by this repository's MIT
+license.

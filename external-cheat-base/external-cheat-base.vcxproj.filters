@@ -54,6 +54,9 @@
     <ClInclude Include="src\core\renderer\viewport_math.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\core\runtime_timing.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\features\esp.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -167,5 +170,21 @@
     <ClCompile Include="..\vendor\civetweb\src\civetweb.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="resources\app.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="resources\cs2.ico">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <None Include="resources\app.manifest">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="resources\NOTICE.txt">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
 </Project>

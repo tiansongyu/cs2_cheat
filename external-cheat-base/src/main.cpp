@@ -7,6 +7,7 @@
 #include "features/local_radar/local_fixed_radar.hpp"
 #include "core/game/web_radar_json.hpp"
 #include "core/diagnostics.hpp"
+#include "core/runtime_timing.hpp"
 #include <algorithm>
 #include <array>
 #include <bcrypt.h>
@@ -252,7 +253,7 @@ namespace
             lastError_.clear();
 
             if (!desired.enabled) {
-                publishUiStatus();
+                publishUiStatus(true);
                 return;
             }
 
@@ -274,7 +275,7 @@ namespace
                 if (!service->start()) {
                     lastError_ = service->status().lastError;
                     service->stop();
-                    publishUiStatus();
+                    publishUiStatus(true);
                     return;
                 }
 
@@ -283,7 +284,7 @@ namespace
             } catch (const std::exception& error) {
                 lastError_ = error.what();
             }
-            publishUiStatus();
+            publishUiStatus(true);
         }
 
         void publish(
@@ -315,7 +316,7 @@ namespace
         {
             settings_.reset();
             detachAndStop();
-            publishUiStatus();
+            publishUiStatus(true);
         }
 
     private:
@@ -340,8 +341,14 @@ namespace
             }
         }
 
-        void publishUiStatus()
+        void publishUiStatus(bool force = false)
         {
+            const auto now = std::chrono::steady_clock::now();
+            if (!force && now < nextUiStatusPublish_) {
+                return;
+            }
+            nextUiStatusPublish_ = now + std::chrono::milliseconds(250);
+
             menu::WebRadarUiStatus ui;
             ui.bindAddress = settings_ && settings_->lanAccess
                 ? "0.0.0.0"
@@ -377,6 +384,7 @@ namespace
         std::string token_;
         std::string documentRoot_;
         std::string lastError_;
+        std::chrono::steady_clock::time_point nextUiStatusPublish_{};
     };
 
     struct AbandonedPublicRelayProducerSlot final
@@ -436,18 +444,20 @@ namespace
 
             consumeCompletedRetirement();
             if (retirementFailed_ || retirement_) {
-                publishUiStatus();
+                publishUiStatus(settingsChanged);
                 return;
             }
             if (!settings_ || !settings_->enabled) {
-                publishUiStatus();
+                publishUiStatus(settingsChanged);
                 return;
             }
 
             {
                 std::lock_guard<std::mutex> lock(producerMutex_);
                 if (producer_) {
-                    publishUiStatusLockedProducer(producer_);
+                    publishUiStatusLockedProducer(
+                        producer_,
+                        settingsChanged);
                     return;
                 }
             }
@@ -483,7 +493,7 @@ namespace
             } catch (const std::exception& error) {
                 lastError_ = error.what();
             }
-            publishUiStatus();
+            publishUiStatus(true);
         }
 
         void publish(
@@ -525,7 +535,7 @@ namespace
             if (!retirementFailed_) {
                 beginRetirement();
             }
-            publishUiStatus();
+            publishUiStatus(true);
         }
 
     private:
@@ -610,8 +620,12 @@ namespace
 
         void publishUiStatusLockedProducer(
             const std::shared_ptr<
-                web_radar::PublicRelayProducer>& producer)
+                web_radar::PublicRelayProducer>& producer,
+            bool force)
         {
+            if (!beginUiStatusPublish(force)) {
+                return;
+            }
             menu::PublicRelayUiStatus ui;
             const web_radar::PublicRelayStatus status =
                 producer->status();
@@ -626,8 +640,21 @@ namespace
             menu::setPublicRelayStatus(std::move(ui));
         }
 
-        void publishUiStatus()
+        bool beginUiStatusPublish(bool force)
         {
+            const auto now = std::chrono::steady_clock::now();
+            if (!force && now < nextUiStatusPublish_) {
+                return false;
+            }
+            nextUiStatusPublish_ = now + std::chrono::milliseconds(250);
+            return true;
+        }
+
+        void publishUiStatus(bool force = false)
+        {
+            if (!beginUiStatusPublish(force)) {
+                return;
+            }
             menu::PublicRelayUiStatus ui;
             ui.error = lastError_;
             if (retirementFailed_) {
@@ -666,6 +693,7 @@ namespace
         std::optional<Settings> settings_;
         std::string lastError_;
         bool retirementFailed_ = false;
+        std::chrono::steady_clock::time_point nextUiStatusPublish_{};
     };
 }
 
@@ -774,24 +802,39 @@ int main(int argc, char* argv[])
             continue;
         }
 
-        // ESP/aim sampling remains 240 Hz. Complete Radar snapshots and shared
-        // streams update at 20 Hz, while background sampling is opt-in; input
-        // features always stay foreground-gated when shared Radar continues.
+        // Visual sampling follows the display refresh rate. Latency-sensitive
+        // input features retain 240 Hz, while Radar-only work runs at its actual
+        // 20 Hz publication rate instead of consuming a core without visible
+        // benefit.
         std::atomic<bool> dataRunning{true};
         std::thread dataThread(
             [&dataRunning, &webRadar, &publicRelay]() {
-            constexpr auto dataInterval =
-                std::chrono::microseconds(4167);
             constexpr auto radarInterval =
                 std::chrono::milliseconds(50);
             auto nextDataTime = std::chrono::steady_clock::now();
             auto nextRadarTime = nextDataTime;
+            int appliedSamplingRate = 0;
+            int appliedThreadPriority = 0x7FFFFFFF;
             bool stateClearedWhileInactive = false;
             while (dataRunning.load(std::memory_order_relaxed)) {
                 const menu::RuntimeConfig config =
                     menu::getRuntimeConfig();
                 const bool gameForeground =
                     sdl_renderer::isGameForeground();
+                const bool latencySensitive =
+                    gameForeground &&
+                    !config.inputSuppressed &&
+                    (config.aimbotEnabled ||
+                     config.triggerbotEnabled);
+                const int desiredThreadPriority = latencySensitive
+                    ? THREAD_PRIORITY_NORMAL
+                    : THREAD_PRIORITY_BELOW_NORMAL;
+                if (desiredThreadPriority != appliedThreadPriority &&
+                    SetThreadPriority(
+                        GetCurrentThread(),
+                        desiredThreadPriority)) {
+                    appliedThreadPriority = desiredThreadPriority;
+                }
                 const bool radarSamplingEnabled =
                     config.radarSnapshotEnabled();
                 const bool backgroundRadarSampling =
@@ -820,6 +863,26 @@ int main(int argc, char* argv[])
                     continue;
                 }
                 stateClearedWhileInactive = false;
+
+                const runtime_timing::SamplingDemand samplingDemand{
+                    latencySensitive,
+                    gameForeground &&
+                        (config.espEnabled ||
+                         config.grenadeESP ||
+                         config.droppedWeaponESP),
+                    gameForeground &&
+                        (config.antiFlash || config.bombTimer)
+                };
+                const int samplingRate =
+                    runtime_timing::dataSamplingRate(
+                        sdl_renderer::getTargetRefreshRate(),
+                        samplingDemand);
+                if (samplingRate != appliedSamplingRate) {
+                    appliedSamplingRate = samplingRate;
+                    nextDataTime = std::chrono::steady_clock::now();
+                }
+                const auto dataInterval =
+                    runtime_timing::intervalForRate(samplingRate);
 
                 menu::RuntimeConfig samplingConfig = config;
                 if (!gameForeground) {
@@ -861,7 +924,7 @@ int main(int argc, char* argv[])
                 if (nextDataTime > now) {
                     std::this_thread::sleep_until(nextDataTime);
                 } else {
-                    // Never spin continuously when RPM work exceeds the 240 Hz
+                    // Never spin continuously when RPM work exceeds its current
                     // budget. A short backoff keeps one slow map/update from
                     // monopolizing a CPU core.
                     std::this_thread::sleep_for(
@@ -877,12 +940,6 @@ int main(int argc, char* argv[])
         {
             sdl_renderer::pollEvents();
             sdl_renderer::updateWindowPosition();
-            {
-                const menu::RuntimeConfig config =
-                    menu::getRuntimeConfig();
-                webRadar.sync(config);
-                publicRelay.sync(config);
-            }
             if (!sdl_renderer::isGameVisible()) {
                 std::this_thread::sleep_for(
                     std::chrono::milliseconds(25));

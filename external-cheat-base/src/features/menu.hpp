@@ -1273,8 +1273,11 @@ namespace menu
 
         ImGui::TextColored(
             ImVec4(0.5f, 1.0f, 0.5f, 1.0f),
-            "Overlay target: %d FPS (display refresh, VSync OFF)",
-            sdl_renderer::getTargetRefreshRate());
+            "Overlay target: %d FPS (%s)",
+            sdl_renderer::getTargetRefreshRate(),
+            sdl_renderer::isVsyncEnabled()
+                ? "VSync"
+                : "paced fallback");
         ImGui::Text(
             "Renderer: %s",
             sdl_renderer::isAcceleratedRenderer()

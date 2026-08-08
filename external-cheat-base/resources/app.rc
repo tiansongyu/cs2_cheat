@@ -1,0 +1,7 @@
+#define IDI_APP_ICON 101
+
+IDI_APP_ICON ICON "resources/cs2.ico"
+
+#ifdef MINGW_BUILD
+1 24 "resources/app.manifest"
+#endif

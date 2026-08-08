@@ -52,6 +52,13 @@ jobs:
           -o viewport_math_tests
     - name: Run viewport regression tests
       run: ./viewport_math_tests
+    - name: Build and run runtime timing tests
+      run: |
+        g++ -std=c++20 -O2 -Wall -Wextra -Werror \
+          -Iexternal-cheat-base/src \
+          tests/runtime_timing_tests.cpp \
+          -o runtime_timing_tests
+        ./runtime_timing_tests
     - name: Build Web Radar model regression tests
       run: |
         g++ -std=c++20 -O2 -Wall -Wextra -Werror \
