@@ -108,6 +108,7 @@
     <ClInclude Include="src\core\game\web_radar_json.hpp" />
     <ClInclude Include="src\core\memory\game_layout.hpp" />
     <ClInclude Include="src\core\memory\memory.hpp" />
+    <ClInclude Include="src\core\performance_metrics.hpp" />
     <ClInclude Include="src\core\renderer\sdl_renderer.h" />
     <ClInclude Include="src\core\renderer\viewport_math.hpp" />
     <ClInclude Include="src\core\runtime_timing.hpp" />
@@ -117,6 +118,7 @@
     <ClInclude Include="src\features\menu.hpp" />
     <ClInclude Include="src\features\web_radar\public_relay_config.hpp" />
     <ClInclude Include="src\features\web_radar\public_relay_producer.hpp" />
+    <ClInclude Include="src\features\web_radar\snapshot_recorder.hpp" />
     <ClInclude Include="src\features\web_radar\web_radar_config.hpp" />
     <ClInclude Include="src\features\web_radar\web_radar_service.hpp" />
     <ClInclude Include="src\utils\math\vector.hpp" />

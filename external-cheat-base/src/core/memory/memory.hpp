@@ -6,6 +6,8 @@
 
 #include <Windows.h>
 #include <TlHelp32.h>
+#include <atomic>
+#include <cstdint>
 #include <cstring>
 #include <type_traits>
 
@@ -16,6 +18,44 @@ namespace memory
 
 	inline uintptr_t pID = 0;
 	inline bool gWritesAllowed = false;
+
+	struct ReadMetrics
+	{
+		std::uint64_t calls{};
+		std::uint64_t failures{};
+		std::uint64_t bytesRequested{};
+	};
+
+	inline std::atomic<std::uint64_t> gReadCalls{0};
+	inline std::atomic<std::uint64_t> gReadFailures{0};
+	inline std::atomic<std::uint64_t> gReadBytesRequested{0};
+
+	inline void RecordRead(size_t size, bool succeeded) noexcept
+	{
+		gReadCalls.fetch_add(1, std::memory_order_relaxed);
+		gReadBytesRequested.fetch_add(
+			static_cast<std::uint64_t>(size),
+			std::memory_order_relaxed);
+		if (!succeeded) {
+			gReadFailures.fetch_add(1, std::memory_order_relaxed);
+		}
+	}
+
+	inline ReadMetrics GetReadMetrics() noexcept
+	{
+		return ReadMetrics{
+			gReadCalls.load(std::memory_order_relaxed),
+			gReadFailures.load(std::memory_order_relaxed),
+			gReadBytesRequested.load(std::memory_order_relaxed)
+		};
+	}
+
+	inline void ResetReadMetrics() noexcept
+	{
+		gReadCalls.store(0, std::memory_order_relaxed);
+		gReadFailures.store(0, std::memory_order_relaxed);
+		gReadBytesRequested.store(0, std::memory_order_relaxed);
+	}
 
 	uintptr_t GetProcID(const wchar_t* process);
 	uintptr_t GetModuleBaseAddress(uintptr_t procID, const wchar_t* module);
@@ -31,6 +71,7 @@ namespace memory
 
 		value = T{};
 		if (!gHandle || address == 0) {
+			RecordRead(sizeof(T), false);
 			return false;
 		}
 
@@ -43,9 +84,11 @@ namespace memory
 				&bytesRead) ||
 			bytesRead != sizeof(T)) {
 			value = T{};
+			RecordRead(sizeof(T), false);
 			return false;
 		}
 
+		RecordRead(sizeof(T), true);
 		return true;
 	}
 
@@ -71,6 +114,7 @@ namespace memory
 
 		std::memset(buffer, 0, size);
 		if (!gHandle || address == 0) {
+			RecordRead(size, false);
 			return false;
 		}
 
@@ -83,9 +127,11 @@ namespace memory
 				&bytesRead) ||
 			bytesRead != size) {
 			std::memset(buffer, 0, size);
+			RecordRead(size, false);
 			return false;
 		}
 
+		RecordRead(size, true);
 		return true;
 	}
 

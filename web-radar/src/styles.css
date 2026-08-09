@@ -1243,6 +1243,40 @@ input:focus-visible {
   cursor: pointer;
 }
 
+.replay-setting {
+  display: grid;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.replay-file-button,
+.replay-actions button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: #151c22;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.replay-file-button input {
+  display: none;
+}
+
+.replay-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.settings-error {
+  color: var(--danger);
+}
+
 .range-setting {
   display: block;
   margin-top: 15px;

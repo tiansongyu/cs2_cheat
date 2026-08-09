@@ -4,9 +4,11 @@
 #include "features/menu.hpp"
 #include "features/web_radar/public_relay_producer.hpp"
 #include "features/web_radar/web_radar_service.hpp"
+#include "features/web_radar/snapshot_recorder.hpp"
 #include "features/local_radar/local_fixed_radar.hpp"
 #include "core/game/web_radar_json.hpp"
 #include "core/diagnostics.hpp"
+#include "core/performance_metrics.hpp"
 #include "core/runtime_timing.hpp"
 #include <algorithm>
 #include <array>
@@ -306,10 +308,14 @@ namespace
 
             game::web_radar_json::SerializationOptions options;
             options.includeSteamIds = includeSteamIds;
+            const auto serializationStarted =
+                std::chrono::steady_clock::now();
             service->publish(std::make_shared<const std::string>(
                 game::web_radar_json::serializeSnapshotV1(
                     *snapshot,
                     options)));
+            performance_metrics::serializationDuration.record(
+                std::chrono::steady_clock::now() - serializationStarted);
         }
 
         void stop()
@@ -522,10 +528,14 @@ namespace
 
             game::web_radar_json::SerializationOptions options;
             options.includeSteamIds = includeSteamIds;
+            const auto serializationStarted =
+                std::chrono::steady_clock::now();
             producer->publish(std::make_shared<const std::string>(
                 game::web_radar_json::serializeSnapshotV1(
                     *snapshot,
                     options)));
+            performance_metrics::serializationDuration.record(
+                std::chrono::steady_clock::now() - serializationStarted);
         }
 
         void stop()
@@ -724,6 +734,7 @@ int main(int argc, char* argv[])
             argc,
             argv,
             "--allow-memory-writes"));
+    menu::loadPersistentSettings();
 
 #ifndef SHOW_CONSOLE
     FreeConsole();
@@ -731,6 +742,10 @@ int main(int argc, char* argv[])
 
     WebRadarRuntime webRadar;
     PublicRelayRuntime publicRelay;
+    web_radar::SnapshotRecorder snapshotRecorder(
+        menu::persistentSettingsPath().parent_path() / L"recordings");
+    menu::setStartupReport(diagnostics::inspectInstallation(
+        std::filesystem::path(webRadarDocumentRoot())));
 
     while (sdl_renderer::running)
     {
@@ -807,8 +822,10 @@ int main(int argc, char* argv[])
         // 20 Hz publication rate instead of consuming a core without visible
         // benefit.
         std::atomic<bool> dataRunning{true};
+        performance_metrics::resetSession();
+        memory::ResetReadMetrics();
         std::thread dataThread(
-            [&dataRunning, &webRadar, &publicRelay]() {
+            [&dataRunning, &webRadar, &publicRelay, &snapshotRecorder]() {
             constexpr auto radarInterval =
                 std::chrono::milliseconds(50);
             auto nextDataTime = std::chrono::steady_clock::now();
@@ -879,6 +896,9 @@ int main(int argc, char* argv[])
                         samplingDemand);
                 if (samplingRate != appliedSamplingRate) {
                     appliedSamplingRate = samplingRate;
+                    performance_metrics::samplingRateHz.store(
+                        samplingRate,
+                        std::memory_order_relaxed);
                     nextDataTime = std::chrono::steady_clock::now();
                 }
                 const auto dataInterval =
@@ -891,6 +911,8 @@ int main(int argc, char* argv[])
                     samplingConfig.triggerbotEnabled = false;
                     samplingConfig.espEnabled = false;
                 }
+                const auto samplingStarted =
+                    std::chrono::steady_clock::now();
                 esp::updateEntities(samplingConfig);
                 if (gameForeground) {
                     aimbot::update(config);
@@ -899,6 +921,8 @@ int main(int argc, char* argv[])
 
                 const auto sampleComplete =
                     std::chrono::steady_clock::now();
+                performance_metrics::samplingDuration.record(
+                    sampleComplete - samplingStarted);
                 if (radarSamplingEnabled &&
                     sampleComplete >= nextRadarTime) {
                     const esp::GameSnapshot snapshot =
@@ -912,6 +936,20 @@ int main(int argc, char* argv[])
                         publicRelay.publish(
                             snapshot,
                             config.publicRelayIncludeSteamIds);
+                    }
+                    if (config.radarRecordingEnabled && snapshot) {
+                        game::web_radar_json::SerializationOptions options;
+                        options.includePlayerNames = false;
+                        const auto serializationStarted =
+                            std::chrono::steady_clock::now();
+                        snapshotRecorder.publish(
+                            std::make_shared<const std::string>(
+                                game::web_radar_json::serializeSnapshotV1(
+                                    *snapshot,
+                                    options)));
+                        performance_metrics::serializationDuration.record(
+                            std::chrono::steady_clock::now() -
+                            serializationStarted);
                     }
                     nextRadarTime =
                         sampleComplete + radarInterval;
@@ -929,6 +967,9 @@ int main(int argc, char* argv[])
                     // monopolizing a CPU core.
                     std::this_thread::sleep_for(
                         std::chrono::milliseconds(1));
+                    performance_metrics::missedSamplingDeadlines.fetch_add(
+                        1,
+                        std::memory_order_relaxed);
                     nextDataTime = now + dataInterval;
                 }
             }
@@ -938,6 +979,7 @@ int main(int argc, char* argv[])
         while (sdl_renderer::running &&
                !sdl_renderer::isGameDisconnected())
         {
+            const auto renderStarted = std::chrono::steady_clock::now();
             sdl_renderer::pollEvents();
             sdl_renderer::updateWindowPosition();
             if (!sdl_renderer::isGameVisible()) {
@@ -985,10 +1027,14 @@ int main(int argc, char* argv[])
                     menu::getRuntimeConfig();
                 webRadar.sync(config);
                 publicRelay.sync(config);
+                snapshotRecorder.sync(config.radarRecordingEnabled);
+                menu::setRecorderStatus(snapshotRecorder.status());
             }
 
             sdl_renderer::renderImGui();
             sdl_renderer::endFrame();
+            performance_metrics::renderCpuDuration.record(
+                std::chrono::steady_clock::now() - renderStarted);
 
             const int refreshRate = std::max(
                 60,
@@ -1001,6 +1047,9 @@ int main(int argc, char* argv[])
             if (nextRenderTime > now) {
                 std::this_thread::sleep_until(nextRenderTime);
             } else {
+                performance_metrics::missedRenderDeadlines.fetch_add(
+                    1,
+                    std::memory_order_relaxed);
                 nextRenderTime = now;
             }
         }
@@ -1037,6 +1086,9 @@ int main(int argc, char* argv[])
 
     webRadar.stop();
     publicRelay.stop();
+    snapshotRecorder.stop();
+    menu::setRecorderStatus(snapshotRecorder.status());
+    menu::savePersistentSettings();
     memory::Close();
     return 0;
 }

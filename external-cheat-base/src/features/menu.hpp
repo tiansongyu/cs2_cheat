@@ -3,12 +3,18 @@
 #include "imgui.h"
 #include "core/renderer/sdl_renderer.h"
 #include "core/memory/memory.hpp"
+#include "core/diagnostics.hpp"
+#include "core/performance_metrics.hpp"
 #include "features/web_radar/public_relay_config.hpp"
+#include "features/web_radar/snapshot_recorder.hpp"
 #include <Windows.h>
 #include <shellapi.h>
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <cwchar>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -74,6 +80,12 @@ namespace menu
     // ImGui edits these values on the render thread. The worker copies one
     // coherent snapshot under this mutex at the start of each update pass.
     inline std::mutex configMutex;
+    inline diagnostics::StartupReport startupReport;
+
+    inline void setStartupReport(diagnostics::StartupReport report)
+    {
+        startupReport = std::move(report);
+    }
 
     struct RuntimeConfig
     {
@@ -93,6 +105,7 @@ namespace menu
         bool webRadarPauseWhenUnfocused = true;
         bool webRadarIncludeSteamIds = false;
         uint16_t webRadarPort = 22006;
+        bool radarRecordingEnabled = false;
         bool publicRelayEnabled = false;
         bool publicRelayIncludeSteamIds = false;
         std::shared_ptr<const PublicRelayConnectionSettings>
@@ -125,7 +138,7 @@ namespace menu
         [[nodiscard]] bool radarSnapshotEnabled() const noexcept
         {
             return localRadarEnabled || webRadarEnabled ||
-                publicRelayEnabled;
+                publicRelayEnabled || radarRecordingEnabled;
         }
     };
 
@@ -210,6 +223,7 @@ namespace menu
     inline bool webRadarPauseWhenUnfocused = true;
     inline bool webRadarIncludeSteamIds = false;
     inline int webRadarPort = 22006;
+    inline bool radarRecordingEnabled = false;
 
     // Public Relay credentials intentionally live only in process memory and
     // are never included in any settings persistence path. The producer token
@@ -244,6 +258,22 @@ namespace menu
     {
         std::lock_guard<std::mutex> lock(webRadarStatusMutex);
         return webRadarStatus;
+    }
+
+    inline std::mutex recorderStatusMutex;
+    inline web_radar::SnapshotRecorderStatus recorderStatus;
+
+    inline void setRecorderStatus(
+        web_radar::SnapshotRecorderStatus status)
+    {
+        std::lock_guard<std::mutex> lock(recorderStatusMutex);
+        recorderStatus = std::move(status);
+    }
+
+    inline web_radar::SnapshotRecorderStatus getRecorderStatus()
+    {
+        std::lock_guard<std::mutex> lock(recorderStatusMutex);
+        return recorderStatus;
     }
 
     struct PublicRelayUiStatus
@@ -324,6 +354,7 @@ namespace menu
             webRadarIncludeSteamIds;
         config.webRadarPort = static_cast<uint16_t>(
             std::clamp(webRadarPort, 1024, 65535));
+        config.radarRecordingEnabled = radarRecordingEnabled;
         config.publicRelayEnabled = publicRelayEnabled;
         config.publicRelayIncludeSteamIds =
             publicRelayIncludeSteamIds;
@@ -384,6 +415,160 @@ namespace menu
         const RuntimeConfig updated = buildRuntimeConfig();
         std::lock_guard<std::mutex> lock(configMutex);
         runtimeConfigSnapshot = updated;
+    }
+
+    inline std::filesystem::path persistentSettingsPath()
+    {
+        std::array<wchar_t, 32768> localAppData{};
+        const DWORD length = GetEnvironmentVariableW(
+            L"LOCALAPPDATA",
+            localAppData.data(),
+            static_cast<DWORD>(localAppData.size()));
+        std::filesystem::path directory =
+            length > 0 && length < localAppData.size()
+                ? std::filesystem::path(
+                    std::wstring_view(localAppData.data(), length)) /
+                    L"AegisCS2"
+                : std::filesystem::temp_directory_path() / L"AegisCS2";
+        std::error_code error;
+        std::filesystem::create_directories(directory, error);
+        return directory / L"settings-v1.ini";
+    }
+
+    inline int readPersistentInt(
+        const wchar_t* key,
+        const int fallback,
+        const std::filesystem::path& path)
+    {
+        return static_cast<int>(GetPrivateProfileIntW(
+            L"settings",
+            key,
+            fallback,
+            path.c_str()));
+    }
+
+    inline float readPersistentFloat(
+        const wchar_t* key,
+        const float fallback,
+        const std::filesystem::path& path)
+    {
+        std::array<wchar_t, 64> fallbackText{};
+        std::array<wchar_t, 64> value{};
+        swprintf_s(fallbackText.data(), fallbackText.size(), L"%.6f", fallback);
+        GetPrivateProfileStringW(
+            L"settings",
+            key,
+            fallbackText.data(),
+            value.data(),
+            static_cast<DWORD>(value.size()),
+            path.c_str());
+        wchar_t* end = nullptr;
+        const float parsed = std::wcstof(value.data(), &end);
+        return end != value.data() && std::isfinite(parsed)
+            ? parsed
+            : fallback;
+    }
+
+    inline void loadPersistentSettings()
+    {
+        const std::filesystem::path path = persistentSettingsPath();
+        if (readPersistentInt(L"schema", 0, path) != 1) {
+            publishRuntimeConfig();
+            return;
+        }
+
+        viewportMode = std::clamp(
+            readPersistentInt(L"viewport_mode", viewportMode, path),
+            0,
+            3);
+        localRadarShowNames = readPersistentInt(
+            L"local_radar_names",
+            localRadarShowNames ? 1 : 0,
+            path) != 0;
+        localRadarAnchorX = std::clamp(
+            readPersistentFloat(
+                L"local_radar_anchor_x",
+                localRadarAnchorX,
+                path),
+            0.0f,
+            1.0f);
+        localRadarAnchorY = std::clamp(
+            readPersistentFloat(
+                L"local_radar_anchor_y",
+                localRadarAnchorY,
+                path),
+            0.0f,
+            1.0f);
+        localRadarSize = std::clamp(
+            readPersistentFloat(
+                L"local_radar_size",
+                localRadarSize,
+                path),
+            0.18f,
+            0.65f);
+        localRadarMarkerSize = std::clamp(
+            readPersistentFloat(
+                L"local_radar_marker_size",
+                localRadarMarkerSize,
+                path),
+            6.0f,
+            24.0f);
+        webRadarPort = std::clamp(
+            readPersistentInt(L"web_radar_port", webRadarPort, path),
+            1024,
+            65535);
+        webRadarPauseWhenUnfocused = readPersistentInt(
+            L"pause_shared_radar_unfocused",
+            webRadarPauseWhenUnfocused ? 1 : 0,
+            path) != 0;
+        publishRuntimeConfig();
+    }
+
+    inline void writePersistentValue(
+        const wchar_t* key,
+        const std::wstring_view value,
+        const std::filesystem::path& path)
+    {
+        const std::wstring owned(value);
+        WritePrivateProfileStringW(
+            L"settings",
+            key,
+            owned.c_str(),
+            path.c_str());
+    }
+
+    inline void savePersistentSettings()
+    {
+        const std::filesystem::path path = persistentSettingsPath();
+        writePersistentValue(L"schema", L"1", path);
+        writePersistentValue(
+            L"viewport_mode",
+            std::to_wstring(std::clamp(viewportMode, 0, 3)),
+            path);
+        writePersistentValue(
+            L"local_radar_names",
+            localRadarShowNames ? L"1" : L"0",
+            path);
+
+        const auto writeFloat = [&path](
+            const wchar_t* key,
+            const float value) {
+            std::array<wchar_t, 64> text{};
+            swprintf_s(text.data(), text.size(), L"%.6f", value);
+            writePersistentValue(key, text.data(), path);
+        };
+        writeFloat(L"local_radar_anchor_x", localRadarAnchorX);
+        writeFloat(L"local_radar_anchor_y", localRadarAnchorY);
+        writeFloat(L"local_radar_size", localRadarSize);
+        writeFloat(L"local_radar_marker_size", localRadarMarkerSize);
+        writePersistentValue(
+            L"web_radar_port",
+            std::to_wstring(std::clamp(webRadarPort, 1024, 65535)),
+            path);
+        writePersistentValue(
+            L"pause_shared_radar_unfocused",
+            webRadarPauseWhenUnfocused ? L"1" : L"0",
+            path);
     }
 
     // Convert virtual key code to key name
@@ -1125,6 +1310,30 @@ namespace menu
         }
 
         ImGui::Spacing();
+        ImGui::Checkbox(
+            "Record sanitized Radar snapshots",
+            &radarRecordingEnabled);
+        const web_radar::SnapshotRecorderStatus recording =
+            getRecorderStatus();
+        if (recording.recording) {
+            ImGui::Text(
+                "Recording: %llu frames (%.1f MB), %llu replaced",
+                static_cast<unsigned long long>(recording.framesWritten),
+                static_cast<double>(recording.bytesWritten) /
+                    (1024.0 * 1024.0),
+                static_cast<unsigned long long>(recording.replacedFrames));
+        }
+        if (!recording.path.empty()) {
+            ImGui::TextWrapped("File: %s", recording.path.c_str());
+        }
+        if (!recording.lastError.empty()) {
+            ImGui::TextColored(
+                ImVec4(0.930f, 0.420f, 0.430f, 1.0f),
+                "%s",
+                recording.lastError.c_str());
+        }
+
+        ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
         ImGui::TextColored(
@@ -1328,6 +1537,66 @@ namespace menu
         ImGui::Text(
             "Frame Time: %.3f ms",
             frameRate > 0.0f ? 1000.0f / frameRate : 0.0f);
+
+        const auto samplingMetrics =
+            performance_metrics::samplingDuration.snapshot();
+        const auto serializationMetrics =
+            performance_metrics::serializationDuration.snapshot();
+        const auto renderMetrics =
+            performance_metrics::renderCpuDuration.snapshot();
+        const memory::ReadMetrics readMetrics = memory::GetReadMetrics();
+        ImGui::Text(
+            "Sampling: %d Hz | avg %.2f ms | P95 %.2f | P99 %.2f",
+            performance_metrics::samplingRateHz.load(
+                std::memory_order_relaxed),
+            samplingMetrics.averageMilliseconds,
+            samplingMetrics.p95Milliseconds,
+            samplingMetrics.p99Milliseconds);
+        ImGui::Text(
+            "Render CPU: avg %.2f ms | P95 %.2f | P99 %.2f",
+            renderMetrics.averageMilliseconds,
+            renderMetrics.p95Milliseconds,
+            renderMetrics.p99Milliseconds);
+        ImGui::Text(
+            "Radar JSON: avg %.2f ms | P95 %.2f | max %.2f",
+            serializationMetrics.averageMilliseconds,
+            serializationMetrics.p95Milliseconds,
+            serializationMetrics.maximumMilliseconds);
+        ImGui::Text(
+            "RPM: %llu calls | %.1f MB | %llu failed",
+            static_cast<unsigned long long>(readMetrics.calls),
+            static_cast<double>(readMetrics.bytesRequested) /
+                (1024.0 * 1024.0),
+            static_cast<unsigned long long>(readMetrics.failures));
+        ImGui::Text(
+            "Missed deadlines: sample %llu | render %llu",
+            static_cast<unsigned long long>(
+                performance_metrics::missedSamplingDeadlines.load(
+                    std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                performance_metrics::missedRenderDeadlines.load(
+                    std::memory_order_relaxed)));
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::TextColored(
+            startupReport.ready()
+                ? ImVec4(0.250f, 0.900f, 0.600f, 1.0f)
+                : ImVec4(0.930f, 0.420f, 0.430f, 1.0f),
+            "Startup self-check: %s",
+            startupReport.ready() ? "READY" : "ATTENTION");
+        ImGui::Text(
+            "Admin %s | SDL %s | Web bundle %s | Maps %s",
+            startupReport.administrator ? "OK" : "FAIL",
+            startupReport.sdlRuntimePresent ? "OK" : "FAIL",
+            startupReport.webRadarBundlePresent ? "OK" : "FAIL",
+            startupReport.mapMetadataPresent ? "OK" : "FAIL");
+        if (!startupReport.installationError.empty()) {
+            ImGui::TextWrapped(
+                "%s",
+                startupReport.installationError.c_str());
+        }
 
         ImGui::Spacing();
         ImGui::Separator();

@@ -1,10 +1,73 @@
 #pragma once
 
 #include <Windows.h>
+#include <shlobj.h>
 #include <cwchar>
+#include <filesystem>
+#include <string>
 
 namespace diagnostics
 {
+    struct StartupReport
+    {
+        bool administrator = false;
+        bool sdlRuntimePresent = false;
+        bool webRadarBundlePresent = false;
+        bool mapMetadataPresent = false;
+        std::string installationError;
+
+        [[nodiscard]] bool ready() const noexcept
+        {
+            return administrator && sdlRuntimePresent &&
+                webRadarBundlePresent && mapMetadataPresent;
+        }
+    };
+
+    inline bool isAdministrator() noexcept
+    {
+        return IsUserAnAdmin() != FALSE;
+    }
+
+    inline StartupReport inspectInstallation(
+        const std::filesystem::path& documentRoot)
+    {
+        StartupReport report;
+        report.administrator = isAdministrator();
+
+        std::error_code error;
+        const std::filesystem::path executableDirectory =
+            documentRoot.parent_path().parent_path();
+        report.sdlRuntimePresent = std::filesystem::is_regular_file(
+            executableDirectory / L"SDL2.dll",
+            error);
+        error.clear();
+        report.webRadarBundlePresent = std::filesystem::is_regular_file(
+            documentRoot / L"index.html",
+            error);
+        error.clear();
+        const bool manifestPresent = std::filesystem::is_regular_file(
+            documentRoot / L"maps" / L"manifest.json",
+            error);
+        error.clear();
+        const bool sourcePresent = std::filesystem::is_regular_file(
+            documentRoot / L"maps" / L"SOURCE.json",
+            error);
+        report.mapMetadataPresent = manifestPresent && sourcePresent;
+
+        if (!report.administrator) {
+            report.installationError =
+                "Process is not running with the required administrator token";
+        } else if (!report.sdlRuntimePresent) {
+            report.installationError = "SDL2.dll is missing beside the executable";
+        } else if (!report.webRadarBundlePresent) {
+            report.installationError = "web-radar/dist/index.html is missing";
+        } else if (!report.mapMetadataPresent) {
+            report.installationError =
+                "Web Radar map manifest or SOURCE metadata is missing";
+        }
+        return report;
+    }
+
     inline void log(const wchar_t* message)
     {
         if (!message) {

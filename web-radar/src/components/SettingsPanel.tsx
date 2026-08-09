@@ -1,12 +1,14 @@
 import type { RadarSettings } from '../hooks/useRadarSettings';
+import type { SnapshotReplayState } from '../hooks/useSnapshotReplay';
 
 interface SettingsPanelProps {
   settings: RadarSettings;
   onChange: (settings: RadarSettings) => void;
   onClose: () => void;
+  replay: SnapshotReplayState;
 }
 
-export function SettingsPanel({ settings, onChange, onClose }: SettingsPanelProps) {
+export function SettingsPanel({ settings, onChange, onClose, replay }: SettingsPanelProps) {
   const update = <K extends keyof RadarSettings>(key: K, value: RadarSettings[K]) => {
     onChange({ ...settings, [key]: value });
   };
@@ -68,6 +70,41 @@ export function SettingsPanel({ settings, onChange, onClose }: SettingsPanelProp
         />
         <i aria-hidden="true" />
       </label>
+
+      <div className="replay-setting">
+        <strong>快照回放</strong>
+        <label className="replay-file-button">
+          载入 NDJSON
+          <input
+            type="file"
+            accept=".ndjson,application/x-ndjson,application/json"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void replay.load(file);
+              event.target.value = '';
+            }}
+          />
+        </label>
+        {replay.active && (
+          <>
+            <span>{replay.fileName} · {replay.current}/{replay.total}</span>
+            <input
+              type="range"
+              min="1"
+              max={replay.total}
+              value={replay.current}
+              onChange={(event) => replay.seek(Number(event.target.value) - 1)}
+            />
+            <div className="replay-actions">
+              <button type="button" onClick={replay.togglePlaying}>
+                {replay.playing ? '暂停' : '播放'}
+              </button>
+              <button type="button" onClick={replay.stop}>停止回放</button>
+            </div>
+          </>
+        )}
+        {replay.error && <span className="settings-error">{replay.error}</span>}
+      </div>
     </aside>
   );
 }

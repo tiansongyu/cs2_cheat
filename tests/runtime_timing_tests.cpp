@@ -1,4 +1,5 @@
 #include "core/runtime_timing.hpp"
+#include "core/performance_metrics.hpp"
 
 #include <cassert>
 #include <chrono>
@@ -28,5 +29,21 @@ int main()
     assert(
         runtime_timing::intervalForRate(20) ==
         std::chrono::milliseconds(50));
+
+    performance_metrics::DurationHistogram histogram;
+    histogram.record(std::chrono::microseconds(100));
+    histogram.record(std::chrono::microseconds(200));
+    histogram.record(std::chrono::microseconds(4'000));
+    histogram.record(std::chrono::microseconds(20'000));
+    const auto metrics = histogram.snapshot();
+    assert(metrics.samples == 4);
+    assert(metrics.averageMilliseconds == 6.075);
+    assert(metrics.p50Milliseconds == 0.25);
+    assert(metrics.p95Milliseconds == 24.0);
+    assert(metrics.p99Milliseconds == 24.0);
+    assert(metrics.maximumMilliseconds == 20.0);
+
+    histogram.reset();
+    assert(histogram.snapshot().samples == 0);
     return 0;
 }
