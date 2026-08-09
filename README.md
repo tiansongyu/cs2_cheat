@@ -1,180 +1,149 @@
 # CS2 External ESP
 
-[![Build Status](https://github.com/tiansongyu/cs2_cheat/actions/workflows/build.yaml/badge.svg)](https://github.com/tiansongyu/cs2_cheat/actions/workflows/build.yaml)
-[![Auto Update](https://github.com/tiansongyu/cs2_cheat/actions/workflows/update-files.yml/badge.svg)](https://github.com/tiansongyu/cs2_cheat/actions/workflows/update-files.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Build](https://github.com/tiansongyu/cs2_cheat/actions/workflows/build.yaml/badge.svg?branch=main)](https://github.com/tiansongyu/cs2_cheat/actions/workflows/build.yaml)
+[![Offsets](https://github.com/tiansongyu/cs2_cheat/actions/workflows/update-files.yml/badge.svg?branch=main)](https://github.com/tiansongyu/cs2_cheat/actions/workflows/update-files.yml)
+[![License](https://img.shields.io/github/license/tiansongyu/cs2_cheat)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4)
+![C++](https://img.shields.io/badge/C%2B%2B-20-00599C)
 
-一个用于学习游戏逆向工程的 CS2 外部 ESP 项目，基于 SDL2 + ImGui 实现。
+一个基于 SDL2、ImGui 和 C++20 的 CS2 外部 ESP 教学项目，包含游戏覆盖层、固定地图 Radar 与可选的公网共享服务。
 
 **中文** | [English](README_EN.md)
 
-> 🎓 **本项目仅用于学习逆向工程知识**，帮助理解游戏内存结构、进程通信、图形渲染等技术原理。
+> [!WARNING]
+> 本项目仅用于逆向工程和图形渲染学习。仅可在使用 `-insecure` 启动的离线环境中运行，禁止用于 VAC 服务器或任何在线游戏。使用者须自行承担不当使用造成的风险。
 
-## ⚠️ 重要声明
+## 功能
 
-**本项目仅限离线模式学习使用：**
-- ✅ 必须使用 `-insecure` 参数启动 CS2 离线模式
-- ❌ **禁止在 VAC 服务器或任何在线模式中使用**
-- ❌ 在线使用将导致 VAC 封禁，后果自负
+| 模块 | 功能 |
+| --- | --- |
+| ESP | 方框、骨骼、血条、武器、距离、射线、spotted 状态、手雷和掉落武器 |
+| 辅助功能 | 自动瞄准、FOV 与平滑度调节、自动扳机、炸弹计时；防闪光需显式允许内存写入 |
+| Radar | 北向固定全地图、玩家位置与朝向、楼层与置信度、队伍面板、装备、C4 状态和倒计时 |
+| 共享与回放 | 本机 Web Radar、可信局域网访问、公网 Relay、脱敏 NDJSON 录制和浏览器回放 |
+| 性能与诊断 | 4/10/20 Hz 自适应 Radar 采样、慢客户端背压、采样与渲染耗时、RPM、P95/P99 和截止时间统计 |
 
-## 🔄 自动偏移更新
+![程序截图](img/hack.png)
 
-本项目通过 GitHub Actions **每小时自动检测** CS2 游戏更新。偏移头文件按
-`cs2-dumper` 的确切提交 SHA 下载并提交后再构建，避免同一次发布混入不同版本的偏移。
+## 系统要求
 
-## 📥 下载
+- Windows 10 或 Windows 11（x64）
+- Visual Studio 2022，使用 C++ 桌面开发工作负载
+- Node.js 22.12 或更高版本（构建 Web Radar 时需要）
+- CS2 使用 `-insecure` 参数和全屏窗口化模式
 
-**[⬇️ 下载最新版本](https://github.com/tiansongyu/cs2_cheat/releases/latest)**
+覆盖层仅支持完整位于单个显示器中的游戏窗口。跨显示器时会暂停渲染，窗口恢复后自动继续；独占全屏不受支持。程序启动时会请求管理员权限，并能在 CS2 重启后自动重新连接。
 
-## 📺 视频教程
+## 快速开始
 
-配套 B 站教程，从零开始学习游戏逆向：
+1. 从 [Releases](https://github.com/tiansongyu/cs2_cheat/releases/latest) 下载并解压最新版本。
+2. 使用 `-insecure` 参数启动 CS2，并进入离线模式。
+3. 运行 `external-cheat-base.exe`，接受 Windows 管理员权限提示。
+4. 按 `F4` 打开或隐藏设置菜单，按 `F9` 退出程序。
 
-| 课程 | 链接 |
-|------|------|
-| 第一课：内存结构基础 | [BV14szCBYErE](https://www.bilibili.com/video/BV14szCBYErE) |
-| 第二课：源码 + CE 实战演示 | [BV1Jm6gBaEEd](https://www.bilibili.com/video/BV1Jm6gBaEEd) |
-| 第三课：零基础查找偏移量 | [BV1Lr6wBeEEF](https://www.bilibili.com/video/BV1Lr6wBeEEF) |
-| 第四课：投影矩阵原理概述 | [BV1goFNzSEP3](https://www.bilibili.com/video/BV1goFNzSEP3) |
-| 第五课：视图矩阵深度解析 | [BV1AtF5zhE5J](https://www.bilibili.com/video/BV1AtF5zhE5J) |
-| 第六课：手动构造特征码及原理讲解IDA逆向使用教程 | [BV1yhcszwEJQ](https://www.bilibili.com/video/BV1yhcszwEJQ) |
+| 按键 | 默认操作 |
+| --- | --- |
+| `F4` | 显示或隐藏菜单 |
+| `F9` | 退出程序 |
+| `Shift` | 自动瞄准（启用后） |
+| `F` | 自动扳机（启用后） |
 
-## ✨ 功能特性
-
-| 分类 | 功能 |
-|------|------|
-| **ESP** | 方框透视、骨骼透视、血条、武器显示、距离、射线、CS2 spotted 状态提示 |
-| **Aimbot** | 自动瞄准、FOV 调节、平滑度|
-| **Triggerbot** | 自动扳机、延迟设置 |
-| **Web Radar** | 浏览器固定北向全地图、全体玩家位置/朝向与装备、CT/T 面板、C4 状态与倒计时、本地 CivetWeb、多人共享公网 Relay |
-| **Misc** | 防闪光、炸弹倒计时、手雷 ESP、掉落武器 ESP |
-| **界面** | ImGui 图形菜单、实时调整所有设置 |
-
-## 🖼️ 截图
-
-![Demo](https://github.com/tiansongyu/cs2_cheat/blob/main/img/hack.png)
-
-## 📖 使用说明
-
-### 环境要求
-- Windows 10/11
-- CS2 使用 **全屏窗口化** 模式
-- 游戏窗口必须完整位于一台显示器内；跨显示器时覆盖层会暂停，移回后自动恢复
-- 使用 `-insecure` 参数启动 CS2
-
-> 独占全屏无法由外部顶层窗口可靠覆盖，不受支持。程序会在 CS2 重启后自动重新连接。
-
-### 快捷键
-
-| 按键 | 功能 |
-|------|------|
-| **F4** | 显示/隐藏菜单 |
-| **F9** | 退出程序 |
-| **Shift** | 自动瞄准（需启用） |
-| **F** | 自动扳机（需启用） |
-
-### 快速开始
-1. 使用 `-insecure` 参数启动 CS2 进入离线模式
-2. 运行程序，按 **F4** 打开菜单调整设置
-3. 按 **F4** 隐藏菜单后可正常操作游戏
-
-### 固定地图 Radar
-
-Radar 不再使用玩家中心的圆形或旋转视图。本地 SDL 覆盖层、内嵌 CivetWeb
-浏览器页面和公网 Relay 统一使用同一套北向固定全地图、地图标定与完整玩家快照。
-地图本身不旋转，所有可用的 T/CT 玩家都会按世界坐标显示，存活玩家的方向图标
-按 yaw 旋转；死亡、休眠、上下层和 C4 使用独立标记。
-
-1. 按 **F4**，进入 **World & Radar**。启用 **Local map overlay** 即可在游戏
-   覆盖层显示固定全图，并可调整位置、大小、人物大小和姓名。
-2. 如需浏览器页面，再启用 **Web Radar**，打开菜单中显示的带 token URL。
-   默认服务地址是 `127.0.0.1:22006`，只能由本机访问。
-3. 如需在同一可信局域网的手机或平板上查看，主动启用 LAN 监听，并把复制 URL 中的 `127.0.0.1` 替换为本机的私有局域网 IPv4。不要删除 URL 中的 token。
-
-浏览器和 Relay 可在发送前关闭玩家姓名、Steam ID，或只保留本方/对方队伍。
-无人连接内嵌 Radar 时采样自动降为 4 Hz，连接后恢复 20 Hz；允许失焦后台共享
-时使用 10 Hz。菜单 **System** 页面会显示采样、渲染、JSON、RPM 和截止时间统计。
-
-需要复现 Radar 问题时可启用 **Record sanitized Radar snapshots**。录制文件位于
-`%LOCALAPPDATA%\AegisCS2\recordings`，不包含姓名或 Steam ID，单文件最大 256 MB。
-在 Web Radar 的显示设置中载入该 `.ndjson` 文件即可播放、暂停或拖动回放。
-
-本地覆盖层会直接从 EXE 同级的 `web-radar/dist/maps` 加载与浏览器完全相同的
-1024×1024 PNG；发布或复制程序时必须保留整个 `web-radar/dist` 目录。
-
-LAN token 只能限制未持有链接的访问者，HTTP/WS 本身没有 TLS。不要把端口映射到公网、使用公网穿透或在不可信 Wi-Fi 上共享链接。建议 Windows 防火墙只允许专用网络。详细架构、安全边界和优化路线见 [Web Radar 设计文档](docs/web-radar-design.md)。
-
-### 正式公网共享 Radar
-
-公网模式是一条独立链路，不会把游戏电脑的 CivetWeb 或任何入站端口暴露到
-Internet。Windows 主程序只主动连接 `wss://`；公网服务器由 Caddy 提供自动
-HTTPS，再由 Go Relay 完成房间隔离、Producer/Viewer 分权、短期 HttpOnly
-会话、限流和“只保留最新帧”的有界广播。多人观看共享同一个预编码压缩帧；
-浏览器弱网、离线和后台恢复都有明确状态与自动重连，Relay 还提供仅内网可见的
-聚合 Metrics 和部署验收工具。
-
-1. 按 [正式部署指南](deploy/public-relay/README.md) 在有域名的 Linux 服务器上
-   生成房间凭证并启动 Caddy + Relay。
-2. 在 Windows 菜单的 **Public Relay** 中填写
-   `wss://你的域名/api/v1/publish`、房间名和 Producer token，然后启用。
-3. 观看者打开 `https://你的域名/`，输入同一房间名和独立的 Viewer invite
-   token。不要把 Producer token 发给观看者。
-
-服务器不保存快照历史，重启会清空会话和最新帧。本地 Radar 与公网 Radar
-可以独立启停；公网模式不要求启用内嵌服务。完整协议、安全模型和扩展边界见
-[公网 Relay 设计文档](docs/public-radar-relay-design.md)。
-也可以直接打开 [公网 Radar 架构图](docs/public-radar-relay-architecture.html)
-查看端口、信任边界和完整数据流。
-
-Web Radar 和写内存的防闪光功能默认关闭。只有在明确需要离线测试防闪光时，才从命令行使用：
+Web Radar 和写内存的防闪光默认关闭。仅在明确进行离线测试时允许内存写入：
 
 ```powershell
 .\external-cheat-base.exe --allow-memory-writes
 ```
 
-运行诊断会写入 `%TEMP%\cs2-esp.log`。
+运行日志位于 `%TEMP%\cs2-esp.log`。
 
-## 🛠️ 编译
+## Radar
 
-```bash
+### 本地与浏览器模式
+
+1. 按 `F4` 打开菜单并进入 **World & Radar**。
+2. 启用 **Local map overlay**，在游戏覆盖层显示固定全地图。
+3. 如需浏览器视图，启用 **Web Radar** 并打开菜单中带 token 的 URL。默认服务地址为 `127.0.0.1:22006`。
+4. 如需在可信局域网内访问，启用 LAN 监听，将 URL 中的 `127.0.0.1` 替换为本机私有 IPv4 地址，并完整保留 token。
+
+姓名、Steam ID 和队伍信息可在发送前过滤。无人连接时采样频率降至 4 Hz，后台共享时为 10 Hz，活动连接时为 20 Hz。启用 **Record sanitized Radar snapshots** 后，脱敏录制保存在 `%LOCALAPPDATA%\AegisCS2\recordings`；可在 Web Radar 中载入 `.ndjson` 文件进行播放和拖动回放。
+
+本地服务使用 HTTP/WS，token 不提供传输加密。不要进行端口映射或公网穿透，也不要在不可信网络中共享 URL。完整说明见 [Web Radar 设计文档](docs/web-radar-design.md)。
+
+### 公网共享模式
+
+公网 Relay 通过主程序主动建立的 `wss://` 出站连接共享 Radar，不暴露游戏电脑的入站端口。服务端使用独立的 Producer 和 Viewer 凭证、房间隔离、限流及仅保留最新帧的有界广播。
+
+部署与使用请参阅：
+
+- [公网 Relay 部署指南](deploy/public-relay/README.md)
+- [公网 Relay 设计文档](docs/public-radar-relay-design.md)
+- [公网 Radar 架构图](docs/public-radar-relay-architecture.html)
+
+## 构建
+
+### Visual Studio 2022
+
+```powershell
 git clone https://github.com/tiansongyu/cs2_cheat.git
-cd cs2_cheat
-# 先构建固定地图 Web Radar 静态文件（需要 Node.js 22.12+）
-cd web-radar
+cd cs2_cheat\web-radar
 npm ci
 npm test
 npm run build
 cd ..
+```
 
-# 使用 Visual Studio 2022 打开 external-cheat-base.sln
-# 选择 Release | x64 配置编译
+使用 Visual Studio 2022 打开 `external-cheat-base.sln`，选择 `Release | x64` 后构建。MSBuild 会将已有的 `web-radar/dist` 复制到输出目录；发布程序时必须保留完整的 `web-radar/dist` 目录。
 
-# 或在安装 Docker 后一次性运行前后端测试和 Windows 交叉编译
+### Docker 可复现构建
+
+```bash
 docker build --target artifacts -t cs2-cheat-build .
+```
 
-# 单独构建包含前端静态文件的公网 Relay 生产镜像
+该命令会运行前端、C++ 和 Go 测试，并完成 Windows 交叉编译。单独构建公网 Relay 生产镜像：
+
+```bash
 docker build -f radar-relay/Dockerfile -t cs2-radar-relay:local .
 ```
 
-MSBuild 会把已有的 `web-radar/dist` 复制到输出目录的 `web-radar/dist`。CI 与 Docker 会自动构建前端；本机使用 Visual Studio 前请执行上面的 npm 命令。地图同步脚本会下载经过 SHA-256 校验的固定版本素材：
+如需手动同步固定版本且经过 SHA-256 校验的地图素材：
 
 ```bash
 python3 scripts/sync_web_radar_maps.py
 ```
 
-地图图片和 overview 坐标属于 Valve，并继续受 Valve 的版权和条款约束；发布包中的 `web-radar/dist/maps/NOTICE.txt` 与 `SOURCE.json` 必须保留。Web Radar 代码是参考功能后的 clean-room 重写，不包含 `cs2_webradar` 的 GPL-3.0 源代码。
+## 项目结构
 
+| 路径 | 内容 |
+| --- | --- |
+| `external-cheat-base/` | Windows C++ 主程序、覆盖层和内嵌 Radar 服务 |
+| `web-radar/` | 浏览器 Radar 前端与地图资源 |
+| `radar-relay/` | Go 公网 Relay 服务 |
+| `deploy/public-relay/` | Caddy、Docker Compose 和生产部署工具 |
+| `tests/` | C++ 回归测试 |
+| `docs/` | 原理、架构与安全设计文档 |
 
-## 📜 许可证
+## CI 与自动更新
 
-MIT License
+顶部的 **Build** 徽章由 GitHub Actions 动态生成：绿色表示 `main` 分支最近一次构建成功，红色表示构建或测试失败。CI 会执行 C++ 回归测试、Web Radar 测试与构建、Go 测试与漏洞检查、Relay 镜像构建以及 Windows `Release | x64` 编译。
 
-## 🙏 致谢
+**Offsets** 工作流每小时检查一次 `cs2-dumper` 更新。偏移文件按确切提交 SHA 获取、验证并提交，验证通过后才触发完整构建。
 
-- [a2x/cs2-dumper](https://github.com/a2x/cs2-dumper) - 偏移量来源
-- [libsdl-org/SDL](https://github.com/libsdl-org/SDL) - SDL2 图形库
-- [ocornut/imgui](https://github.com/ocornut/imgui) - ImGui 界面库
-- [CivetWeb](https://github.com/civetweb/civetweb) - MIT 许可的内嵌 HTTP/WebSocket 服务
-- [Caddy](https://caddyserver.com/) - 公网入口、自动 HTTPS 与 WebSocket 反向代理
-- [gorilla/websocket](https://github.com/gorilla/websocket) - BSD-2-Clause 许可的 Relay WebSocket 传输
-- [awpy-data](https://github.com/pnxenopoulos/awpy-data) - 地图素材同步来源与 overview 数据流水线（素材版权见随附 NOTICE）
+## 学习资料
+
+| 主题 | 视频 | 文档 |
+| --- | --- | --- |
+| 内存结构基础 | [BV14szCBYErE](https://www.bilibili.com/video/BV14szCBYErE) | [CS2 内存结构](docs/CS2_Memory_Structure_Basics.md) |
+| 源码与 CE 实战 | [BV1Jm6gBaEEd](https://www.bilibili.com/video/BV1Jm6gBaEEd) | [代码说明](docs/cheat_code.md) |
+| 偏移量查找 | [BV1Lr6wBeEEF](https://www.bilibili.com/video/BV1Lr6wBeEEF) | [IDA 逆向](docs/IDA_Reverse_Engineering_Client_DLL.md) |
+| 投影矩阵 | [BV1goFNzSEP3](https://www.bilibili.com/video/BV1goFNzSEP3) | [3D 投影原理](docs/3d_projection_explained.md) |
+| 视图矩阵 | [BV1AtF5zhE5J](https://www.bilibili.com/video/BV1AtF5zhE5J) | [视图矩阵数学](docs/cs2_view_matrix_math.md) |
+| 特征码与 IDA | [BV1yhcszwEJQ](https://www.bilibili.com/video/BV1yhcszwEJQ) | - |
+
+## 许可证与第三方资产
+
+项目代码以 [MIT License](LICENSE) 发布。
+
+地图图片和 overview 坐标归 Valve 所有，并继续受 Valve 的版权和条款约束。分发时必须保留 `web-radar/dist/maps/NOTICE.txt` 和 `SOURCE.json`。Web Radar 是 clean-room 重写，不包含 `cs2_webradar` 的 GPL-3.0 源代码。
+
+主要依赖和数据来源：[cs2-dumper](https://github.com/a2x/cs2-dumper)、[SDL](https://github.com/libsdl-org/SDL)、[Dear ImGui](https://github.com/ocornut/imgui)、[CivetWeb](https://github.com/civetweb/civetweb)、[Caddy](https://caddyserver.com/)、[gorilla/websocket](https://github.com/gorilla/websocket) 和 [awpy-data](https://github.com/pnxenopoulos/awpy-data)。
