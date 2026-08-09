@@ -834,6 +834,10 @@ input:focus-visible {
   text-transform: uppercase;
 }
 
+.radar-topbar small.floor-confidence-low {
+  color: var(--t);
+}
+
 .bomb-status {
   padding: 4px 7px;
   border: 1px solid var(--line);

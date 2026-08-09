@@ -239,6 +239,20 @@ describe('useRadarStream lifecycle', () => {
     expect(mounted.state.stale).toBe(true);
   });
 
+  it('reports update rate, snapshot age and skipped sequences', () => {
+    mounted = mountStream();
+    const socket = MockWebSocket.instances[0];
+    act(() => {
+      socket.emitOpen();
+      socket.emitMessage(validSnapshot(10));
+      vi.setSystemTime(new Date(Date.now() + 50));
+      socket.emitMessage(validSnapshot(13));
+    });
+    expect(mounted.state.quality.updateRateHz).toBeCloseTo(20);
+    expect(mounted.state.quality.skippedFrames).toBe(2);
+    expect(mounted.state.quality.snapshotAgeMs).toBe(0);
+  });
+
   it('replaces a WebSocket handshake that remains CONNECTING for ten seconds', async () => {
     mounted = mountStream();
     const first = MockWebSocket.instances[0];

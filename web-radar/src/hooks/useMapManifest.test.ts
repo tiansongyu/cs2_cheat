@@ -5,6 +5,7 @@ import { useMapManifest } from './useMapManifest';
 
 const manifest = {
   version: 1,
+  source: { project: 'test/maps', release: '42' },
   maps: [{
     id: 'de_dust2',
     name: 'Dust II',
@@ -13,6 +14,18 @@ const manifest = {
     image: '/maps/de_dust2/radar.png',
   }],
 };
+const source = {
+  release: '42',
+  images_sha256: 'a'.repeat(64),
+  map_data_sha256: 'b'.repeat(64),
+};
+
+function successfulResponse(input: RequestInfo | URL): Response {
+  return new Response(
+    JSON.stringify(String(input).includes('SOURCE.json') ? source : manifest),
+    { status: 200 },
+  );
+}
 
 function installBrowser() {
   const windowTarget = new EventTarget() as Window;
@@ -61,11 +74,15 @@ afterEach(() => {
 
 describe('useMapManifest', () => {
   it('revalidates the manifest while leaving image caching to the browser', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify(manifest), { status: 200 }));
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => successfulResponse(input));
     vi.stubGlobal('fetch', fetcher);
     await mountManifest();
 
     expect(fetcher).toHaveBeenCalledWith('/maps/manifest.json', expect.objectContaining({
+      cache: 'no-cache',
+      signal: expect.any(AbortSignal),
+    }));
+    expect(fetcher).toHaveBeenCalledWith('/maps/SOURCE.json', expect.objectContaining({
       cache: 'no-cache',
       signal: expect.any(AbortSignal),
     }));
@@ -76,7 +93,7 @@ describe('useMapManifest', () => {
   it('retries a transient manifest failure with bounded backoff', async () => {
     const fetcher = vi.fn()
       .mockRejectedValueOnce(new TypeError('network unavailable'))
-      .mockResolvedValueOnce(new Response(JSON.stringify(manifest), { status: 200 }));
+      .mockImplementation(async (input: RequestInfo | URL) => successfulResponse(input));
     vi.stubGlobal('fetch', fetcher);
     await mountManifest();
     expect(latest?.error).toBe('network unavailable');
@@ -89,7 +106,7 @@ describe('useMapManifest', () => {
       await vi.advanceTimersByTimeAsync(1);
       await Promise.resolve();
     });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(3);
     expect(latest?.manifest?.maps[0].id).toBe('de_dust2');
   });
 
@@ -97,7 +114,7 @@ describe('useMapManifest', () => {
     const browserWindow = window;
     const fetcher = vi.fn()
       .mockRejectedValueOnce(new TypeError('offline'))
-      .mockResolvedValueOnce(new Response(JSON.stringify(manifest), { status: 200 }));
+      .mockImplementation(async (input: RequestInfo | URL) => successfulResponse(input));
     vi.stubGlobal('fetch', fetcher);
     await mountManifest();
 
@@ -105,12 +122,12 @@ describe('useMapManifest', () => {
       browserWindow.dispatchEvent(new Event('online'));
       await Promise.resolve();
     });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(3);
     expect(latest?.error).toBeNull();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1_000);
     });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(3);
   });
 });

@@ -204,6 +204,53 @@ namespace game::fixed_map_radar
         return nearestIndex;
     }
 
+    [[nodiscard]] inline std::optional<std::size_t>
+    selectLevelWithHysteresis(
+        const MapDefinition& map,
+        const float z,
+        const std::optional<std::size_t> previousLevel,
+        const float hysteresis = 24.0f) noexcept
+    {
+        const std::optional<std::size_t> selected = selectLevel(map, z);
+        if (!selected || !previousLevel ||
+            *previousLevel >= map.levels.size() ||
+            *selected == *previousLevel ||
+            !std::isfinite(hysteresis) || hysteresis <= 0.0f) {
+            return selected;
+        }
+
+        const MapLevel& previous = map.levels[*previousLevel];
+        if (!isValid(previous)) {
+            return selected;
+        }
+        if (z >= previous.minimumZ - hysteresis &&
+            z < previous.maximumZ + hysteresis) {
+            return previousLevel;
+        }
+        return selected;
+    }
+
+    [[nodiscard]] inline float levelSelectionConfidence(
+        const MapDefinition& map,
+        const float z,
+        const std::optional<std::size_t> levelIndex,
+        const float boundaryRange = 24.0f) noexcept
+    {
+        if (!levelIndex || *levelIndex >= map.levels.size() ||
+            !std::isfinite(z) || !std::isfinite(boundaryRange) ||
+            boundaryRange <= 0.0f) {
+            return 0.0f;
+        }
+        const MapLevel& level = map.levels[*levelIndex];
+        if (!isValid(level)) {
+            return 0.0f;
+        }
+        const float boundaryDistance = std::min(
+            std::abs(z - level.minimumZ),
+            std::abs(level.maximumZ - z));
+        return std::clamp(boundaryDistance / boundaryRange, 0.0f, 1.0f);
+    }
+
     [[nodiscard]] inline NormalizedPosition project(
         const MapDefinition& map,
         const WorldPosition& world) noexcept

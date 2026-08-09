@@ -4,6 +4,7 @@ import {
   projectWorldPoint,
   resolveMapImage,
   selectMapLevel,
+  selectStableMapLevel,
   selectReferenceZ,
   unwrapHeading,
 } from './coordinates';
@@ -49,6 +50,18 @@ describe('map resources and headings', () => {
     expect(selectMapLevel(map.levels, -5)?.id).toBe('lower');
     expect(resolveMapImage(map, 12)).toBe('/maps/de_example/upper.png');
     expect(selectMapLevel(map.levels, 5000)?.id).toBe('upper');
+  });
+
+  it('holds the previous floor near a boundary and reports confidence', () => {
+    const held = selectStableMapLevel(map.levels, 5, 'lower');
+    expect(held.level?.id).toBe('lower');
+    expect(held.retained).toBe(true);
+    expect(held.confidence).toBeLessThan(0.3);
+
+    const switched = selectStableMapLevel(map.levels, 25, 'lower');
+    expect(switched.level?.id).toBe('upper');
+    expect(switched.retained).toBe(false);
+    expect(switched.confidence).toBeGreaterThan(0.9);
   });
 
   it('uses manifest image before the conventional fallback', () => {

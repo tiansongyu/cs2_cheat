@@ -103,11 +103,15 @@ namespace menu
         bool webRadarEnabled = false;
         bool webRadarLanAccess = false;
         bool webRadarPauseWhenUnfocused = true;
+        bool webRadarIncludePlayerNames = true;
         bool webRadarIncludeSteamIds = false;
+        int webRadarTeamViewPolicy = 0;
         uint16_t webRadarPort = 22006;
         bool radarRecordingEnabled = false;
         bool publicRelayEnabled = false;
+        bool publicRelayIncludePlayerNames = true;
         bool publicRelayIncludeSteamIds = false;
+        int publicRelayTeamViewPolicy = 0;
         std::shared_ptr<const PublicRelayConnectionSettings>
             publicRelayConnection;
         bool espWallCheck = true;
@@ -221,7 +225,9 @@ namespace menu
     inline bool webRadarEnabled = false;
     inline bool webRadarLanAccess = false;
     inline bool webRadarPauseWhenUnfocused = true;
+    inline bool webRadarIncludePlayerNames = true;
     inline bool webRadarIncludeSteamIds = false;
+    inline int webRadarTeamViewPolicy = 0;
     inline int webRadarPort = 22006;
     inline bool radarRecordingEnabled = false;
 
@@ -229,7 +235,9 @@ namespace menu
     // are never included in any settings persistence path. The producer token
     // is rendered with ImGui's password mode and is never copied to status.
     inline bool publicRelayEnabled = false;
+    inline bool publicRelayIncludePlayerNames = true;
     inline bool publicRelayIncludeSteamIds = false;
+    inline int publicRelayTeamViewPolicy = 0;
     inline std::array<char, 512> publicRelayUrl{};
     inline std::array<char, 65> publicRelayRoom{};
     inline std::array<char, 513> publicRelayToken{};
@@ -350,14 +358,26 @@ namespace menu
         config.webRadarLanAccess = webRadarLanAccess;
         config.webRadarPauseWhenUnfocused =
             webRadarPauseWhenUnfocused;
+        config.webRadarIncludePlayerNames =
+            webRadarIncludePlayerNames;
         config.webRadarIncludeSteamIds =
             webRadarIncludeSteamIds;
+        config.webRadarTeamViewPolicy = std::clamp(
+            webRadarTeamViewPolicy,
+            0,
+            2);
         config.webRadarPort = static_cast<uint16_t>(
             std::clamp(webRadarPort, 1024, 65535));
         config.radarRecordingEnabled = radarRecordingEnabled;
         config.publicRelayEnabled = publicRelayEnabled;
+        config.publicRelayIncludePlayerNames =
+            publicRelayIncludePlayerNames;
         config.publicRelayIncludeSteamIds =
             publicRelayIncludeSteamIds;
+        config.publicRelayTeamViewPolicy = std::clamp(
+            publicRelayTeamViewPolicy,
+            0,
+            2);
         config.publicRelayConnection = publicRelayConnectionSnapshot;
         config.espWallCheck = espWallCheck;
         config.espSkeleton = espSkeleton;
@@ -521,6 +541,17 @@ namespace menu
             L"pause_shared_radar_unfocused",
             webRadarPauseWhenUnfocused ? 1 : 0,
             path) != 0;
+        webRadarIncludePlayerNames = readPersistentInt(
+            L"web_radar_player_names",
+            webRadarIncludePlayerNames ? 1 : 0,
+            path) != 0;
+        webRadarTeamViewPolicy = std::clamp(
+            readPersistentInt(
+                L"web_radar_team_policy",
+                webRadarTeamViewPolicy,
+                path),
+            0,
+            2);
         publishRuntimeConfig();
     }
 
@@ -568,6 +599,14 @@ namespace menu
         writePersistentValue(
             L"pause_shared_radar_unfocused",
             webRadarPauseWhenUnfocused ? L"1" : L"0",
+            path);
+        writePersistentValue(
+            L"web_radar_player_names",
+            webRadarIncludePlayerNames ? L"1" : L"0",
+            path);
+        writePersistentValue(
+            L"web_radar_team_policy",
+            std::to_wstring(std::clamp(webRadarTeamViewPolicy, 0, 2)),
             path);
     }
 
@@ -1254,6 +1293,19 @@ namespace menu
             "The local overlay always pauses when CS2 is unfocused; only "
             "explicitly shared viewers can opt into background sampling.");
         ImGui::Checkbox(
+            "Share player names",
+            &webRadarIncludePlayerNames);
+        const char* teamPolicies[] = {
+            "All teams",
+            "Local team only",
+            "Opponents only"
+        };
+        ImGui::Combo(
+            "Shared teams",
+            &webRadarTeamViewPolicy,
+            teamPolicies,
+            IM_ARRAYSIZE(teamPolicies));
+        ImGui::Checkbox(
             "Share Steam IDs (profile links)",
             &webRadarIncludeSteamIds);
 
@@ -1376,6 +1428,14 @@ namespace menu
         }
         ImGui::EndDisabled();
 
+        ImGui::Checkbox(
+            "Share player names through Public Relay",
+            &publicRelayIncludePlayerNames);
+        ImGui::Combo(
+            "Relay teams",
+            &publicRelayTeamViewPolicy,
+            teamPolicies,
+            IM_ARRAYSIZE(teamPolicies));
         ImGui::Checkbox(
             "Share Steam IDs through Public Relay",
             &publicRelayIncludeSteamIds);

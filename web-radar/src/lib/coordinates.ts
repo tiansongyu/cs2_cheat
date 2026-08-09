@@ -56,6 +56,41 @@ export function selectMapLevel(
   }, undefined);
 }
 
+export interface StableMapLevelSelection {
+  level: MapLevelDefinition | undefined;
+  confidence: number;
+  retained: boolean;
+}
+
+export function selectStableMapLevel(
+  levels: readonly MapLevelDefinition[] | undefined,
+  z: number,
+  previousLevelId?: string,
+  hysteresis = 24,
+): StableMapLevelSelection {
+  const selected = selectMapLevel(levels, z);
+  if (!selected || !levels?.length || !Number.isFinite(hysteresis) || hysteresis <= 0) {
+    return { level: selected, confidence: 0, retained: false };
+  }
+
+  const previous = previousLevelId
+    ? levels.find((level) => level.id === previousLevelId)
+    : undefined;
+  const retainPrevious = previous && previous.id !== selected.id
+    && z >= previous.minZ - hysteresis
+    && z < previous.maxZ + hysteresis;
+  const level = retainPrevious ? previous : selected;
+  const boundaryDistance = Math.min(
+    Math.abs(z - level.minZ),
+    Math.abs(level.maxZ - z),
+  );
+  return {
+    level,
+    confidence: Math.min(1, Math.max(0, boundaryDistance / hysteresis)),
+    retained: Boolean(retainPrevious),
+  };
+}
+
 type FloorReferencePlayer = Pick<
   PlayerSnapshot,
   'id' | 'team' | 'alive' | 'position'

@@ -11,6 +11,21 @@ interface MapManifestState extends ManifestState {
   retry: () => void;
 }
 
+function isSourceMetadata(value: unknown): value is {
+  release: string;
+  images_sha256: string;
+  map_data_sha256: string;
+} {
+  if (typeof value !== 'object' || value === null) return false;
+  const source = value as Record<string, unknown>;
+  const hash = /^[0-9a-f]{64}$/;
+  return typeof source.release === 'string'
+    && typeof source.images_sha256 === 'string'
+    && hash.test(source.images_sha256)
+    && typeof source.map_data_sha256 === 'string'
+    && hash.test(source.map_data_sha256);
+}
+
 export function useMapManifest(): MapManifestState {
   const [state, setState] = useState<ManifestState>({
     manifest: null,
@@ -36,8 +51,18 @@ export function useMapManifest(): MapManifestState {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.json() as Promise<unknown>;
       })
-      .then((value) => {
+      .then(async (value) => {
         if (!isMapManifest(value)) throw new Error('manifest 格式不符合 v1');
+        const sourceResponse = await fetch('/maps/SOURCE.json', {
+          cache: 'no-cache',
+          signal: controller.signal,
+        });
+        if (!sourceResponse.ok) throw new Error(`SOURCE HTTP ${sourceResponse.status}`);
+        const source = await sourceResponse.json() as unknown;
+        if (!isSourceMetadata(source)) throw new Error('SOURCE 校验元数据无效');
+        if (value.source?.release && value.source.release !== source.release) {
+          throw new Error('地图清单与图像资源版本不匹配');
+        }
         retryAttempt.current = 0;
         setState({ manifest: value, loading: false, error: null });
       })

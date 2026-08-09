@@ -173,6 +173,15 @@ namespace
         assert(!selectLevel(
             map,
             std::numeric_limits<float>::quiet_NaN()));
+
+        const auto lower = selectLevel(map, -10.0f);
+        assert(lower == 0);
+        assert(selectLevelWithHysteresis(map, 5.0f, lower) == 0);
+        assert(selectLevelWithHysteresis(map, 25.0f, lower) == 1);
+        assert(approximatelyEqual(
+            levelSelectionConfidence(map, -50.0f, lower),
+            1.0f));
+        assert(levelSelectionConfidence(map, -1.0f, lower) < 0.05f);
     }
 
     void testYawConversion()
@@ -829,6 +838,34 @@ namespace
         requireContains(
             privacyJson,
             "\"steamId\":\"76561198000000001\",\"name\":null");
+
+        game::web_radar_json::SerializationOptions localTeamOnly;
+        localTeamOnly.teamViewPolicy =
+            game::web_radar_json::TeamViewPolicy::localTeamOnly;
+        const std::string localTeamJson =
+            game::web_radar_json::serializeSnapshotV1(
+                snapshot,
+                localTeamOnly);
+        requireContains(localTeamJson, "\"id\":\"2\"");
+        requireNotContains(localTeamJson, "\"id\":\"1\"");
+
+        game::web_radar_json::SerializationOptions opponentsOnly;
+        opponentsOnly.teamViewPolicy =
+            game::web_radar_json::TeamViewPolicy::opponentsOnly;
+        const std::string opponentsJson =
+            game::web_radar_json::serializeSnapshotV1(
+                snapshot,
+                opponentsOnly);
+        requireContains(opponentsJson, "\"id\":\"1\"");
+        requireNotContains(opponentsJson, "\"id\":\"2\"");
+
+        game::GameSnapshot unknownTeam = snapshot;
+        unknownTeam.localTeam = game::Team::Unknown;
+        const std::string unknownTeamJson =
+            game::web_radar_json::serializeSnapshotV1(
+                unknownTeam,
+                localTeamOnly);
+        requireContains(unknownTeamJson, "\"players\":[]");
     }
 
     void testBombStates()

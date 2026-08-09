@@ -222,6 +222,19 @@ namespace
             L"dist").string();
     }
 
+    game::web_radar_json::TeamViewPolicy teamViewPolicy(
+        const int value) noexcept
+    {
+        switch (value) {
+        case 1:
+            return game::web_radar_json::TeamViewPolicy::localTeamOnly;
+        case 2:
+            return game::web_radar_json::TeamViewPolicy::opponentsOnly;
+        default:
+            return game::web_radar_json::TeamViewPolicy::all;
+        }
+    }
+
     class WebRadarRuntime final
     {
     public:
@@ -291,7 +304,9 @@ namespace
 
         void publish(
             const esp::GameSnapshot& snapshot,
-            bool includeSteamIds)
+            const bool includePlayerNames,
+            const bool includeSteamIds,
+            const int teamPolicy)
         {
             if (!snapshot) {
                 return;
@@ -307,7 +322,9 @@ namespace
             }
 
             game::web_radar_json::SerializationOptions options;
+            options.includePlayerNames = includePlayerNames;
             options.includeSteamIds = includeSteamIds;
+            options.teamViewPolicy = teamViewPolicy(teamPolicy);
             const auto serializationStarted =
                 std::chrono::steady_clock::now();
             service->publish(std::make_shared<const std::string>(
@@ -504,7 +521,9 @@ namespace
 
         void publish(
             const esp::GameSnapshot& snapshot,
-            const bool includeSteamIds)
+            const bool includePlayerNames,
+            const bool includeSteamIds,
+            const int teamPolicy)
         {
             if (!snapshot) {
                 return;
@@ -527,7 +546,9 @@ namespace
             }
 
             game::web_radar_json::SerializationOptions options;
+            options.includePlayerNames = includePlayerNames;
             options.includeSteamIds = includeSteamIds;
+            options.teamViewPolicy = teamViewPolicy(teamPolicy);
             const auto serializationStarted =
                 std::chrono::steady_clock::now();
             producer->publish(std::make_shared<const std::string>(
@@ -865,12 +886,16 @@ int main(int argc, char* argv[])
                         if (config.webRadarEnabled) {
                             webRadar.publish(
                                 esp::getGameSnapshot(),
-                                config.webRadarIncludeSteamIds);
+                                config.webRadarIncludePlayerNames,
+                                config.webRadarIncludeSteamIds,
+                                config.webRadarTeamViewPolicy);
                         }
                         if (config.publicRelayEnabled) {
                             publicRelay.publish(
                                 esp::getGameSnapshot(),
-                                config.publicRelayIncludeSteamIds);
+                                config.publicRelayIncludePlayerNames,
+                                config.publicRelayIncludeSteamIds,
+                                config.publicRelayTeamViewPolicy);
                         }
                     }
                     std::this_thread::sleep_for(
@@ -930,12 +955,16 @@ int main(int argc, char* argv[])
                     if (config.webRadarEnabled) {
                         webRadar.publish(
                             snapshot,
-                            config.webRadarIncludeSteamIds);
+                            config.webRadarIncludePlayerNames,
+                            config.webRadarIncludeSteamIds,
+                            config.webRadarTeamViewPolicy);
                     }
                     if (config.publicRelayEnabled) {
                         publicRelay.publish(
                             snapshot,
-                            config.publicRelayIncludeSteamIds);
+                            config.publicRelayIncludePlayerNames,
+                            config.publicRelayIncludeSteamIds,
+                            config.publicRelayTeamViewPolicy);
                     }
                     if (config.radarRecordingEnabled && snapshot) {
                         game::web_radar_json::SerializationOptions options;
@@ -1066,12 +1095,16 @@ int main(int argc, char* argv[])
             if (config.webRadarEnabled) {
                 webRadar.publish(
                     esp::getGameSnapshot(),
-                    config.webRadarIncludeSteamIds);
+                    config.webRadarIncludePlayerNames,
+                    config.webRadarIncludeSteamIds,
+                    config.webRadarTeamViewPolicy);
             }
             if (config.publicRelayEnabled) {
                 publicRelay.publish(
                     esp::getGameSnapshot(),
-                    config.publicRelayIncludeSteamIds);
+                    config.publicRelayIncludePlayerNames,
+                    config.publicRelayIncludeSteamIds,
+                    config.publicRelayTeamViewPolicy);
             }
         }
         memory::Close();

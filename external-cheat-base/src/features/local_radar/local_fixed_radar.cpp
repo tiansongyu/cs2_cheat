@@ -116,6 +116,8 @@ namespace
     };
 
     TextureCache textureCache;
+    std::string selectedLevelMapId;
+    std::optional<std::size_t> selectedLevelIndex;
 
     std::filesystem::path executableDirectory()
     {
@@ -595,9 +597,17 @@ void local_fixed_radar::render(
 
     const std::optional<float> referenceZ =
         game::fixed_map_radar::selectReferenceZ(snapshot);
+    if (selectedLevelMapId != snapshot.map.id) {
+        selectedLevelMapId = snapshot.map.id;
+        selectedLevelIndex.reset();
+    }
     const std::optional<std::size_t> levelIndex = referenceZ
-        ? game::fixed_map_radar::selectLevel(*map, *referenceZ)
+        ? game::fixed_map_radar::selectLevelWithHysteresis(
+            *map,
+            *referenceZ,
+            selectedLevelIndex)
         : std::nullopt;
+    selectedLevelIndex = levelIndex;
     const std::string& imagePath = levelIndex
         ? map->levels[*levelIndex].imagePath
         : map->imagePath;
@@ -767,4 +777,6 @@ void local_fixed_radar::reset() noexcept
         }
     }
     textureCache = {};
+    selectedLevelMapId.clear();
+    selectedLevelIndex.reset();
 }

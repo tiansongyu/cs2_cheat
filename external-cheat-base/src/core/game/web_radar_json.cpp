@@ -461,6 +461,28 @@ namespace
         writer.boolean(bomb.defuseWillSucceed);
         writer.raw("}");
     }
+
+    bool includePlayer(
+        const game::GameSnapshot& snapshot,
+        const game::PlayerSnapshot& player,
+        const game::web_radar_json::TeamViewPolicy policy) noexcept
+    {
+        using game::Team;
+        using game::web_radar_json::TeamViewPolicy;
+        if (policy == TeamViewPolicy::all) {
+            return true;
+        }
+        if (snapshot.localTeam != Team::Terrorists &&
+            snapshot.localTeam != Team::CounterTerrorists) {
+            return false;
+        }
+        if (policy == TeamViewPolicy::localTeamOnly) {
+            return player.team == snapshot.localTeam;
+        }
+        return (player.team == Team::Terrorists ||
+                player.team == Team::CounterTerrorists) &&
+            player.team != snapshot.localTeam;
+    }
 }
 
 std::string game::web_radar_json::serializeSnapshotV1(
@@ -494,8 +516,11 @@ std::string game::web_radar_json::serializeSnapshotV1(
 
     std::vector<const PlayerSnapshot*> orderedPlayers;
     orderedPlayers.reserve(snapshot.players.size());
-    for (const auto& player : snapshot.players)
-        orderedPlayers.push_back(&player);
+    for (const auto& player : snapshot.players) {
+        if (includePlayer(snapshot, player, options.teamViewPolicy)) {
+            orderedPlayers.push_back(&player);
+        }
+    }
 
     std::stable_sort(
         orderedPlayers.begin(),

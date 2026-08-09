@@ -7,10 +7,20 @@
 
 namespace game::web_radar_json
 {
+    enum class TeamViewPolicy
+    {
+        all,
+        localTeamOnly,
+        opponentsOnly
+    };
+
     struct SerializationOptions
     {
         bool includePlayerNames{ true };
         bool includeSteamIds{ false };
+        TeamViewPolicy teamViewPolicy{ TeamViewPolicy::all };
+
+        bool operator==(const SerializationOptions&) const = default;
     };
 
     // Serializes an absolute (non-delta) state frame using a stable field order.

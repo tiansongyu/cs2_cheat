@@ -130,6 +130,10 @@ export interface MapDefinition {
 
 export interface MapManifest {
   version: 1;
+  source?: {
+    project: string;
+    release: string;
+  };
   maps: MapDefinition[];
 }
 
@@ -261,6 +265,14 @@ export function parseServerMessage(raw: string): ServerMessage | null {
 
 export function isMapManifest(value: unknown): value is MapManifest {
   if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.maps)) return false;
+  if (
+    value.source !== undefined &&
+    (!isRecord(value.source) ||
+      typeof value.source.project !== 'string' ||
+      typeof value.source.release !== 'string')
+  ) {
+    return false;
+  }
   return value.maps.every((map) => {
     if (!isRecord(map) || !isRecord(map.origin)) return false;
     const coreValid =

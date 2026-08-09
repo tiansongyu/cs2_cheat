@@ -23,6 +23,13 @@ export interface RadarStreamState {
   error: string | null;
   retryInMs: number | null;
   retry: () => void;
+  quality: RadarStreamQuality;
+}
+
+export interface RadarStreamQuality {
+  updateRateHz: number;
+  snapshotAgeMs: number;
+  skippedFrames: number;
 }
 
 interface RadarStreamOptions {
@@ -38,6 +45,11 @@ export function useRadarStream({ mode, onSessionRejected }: RadarStreamOptions):
   const [error, setError] = useState<string | null>(null);
   const [retryInMs, setRetryInMs] = useState<number | null>(null);
   const [retryVersion, setRetryVersion] = useState(0);
+  const [quality, setQuality] = useState<RadarStreamQuality>({
+    updateRateHz: 0,
+    snapshotAgeMs: 0,
+    skippedFrames: 0,
+  });
   const attemptRef = useRef(0);
   const lastReceivedAtRef = useRef<number | null>(null);
 
@@ -52,6 +64,8 @@ export function useRadarStream({ mode, onSessionRejected }: RadarStreamOptions):
     let connectionStartedAtMs: number | null = null;
     let sessionProbeController: AbortController | undefined;
     let generation = 0;
+    let previousSequence: number | null = null;
+    let previousFrameAtMs: number | null = null;
     attemptRef.current = 0;
 
     const isOffline = () => navigator.onLine === false;
@@ -204,6 +218,23 @@ export function useRadarStream({ mode, onSessionRejected }: RadarStreamOptions):
         if (message.type !== 'snapshot') return;
 
         const receivedAtWallMs = Date.now();
+        const intervalMs = previousFrameAtMs === null
+          ? null
+          : receivedAtWallMs - previousFrameAtMs;
+        const sequenceGap = previousSequence !== null && message.seq > previousSequence
+          ? Math.max(0, message.seq - previousSequence - 1)
+          : 0;
+        setQuality((current) => ({
+          updateRateHz: intervalMs !== null && intervalMs > 0
+            ? current.updateRateHz === 0
+              ? 1_000 / intervalMs
+              : current.updateRateHz * 0.8 + (1_000 / intervalMs) * 0.2
+            : current.updateRateHz,
+          snapshotAgeMs: Math.max(0, receivedAtWallMs - message.capturedAtMs),
+          skippedFrames: current.skippedFrames + sequenceGap,
+        }));
+        previousSequence = message.seq;
+        previousFrameAtMs = receivedAtWallMs;
         lastReceivedAtRef.current = receivedAtWallMs;
         attemptRef.current = 0;
         setFrame({
@@ -353,5 +384,6 @@ export function useRadarStream({ mode, onSessionRejected }: RadarStreamOptions):
     error,
     retryInMs,
     retry,
+    quality,
   };
 }

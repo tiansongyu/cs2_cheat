@@ -119,6 +119,15 @@ function RadarWorkspace({
         <span className="footer-spacer" />
         <span>{replay.active ? '本地回放' : mode === 'relay' ? '安全 Relay' : '内嵌服务'}</span>
         <span>协议 v1</span>
+        {!replay.active && stream.quality.updateRateHz > 0 && (
+          <span>{stream.quality.updateRateHz.toFixed(1)} Hz</span>
+        )}
+        {!replay.active && stream.quality.snapshotAgeMs > 0 && (
+          <span>数据龄 {Math.round(stream.quality.snapshotAgeMs)} ms</span>
+        )}
+        {!replay.active && stream.quality.skippedFrames > 0 && (
+          <span>跳过 {stream.quality.skippedFrames} 帧</span>
+        )}
         <span>{players.length} 名玩家</span>
       </footer>
     </div>

@@ -5,7 +5,7 @@ import {
   cssHeadingFromGameYaw,
   projectWorldPoint,
   resolveMapImage,
-  selectMapLevel,
+  selectStableMapLevel,
   selectReferenceZ,
   unwrapHeading,
 } from '../lib/coordinates';
@@ -74,17 +74,25 @@ export function RadarMap({
     mapId,
     values: new Map<string, number>(),
   });
+  const selectedFloor = useRef<{ mapId: string; levelId?: string }>({ mapId });
   const referenceZ = selectReferenceZ(
     players,
     localPlayerId,
     observedPlayerId,
     localTeam,
   );
-  const imageUrl = map ? resolveMapImage(map, referenceZ) : '';
+  const floorSelection = map && referenceZ !== undefined
+    ? selectStableMapLevel(
+        map.levels,
+        referenceZ,
+        selectedFloor.current.mapId === mapId ? selectedFloor.current.levelId : undefined,
+      )
+    : { level: undefined, confidence: 0, retained: false };
+  const level = floorSelection.level;
+  const imageUrl = level?.image ?? (map ? resolveMapImage(map, referenceZ) : '');
   const imageSrc = imageRevision === 0
     ? imageUrl
     : `${imageUrl}${imageUrl.includes('?') ? '&' : '?'}radar_retry=${imageRevision}`;
-  const level = map && referenceZ !== undefined ? selectMapLevel(map.levels, referenceZ) : undefined;
   const headingFrame = useMemo(() => {
     const previous = playerHeadings.current.mapId === mapId
       ? playerHeadings.current.values
@@ -115,6 +123,10 @@ export function RadarMap({
     // later.
     playerHeadings.current = { mapId, values: headingFrame };
   }, [headingFrame, mapId]);
+
+  useEffect(() => {
+    selectedFloor.current = { mapId, levelId: level?.id };
+  }, [level?.id, mapId]);
 
   useEffect(() => {
     if (!imageFailed) return undefined;
@@ -165,7 +177,14 @@ export function RadarMap({
         <div>
           <span className="north-indicator"><i />N</span>
           <strong>{map?.name ?? (mapId || 'NO MAP')}</strong>
-          {level && <small>{level.id}</small>}
+          {level && (floorSelection.confidence < 0.5 ? (
+            <small
+              className="floor-confidence-low"
+              title={floorSelection.retained ? '楼层边界缓冲中' : '楼层判断置信度较低'}
+            >
+              {level.id} · 切换中
+            </small>
+          ) : <small>{level.id}</small>)}
         </div>
         <span className={`bomb-status bomb-${bomb.state}`}>{bombStateLabel(bomb.state)}</span>
       </div>
