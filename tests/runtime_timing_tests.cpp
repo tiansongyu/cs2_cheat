@@ -22,6 +22,25 @@ int main()
     const SamplingDemand input{true, false, false};
     assert(dataSamplingRate(60, input) == 240);
     assert(dataSamplingRate(360, input) == 240);
+    assert(dataSamplingRate(
+        144,
+        SamplingDemand{false, false, false, 4}) == 4);
+
+    using runtime_timing::RadarDemand;
+    using runtime_timing::radarSamplingRate;
+    assert(radarSamplingRate(RadarDemand{}) == 0);
+    assert(radarSamplingRate(
+        RadarDemand{false, true, false, false, false, true}) == 4);
+    assert(radarSamplingRate(
+        RadarDemand{false, true, true, false, false, true}) == 20);
+    assert(radarSamplingRate(
+        RadarDemand{false, true, true, false, false, false}) == 10);
+    assert(radarSamplingRate(
+        RadarDemand{true, false, false, false, false, true}) == 20);
+    assert(runtime_timing::metadataRefreshInterval(true) ==
+        std::chrono::milliseconds(100));
+    assert(runtime_timing::metadataRefreshInterval(false) ==
+        std::chrono::milliseconds(250));
 
     assert(
         runtime_timing::intervalForRate(240) ==

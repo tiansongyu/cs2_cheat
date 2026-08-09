@@ -29,6 +29,9 @@ loads the same map files through WIC.
 - Relay logout uses `DELETE /api/v1/session`. Neither invite credentials nor session credentials are stored in `localStorage` or a URL; credential-shaped Relay query parameters are removed from browser history.
 - Session requests and WebSocket handshakes have explicit timeouts. Offline/online, foreground, BFCache, stale-frame, and superseded-connection transitions recover without accumulating sockets.
 - The map manifest is conditionally revalidated from `/maps/manifest.json` and retried with bounded backoff. Missing manifests and map images also expose manual retry actions.
+- `/maps/SOURCE.json` is revalidated with the manifest; malformed digests or a release mismatch prevent the map package from being accepted.
+- The footer reports observed update rate, snapshot age and skipped sequence count.
+- Sanitized newline-delimited v1 recordings can be loaded from the settings panel for local playback and scrubbing without a live game connection.
 
 ## WebSocket v1
 

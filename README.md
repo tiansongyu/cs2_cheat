@@ -91,6 +91,14 @@ Radar 不再使用玩家中心的圆形或旋转视图。本地 SDL 覆盖层、
    默认服务地址是 `127.0.0.1:22006`，只能由本机访问。
 3. 如需在同一可信局域网的手机或平板上查看，主动启用 LAN 监听，并把复制 URL 中的 `127.0.0.1` 替换为本机的私有局域网 IPv4。不要删除 URL 中的 token。
 
+浏览器和 Relay 可在发送前关闭玩家姓名、Steam ID，或只保留本方/对方队伍。
+无人连接内嵌 Radar 时采样自动降为 4 Hz，连接后恢复 20 Hz；允许失焦后台共享
+时使用 10 Hz。菜单 **System** 页面会显示采样、渲染、JSON、RPM 和截止时间统计。
+
+需要复现 Radar 问题时可启用 **Record sanitized Radar snapshots**。录制文件位于
+`%LOCALAPPDATA%\AegisCS2\recordings`，不包含姓名或 Steam ID，单文件最大 256 MB。
+在 Web Radar 的显示设置中载入该 `.ndjson` 文件即可播放、暂停或拖动回放。
+
 本地覆盖层会直接从 EXE 同级的 `web-radar/dist/maps` 加载与浏览器完全相同的
 1024×1024 PNG；发布或复制程序时必须保留整个 `web-radar/dist` 目录。
 

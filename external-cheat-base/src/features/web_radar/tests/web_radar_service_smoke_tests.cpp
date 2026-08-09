@@ -275,6 +275,13 @@ int main()
                 return viewerState.latestMessage == "{\"sequence\":42}";
             }),
             "Published snapshot was not received");
+        const web_radar::WebRadarStatus metrics = service->status();
+        require(metrics.publishedFrames == 2,
+            "Published frame metric did not advance");
+        require(metrics.sentFrames >= 2,
+            "Sent frame metric did not advance");
+        require(metrics.publishedBytes > 0,
+            "Published byte metric did not advance");
 
         mg_websocket_client_write(
             viewer,

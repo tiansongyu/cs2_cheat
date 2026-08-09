@@ -29,15 +29,37 @@ namespace memory
 	inline std::atomic<std::uint64_t> gReadCalls{0};
 	inline std::atomic<std::uint64_t> gReadFailures{0};
 	inline std::atomic<std::uint64_t> gReadBytesRequested{0};
+	inline std::atomic<std::uint64_t> gReadMetricsEpoch{1};
 
 	inline void RecordRead(size_t size, bool succeeded) noexcept
 	{
-		gReadCalls.fetch_add(1, std::memory_order_relaxed);
-		gReadBytesRequested.fetch_add(
-			static_cast<std::uint64_t>(size),
+		struct LocalAccumulator
+		{
+			std::uint64_t epoch{};
+			std::uint64_t calls{};
+			std::uint64_t failures{};
+			std::uint64_t bytes{};
+		};
+		thread_local LocalAccumulator local;
+		const std::uint64_t epoch = gReadMetricsEpoch.load(
 			std::memory_order_relaxed);
+		if (local.epoch != epoch) {
+			local = LocalAccumulator{epoch};
+		}
+		++local.calls;
+		local.bytes += static_cast<std::uint64_t>(size);
 		if (!succeeded) {
-			gReadFailures.fetch_add(1, std::memory_order_relaxed);
+			++local.failures;
+		}
+		if (local.calls >= 256) {
+			gReadCalls.fetch_add(local.calls, std::memory_order_relaxed);
+			gReadFailures.fetch_add(
+				local.failures,
+				std::memory_order_relaxed);
+			gReadBytesRequested.fetch_add(
+				local.bytes,
+				std::memory_order_relaxed);
+			local = LocalAccumulator{epoch};
 		}
 	}
 
@@ -55,6 +77,7 @@ namespace memory
 		gReadCalls.store(0, std::memory_order_relaxed);
 		gReadFailures.store(0, std::memory_order_relaxed);
 		gReadBytesRequested.store(0, std::memory_order_relaxed);
+		gReadMetricsEpoch.fetch_add(1, std::memory_order_relaxed);
 	}
 
 	uintptr_t GetProcID(const wchar_t* process);

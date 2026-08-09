@@ -235,6 +235,40 @@ namespace
         }
     }
 
+    std::shared_ptr<const std::string> serializeSnapshotCached(
+        const esp::GameSnapshot& snapshot,
+        const game::web_radar_json::SerializationOptions& options)
+    {
+        if (!snapshot) {
+            return {};
+        }
+        struct CacheEntry
+        {
+            esp::GameSnapshot snapshot;
+            game::web_radar_json::SerializationOptions options;
+            std::shared_ptr<const std::string> payload;
+        };
+        thread_local std::array<CacheEntry, 4> entries;
+        thread_local std::size_t nextEntry = 0;
+
+        for (const CacheEntry& entry : entries) {
+            if (entry.snapshot == snapshot && entry.options == options &&
+                entry.payload) {
+                return entry.payload;
+            }
+        }
+
+        const auto serializationStarted =
+            std::chrono::steady_clock::now();
+        auto payload = std::make_shared<const std::string>(
+            game::web_radar_json::serializeSnapshotV1(*snapshot, options));
+        performance_metrics::serializationDuration.record(
+            std::chrono::steady_clock::now() - serializationStarted);
+        entries[nextEntry] = CacheEntry{snapshot, options, payload};
+        nextEntry = (nextEntry + 1) % entries.size();
+        return payload;
+    }
+
     class WebRadarRuntime final
     {
     public:
@@ -325,14 +359,7 @@ namespace
             options.includePlayerNames = includePlayerNames;
             options.includeSteamIds = includeSteamIds;
             options.teamViewPolicy = teamViewPolicy(teamPolicy);
-            const auto serializationStarted =
-                std::chrono::steady_clock::now();
-            service->publish(std::make_shared<const std::string>(
-                game::web_radar_json::serializeSnapshotV1(
-                    *snapshot,
-                    options)));
-            performance_metrics::serializationDuration.record(
-                std::chrono::steady_clock::now() - serializationStarted);
+            service->publish(serializeSnapshotCached(snapshot, options));
         }
 
         void stop()
@@ -340,6 +367,11 @@ namespace
             settings_.reset();
             detachAndStop();
             publishUiStatus(true);
+        }
+
+        [[nodiscard]] std::size_t viewerCount() const noexcept
+        {
+            return viewerCount_.load(std::memory_order_relaxed);
         }
 
     private:
@@ -387,6 +419,12 @@ namespace
                 const web_radar::WebRadarStatus status = service->status();
                 ui.running = status.isRunning();
                 ui.viewers = status.viewerCount;
+                ui.publishedFrames = status.publishedFrames;
+                ui.sentFrames = status.sentFrames;
+                ui.replacedFrames = status.replacedFrames;
+                ui.publishedBytes = status.publishedBytes;
+                ui.maximumSendLatencyMilliseconds =
+                    status.maximumSendLatencyMilliseconds;
                 ui.bindAddress = status.bindAddress;
                 if (!status.lastError.empty()) {
                     ui.error = status.lastError;
@@ -398,6 +436,7 @@ namespace
                         "/?token=" + token_;
                 }
             }
+            viewerCount_.store(ui.viewers, std::memory_order_relaxed);
             menu::setWebRadarStatus(std::move(ui));
         }
 
@@ -408,6 +447,7 @@ namespace
         std::string documentRoot_;
         std::string lastError_;
         std::chrono::steady_clock::time_point nextUiStatusPublish_{};
+        std::atomic<std::size_t> viewerCount_{0};
     };
 
     struct AbandonedPublicRelayProducerSlot final
@@ -549,14 +589,7 @@ namespace
             options.includePlayerNames = includePlayerNames;
             options.includeSteamIds = includeSteamIds;
             options.teamViewPolicy = teamViewPolicy(teamPolicy);
-            const auto serializationStarted =
-                std::chrono::steady_clock::now();
-            producer->publish(std::make_shared<const std::string>(
-                game::web_radar_json::serializeSnapshotV1(
-                    *snapshot,
-                    options)));
-            performance_metrics::serializationDuration.record(
-                std::chrono::steady_clock::now() - serializationStarted);
+            producer->publish(serializeSnapshotCached(snapshot, options));
         }
 
         void stop()
@@ -847,8 +880,6 @@ int main(int argc, char* argv[])
         memory::ResetReadMetrics();
         std::thread dataThread(
             [&dataRunning, &webRadar, &publicRelay, &snapshotRecorder]() {
-            constexpr auto radarInterval =
-                std::chrono::milliseconds(50);
             auto nextDataTime = std::chrono::steady_clock::now();
             auto nextRadarTime = nextDataTime;
             int appliedSamplingRate = 0;
@@ -875,6 +906,20 @@ int main(int argc, char* argv[])
                 }
                 const bool radarSamplingEnabled =
                     config.radarSnapshotEnabled();
+                const int radarRate = radarSamplingEnabled
+                    ? runtime_timing::radarSamplingRate(
+                        runtime_timing::RadarDemand{
+                            config.localRadarEnabled,
+                            config.webRadarEnabled,
+                            webRadar.viewerCount() > 0,
+                            config.publicRelayEnabled,
+                            config.radarRecordingEnabled,
+                            gameForeground
+                        })
+                    : 0;
+                performance_metrics::radarRateHz.store(
+                    radarRate,
+                    std::memory_order_relaxed);
                 const bool backgroundRadarSampling =
                     (config.webRadarEnabled ||
                      config.publicRelayEnabled) &&
@@ -913,7 +958,8 @@ int main(int argc, char* argv[])
                          config.grenadeESP ||
                          config.droppedWeaponESP),
                     gameForeground &&
-                        (config.antiFlash || config.bombTimer)
+                        (config.antiFlash || config.bombTimer),
+                    radarRate > 0 ? radarRate : 20
                 };
                 const int samplingRate =
                     runtime_timing::dataSamplingRate(
@@ -930,6 +976,7 @@ int main(int argc, char* argv[])
                     runtime_timing::intervalForRate(samplingRate);
 
                 menu::RuntimeConfig samplingConfig = config;
+                samplingConfig.radarRefreshRateHz = std::max(1, radarRate);
                 if (!gameForeground) {
                     samplingConfig.antiFlash = false;
                     samplingConfig.aimbotEnabled = false;
@@ -969,19 +1016,13 @@ int main(int argc, char* argv[])
                     if (config.radarRecordingEnabled && snapshot) {
                         game::web_radar_json::SerializationOptions options;
                         options.includePlayerNames = false;
-                        const auto serializationStarted =
-                            std::chrono::steady_clock::now();
                         snapshotRecorder.publish(
-                            std::make_shared<const std::string>(
-                                game::web_radar_json::serializeSnapshotV1(
-                                    *snapshot,
-                                    options)));
-                        performance_metrics::serializationDuration.record(
-                            std::chrono::steady_clock::now() -
-                            serializationStarted);
+                            serializeSnapshotCached(snapshot, options));
                     }
                     nextRadarTime =
-                        sampleComplete + radarInterval;
+                        sampleComplete +
+                        runtime_timing::intervalForRate(
+                            std::max(1, radarRate));
                 } else if (!radarSamplingEnabled) {
                     nextRadarTime = sampleComplete;
                 }

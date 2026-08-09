@@ -16,6 +16,11 @@ namespace
     class JsonWriter
     {
     public:
+        void reserve(const std::size_t bytes)
+        {
+            output_.reserve(bytes);
+        }
+
         void raw(std::string_view value)
         {
             output_.append(value);
@@ -356,7 +361,8 @@ namespace
         JsonWriter& writer,
         const std::vector<game::WeaponSnapshot>& inventory)
     {
-        std::vector<const game::WeaponSnapshot*> ordered;
+        thread_local std::vector<const game::WeaponSnapshot*> ordered;
+        ordered.clear();
         ordered.reserve(inventory.size());
         for (const auto& weapon : inventory)
             ordered.push_back(&weapon);
@@ -490,6 +496,7 @@ std::string game::web_radar_json::serializeSnapshotV1(
     const SerializationOptions& options)
 {
     JsonWriter writer;
+    writer.reserve(512U + snapshot.players.size() * 768U);
     writer.raw("{\"v\":1,\"type\":\"snapshot\",\"protocolVersion\":");
     writer.integer(snapshot.protocolVersion);
     writer.raw(",\"seq\":");
@@ -514,7 +521,8 @@ std::string game::web_radar_json::serializeSnapshotV1(
     writer.string(toString(snapshot.localTeam));
     writer.raw(",\"players\":[");
 
-    std::vector<const PlayerSnapshot*> orderedPlayers;
+    thread_local std::vector<const PlayerSnapshot*> orderedPlayers;
+    orderedPlayers.clear();
     orderedPlayers.reserve(snapshot.players.size());
     for (const auto& player : snapshot.players) {
         if (includePlayer(snapshot, player, options.teamViewPolicy)) {

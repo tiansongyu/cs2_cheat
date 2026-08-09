@@ -108,6 +108,7 @@ namespace menu
         int webRadarTeamViewPolicy = 0;
         uint16_t webRadarPort = 22006;
         bool radarRecordingEnabled = false;
+        int radarRefreshRateHz = 20;
         bool publicRelayEnabled = false;
         bool publicRelayIncludePlayerNames = true;
         bool publicRelayIncludeSteamIds = false;
@@ -248,6 +249,11 @@ namespace menu
     {
         bool running = false;
         size_t viewers = 0;
+        std::uint64_t publishedFrames = 0;
+        std::uint64_t sentFrames = 0;
+        std::uint64_t replacedFrames = 0;
+        std::uint64_t publishedBytes = 0;
+        double maximumSendLatencyMilliseconds = 0.0;
         std::string viewerUrl;
         std::string bindAddress = "127.0.0.1";
         std::string error;
@@ -1327,6 +1333,16 @@ namespace menu
         ImGui::Text("Service: %s", status.running ? "RUNNING" : "STOPPED");
         ImGui::Text("Bind: %s:%d", status.bindAddress.c_str(), webRadarPort);
         ImGui::Text("Viewers: %zu", status.viewers);
+        ImGui::Text(
+            "Frames: %llu published | %llu sent | %llu replaced",
+            static_cast<unsigned long long>(status.publishedFrames),
+            static_cast<unsigned long long>(status.sentFrames),
+            static_cast<unsigned long long>(status.replacedFrames));
+        ImGui::Text(
+            "Traffic: %.1f MB | max send latency %.1f ms",
+            static_cast<double>(status.publishedBytes) /
+                (1024.0 * 1024.0),
+            status.maximumSendLatencyMilliseconds);
 
         if (!status.error.empty()) {
             ImGui::TextColored(
@@ -1606,8 +1622,10 @@ namespace menu
             performance_metrics::renderCpuDuration.snapshot();
         const memory::ReadMetrics readMetrics = memory::GetReadMetrics();
         ImGui::Text(
-            "Sampling: %d Hz | avg %.2f ms | P95 %.2f | P99 %.2f",
+            "Sampling: %d Hz | Radar: %d Hz | avg %.2f ms | P95 %.2f | P99 %.2f",
             performance_metrics::samplingRateHz.load(
+                std::memory_order_relaxed),
+            performance_metrics::radarRateHz.load(
                 std::memory_order_relaxed),
             samplingMetrics.averageMilliseconds,
             samplingMetrics.p95Milliseconds,

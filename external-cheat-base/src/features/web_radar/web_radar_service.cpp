@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <chrono>
 #include <filesystem>
 #include <mutex>
 #include <sstream>
@@ -347,11 +348,21 @@ namespace web_radar
             {
                 std::scoped_lock snapshotLock(snapshotMutex_);
                 ++publishedGeneration_;
-                snapshot = {publishedGeneration_, std::move(absoluteState)};
+                snapshot = {
+                    publishedGeneration_,
+                    std::move(absoluteState),
+                    std::chrono::steady_clock::now()
+                };
                 latestSnapshot_ = snapshot;
             }
 
-            std::vector<std::shared_ptr<Viewer>> viewers;
+            publishedFrames_.fetch_add(1, std::memory_order_relaxed);
+            publishedBytes_.fetch_add(
+                snapshot.payload->size(),
+                std::memory_order_relaxed);
+
+            thread_local std::vector<std::shared_ptr<Viewer>> viewers;
+            viewers.clear();
             {
                 std::scoped_lock viewerLock(viewersMutex_);
                 viewers.reserve(viewers_.size());
@@ -362,8 +373,11 @@ namespace web_radar
             }
 
             for (const auto& viewer : viewers) {
-                viewer->enqueue(snapshot);
+                if (viewer->enqueue(snapshot)) {
+                    replacedFrames_.fetch_add(1, std::memory_order_relaxed);
+                }
             }
+            viewers.clear();
         }
 
         [[nodiscard]] bool isRunning() const noexcept
@@ -384,6 +398,17 @@ namespace web_radar
             result.bindAddress = config_.bindAddress;
             result.port = config_.port;
             result.viewerCount = viewerCount();
+            result.publishedFrames = publishedFrames_.load(
+                std::memory_order_relaxed);
+            result.sentFrames = sentFrames_.load(std::memory_order_relaxed);
+            result.replacedFrames = replacedFrames_.load(
+                std::memory_order_relaxed);
+            result.publishedBytes = publishedBytes_.load(
+                std::memory_order_relaxed);
+            result.maximumSendLatencyMilliseconds =
+                static_cast<double>(maximumSendLatencyMicroseconds_.load(
+                    std::memory_order_relaxed)) /
+                1000.0;
             {
                 std::scoped_lock stateLock(stateMutex_);
                 result.lastError = lastError_;
@@ -396,13 +421,38 @@ namespace web_radar
         {
             std::uint64_t generation = 0;
             std::shared_ptr<const std::string> payload;
+            std::chrono::steady_clock::time_point queuedAt{};
         };
+
+        void recordSent(
+            const std::chrono::steady_clock::time_point queuedAt) noexcept
+        {
+            sentFrames_.fetch_add(1, std::memory_order_relaxed);
+            if (queuedAt.time_since_epoch().count() == 0) {
+                return;
+            }
+            const auto measured = std::chrono::duration_cast<
+                std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - queuedAt).count();
+            const std::uint64_t microseconds = measured <= 0
+                ? 0
+                : static_cast<std::uint64_t>(measured);
+            std::uint64_t maximum = maximumSendLatencyMicroseconds_.load(
+                std::memory_order_relaxed);
+            while (microseconds > maximum &&
+                   !maximumSendLatencyMicroseconds_.compare_exchange_weak(
+                       maximum,
+                       microseconds,
+                       std::memory_order_relaxed,
+                       std::memory_order_relaxed)) {
+            }
+        }
 
         class Viewer final
         {
         public:
-            explicit Viewer(struct mg_connection* connection)
-                : connection_(connection)
+            Viewer(struct mg_connection* connection, Impl& owner)
+                : connection_(connection), owner_(owner)
             {
             }
 
@@ -416,21 +466,24 @@ namespace web_radar
                 writer_ = std::thread([this] { writeLoop(); });
             }
 
-            void enqueue(const Snapshot& snapshot)
+            [[nodiscard]] bool enqueue(const Snapshot& snapshot)
             {
                 if (!snapshot.payload) {
-                    return;
+                    return false;
                 }
 
+                bool replaced = false;
                 {
                     std::scoped_lock lock(mutex_);
                     if (closing_ || snapshot.generation <= newestGeneration_) {
-                        return;
+                        return false;
                     }
+                    replaced = pending_.payload != nullptr;
                     newestGeneration_ = snapshot.generation;
                     pending_ = snapshot;
                 }
                 wake_.notify_one();
+                return replaced;
             }
 
             void stopAndJoin() noexcept
@@ -478,10 +531,12 @@ namespace web_radar
                         pending_ = {};
                         return;
                     }
+                    owner_.recordSent(snapshot.queuedAt);
                 }
             }
 
             struct mg_connection* connection_ = nullptr;
+            Impl& owner_;
             std::mutex mutex_;
             std::mutex joinMutex_;
             std::condition_variable wake_;
@@ -608,7 +663,7 @@ namespace web_radar
             std::shared_ptr<Viewer> viewer;
             bool accepted = false;
             try {
-                viewer = std::make_shared<Viewer>(connection);
+                viewer = std::make_shared<Viewer>(connection, *this);
                 viewer->start();
                 {
                     std::scoped_lock viewerLock(viewersMutex_);
@@ -640,7 +695,8 @@ namespace web_radar
                 std::scoped_lock snapshotLock(snapshotMutex_);
                 latest = latestSnapshot_;
             }
-            viewer->enqueue(latest);
+            latest.queuedAt = std::chrono::steady_clock::now();
+            static_cast<void>(viewer->enqueue(latest));
         }
 
         void removeViewer(const struct mg_connection* connection) noexcept
@@ -693,7 +749,13 @@ namespace web_radar
                  << (current.isRunning() ? "true" : "false")
                  << ",\"bind\":\"" << escapeJson(current.bindAddress)
                  << "\",\"port\":" << current.port
-                 << ",\"viewers\":" << current.viewerCount << '}';
+                 << ",\"viewers\":" << current.viewerCount
+                 << ",\"publishedFrames\":" << current.publishedFrames
+                 << ",\"sentFrames\":" << current.sentFrames
+                 << ",\"replacedFrames\":" << current.replacedFrames
+                 << ",\"publishedBytes\":" << current.publishedBytes
+                 << ",\"maximumSendLatencyMs\":"
+                 << current.maximumSendLatencyMilliseconds << '}';
             return json.str();
         }
 
@@ -753,6 +815,11 @@ namespace web_radar
             const struct mg_connection*,
             std::shared_ptr<Viewer>> viewers_;
         std::atomic<std::size_t> viewerCount_{0};
+        std::atomic<std::uint64_t> publishedFrames_{0};
+        std::atomic<std::uint64_t> sentFrames_{0};
+        std::atomic<std::uint64_t> replacedFrames_{0};
+        std::atomic<std::uint64_t> publishedBytes_{0};
+        std::atomic<std::uint64_t> maximumSendLatencyMicroseconds_{0};
 
         std::mutex snapshotMutex_;
         Snapshot latestSnapshot_;

@@ -24,6 +24,11 @@ namespace web_radar
         std::string bindAddress = "127.0.0.1";
         std::uint16_t port = 22006;
         std::size_t viewerCount = 0;
+        std::uint64_t publishedFrames = 0;
+        std::uint64_t sentFrames = 0;
+        std::uint64_t replacedFrames = 0;
+        std::uint64_t publishedBytes = 0;
+        double maximumSendLatencyMilliseconds = 0.0;
         std::string lastError;
 
         [[nodiscard]] bool isRunning() const noexcept

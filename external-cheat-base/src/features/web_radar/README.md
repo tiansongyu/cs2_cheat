@@ -5,14 +5,19 @@ and stop repeatedly. Static files are served from `WebRadarConfig::documentRoot`
 
 Endpoints:
 
-- `GET /api/v1/status` returns service state and viewer count. It never
-  returns the bearer token.
+- `GET /api/v1/status` returns service state, viewer count, published/sent/
+  replaced frame counters, bytes and maximum send latency. It never returns
+  the bearer token.
 - `WS /api/v1/stream?token=<token>` streams complete JSON snapshots.
 
 WebSocket viewers are receive-only. Sending an application data frame closes
 the connection. Each viewer has an independent writer with one replaceable
 pending snapshot; calls to `publish()` never perform socket I/O and slow
 viewers skip obsolete snapshots.
+
+The application lowers Web-Radar-only sampling to 4 Hz while no viewer is
+connected, restores 20 Hz for foreground viewers, and uses 10 Hz for explicit
+background sharing. Local overlay and recording demand remain foreground-only.
 
 ## Build integration
 

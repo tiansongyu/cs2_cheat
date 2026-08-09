@@ -4,6 +4,7 @@
 #include "core/memory/game_layout.hpp"
 #include "core/game/radar_player_sample.hpp"
 #include "core/renderer/viewport_math.hpp"
+#include "core/runtime_timing.hpp"
 #include "imgui.h"
 #include <iostream>
 #include <cmath>
@@ -1193,7 +1194,8 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
     } else if (
         lastRadarSnapshotRefresh.time_since_epoch().count() == 0 ||
         updateNow - lastRadarSnapshotRefresh >=
-            std::chrono::milliseconds(50)) {
+            runtime_timing::intervalForRate(
+                std::clamp(config.radarRefreshRateHz, 1, 20))) {
         lastRadarSnapshotRefresh = updateNow;
         captureRadarSnapshot = true;
     }
@@ -1209,7 +1211,8 @@ void esp::updateEntities(const menu::RuntimeConfig& config)
         radarMetadataIncomplete ||
         lastEntityCacheRefresh.time_since_epoch().count() == 0 ||
         updateNow - lastEntityCacheRefresh >=
-            std::chrono::milliseconds(100)) {
+            runtime_timing::metadataRefreshInterval(
+                config.aimbotEnabled || config.triggerbotEnabled)) {
         lastEntityCacheRefresh = updateNow;
         refreshEntityCache(config);
     }
