@@ -13,6 +13,17 @@
 > [!WARNING]
 > 本项目仅用于逆向工程和图形渲染学习。仅可在使用 `-insecure` 启动的离线环境中运行，禁止用于 VAC 服务器或任何在线游戏。使用者须自行承担不当使用造成的风险。
 
+## 学习资料
+
+| 主题 | 视频 | 文档 |
+| --- | --- | --- |
+| 内存结构基础 | [BV14szCBYErE](https://www.bilibili.com/video/BV14szCBYErE) | [CS2 内存结构](docs/CS2_Memory_Structure_Basics.md) |
+| 源码与 CE 实战 | [BV1Jm6gBaEEd](https://www.bilibili.com/video/BV1Jm6gBaEEd) | [代码说明](docs/cheat_code.md) |
+| 偏移量查找 | [BV1Lr6wBeEEF](https://www.bilibili.com/video/BV1Lr6wBeEEF) | [IDA 逆向](docs/IDA_Reverse_Engineering_Client_DLL.md) |
+| 投影矩阵 | [BV1goFNzSEP3](https://www.bilibili.com/video/BV1goFNzSEP3) | [3D 投影原理](docs/3d_projection_explained.md) |
+| 视图矩阵 | [BV1AtF5zhE5J](https://www.bilibili.com/video/BV1AtF5zhE5J) | [视图矩阵数学](docs/cs2_view_matrix_math.md) |
+| 特征码与 IDA | [BV1yhcszwEJQ](https://www.bilibili.com/video/BV1yhcszwEJQ) | - |
+
 ## 功能
 
 | 模块 | 功能 |
@@ -128,17 +139,6 @@ python3 scripts/sync_web_radar_maps.py
 顶部的 **Build** 徽章由 GitHub Actions 动态生成：绿色表示 `main` 分支最近一次构建成功，红色表示构建或测试失败。CI 会执行 C++ 回归测试、Web Radar 测试与构建、Go 测试与漏洞检查、Relay 镜像构建以及 Windows `Release | x64` 编译。
 
 **Offsets** 工作流每小时检查一次 `cs2-dumper` 更新。偏移文件按确切提交 SHA 获取、验证并提交，验证通过后才触发完整构建。
-
-## 学习资料
-
-| 主题 | 视频 | 文档 |
-| --- | --- | --- |
-| 内存结构基础 | [BV14szCBYErE](https://www.bilibili.com/video/BV14szCBYErE) | [CS2 内存结构](docs/CS2_Memory_Structure_Basics.md) |
-| 源码与 CE 实战 | [BV1Jm6gBaEEd](https://www.bilibili.com/video/BV1Jm6gBaEEd) | [代码说明](docs/cheat_code.md) |
-| 偏移量查找 | [BV1Lr6wBeEEF](https://www.bilibili.com/video/BV1Lr6wBeEEF) | [IDA 逆向](docs/IDA_Reverse_Engineering_Client_DLL.md) |
-| 投影矩阵 | [BV1goFNzSEP3](https://www.bilibili.com/video/BV1goFNzSEP3) | [3D 投影原理](docs/3d_projection_explained.md) |
-| 视图矩阵 | [BV1AtF5zhE5J](https://www.bilibili.com/video/BV1AtF5zhE5J) | [视图矩阵数学](docs/cs2_view_matrix_math.md) |
-| 特征码与 IDA | [BV1yhcszwEJQ](https://www.bilibili.com/video/BV1yhcszwEJQ) | - |
 
 ## 许可证与第三方资产
 

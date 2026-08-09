@@ -13,6 +13,17 @@ An educational CS2 external ESP project built with SDL2, Dear ImGui, and C++20. 
 > [!WARNING]
 > This project is intended only for learning reverse engineering and graphics rendering. Run it only in an offline environment launched with `-insecure`. Do not use it on VAC servers or in any online game. You are responsible for the consequences of misuse.
 
+## Learning Resources
+
+| Topic | Video | Documentation |
+| --- | --- | --- |
+| Memory structures | [BV14szCBYErE](https://www.bilibili.com/video/BV14szCBYErE) | [CS2 memory structures](docs/CS2_Memory_Structure_Basics.md) |
+| Source and CE walkthrough | [BV1Jm6gBaEEd](https://www.bilibili.com/video/BV1Jm6gBaEEd) | [Code walkthrough](docs/cheat_code.md) |
+| Finding offsets | [BV1Lr6wBeEEF](https://www.bilibili.com/video/BV1Lr6wBeEEF) | [IDA reverse engineering](docs/IDA_Reverse_Engineering_Client_DLL.md) |
+| Projection matrices | [BV1goFNzSEP3](https://www.bilibili.com/video/BV1goFNzSEP3) | [3D projection](docs/3d_projection_explained.md) |
+| View matrices | [BV1AtF5zhE5J](https://www.bilibili.com/video/BV1AtF5zhE5J) | [View-matrix math](docs/cs2_view_matrix_math.md) |
+| Signatures and IDA | [BV1yhcszwEJQ](https://www.bilibili.com/video/BV1yhcszwEJQ) | - |
+
 ## Features
 
 | Component | Capabilities |
@@ -128,17 +139,6 @@ python3 scripts/sync_web_radar_maps.py
 The **Build** badge at the top is generated dynamically by GitHub Actions. Green means the latest `main` build passed; red means a build or test failed. CI runs the C++ regression suite, Web Radar tests and build, Go tests and vulnerability checks, Relay image builds, and the Windows `Release | x64` build.
 
 The **Offsets** workflow checks `cs2-dumper` hourly. It fetches generated headers at an exact commit SHA, validates and commits them, and then triggers the complete build.
-
-## Learning Resources
-
-| Topic | Video | Documentation |
-| --- | --- | --- |
-| Memory structures | [BV14szCBYErE](https://www.bilibili.com/video/BV14szCBYErE) | [CS2 memory structures](docs/CS2_Memory_Structure_Basics.md) |
-| Source and CE walkthrough | [BV1Jm6gBaEEd](https://www.bilibili.com/video/BV1Jm6gBaEEd) | [Code walkthrough](docs/cheat_code.md) |
-| Finding offsets | [BV1Lr6wBeEEF](https://www.bilibili.com/video/BV1Lr6wBeEEF) | [IDA reverse engineering](docs/IDA_Reverse_Engineering_Client_DLL.md) |
-| Projection matrices | [BV1goFNzSEP3](https://www.bilibili.com/video/BV1goFNzSEP3) | [3D projection](docs/3d_projection_explained.md) |
-| View matrices | [BV1AtF5zhE5J](https://www.bilibili.com/video/BV1AtF5zhE5J) | [View-matrix math](docs/cs2_view_matrix_math.md) |
-| Signatures and IDA | [BV1yhcszwEJQ](https://www.bilibili.com/video/BV1yhcszwEJQ) | - |
 
 ## License and Third-Party Assets
 
