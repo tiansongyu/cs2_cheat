@@ -6,6 +6,7 @@
 #include "features/web_radar/web_radar_service.hpp"
 #include "features/web_radar/snapshot_recorder.hpp"
 #include "features/local_radar/local_fixed_radar.hpp"
+#include "features/skins/skin_runtime.hpp"
 #include "core/game/web_radar_json.hpp"
 #include "core/diagnostics.hpp"
 #include "core/performance_metrics.hpp"
@@ -789,6 +790,7 @@ int main(int argc, char* argv[])
             argv,
             "--allow-memory-writes"));
     menu::loadPersistentSettings();
+    menu::loadSkinSettings();
 
 #ifndef SHOW_CONSOLE
     FreeConsole();
@@ -878,8 +880,9 @@ int main(int argc, char* argv[])
         std::atomic<bool> dataRunning{true};
         performance_metrics::resetSession();
         memory::ResetReadMetrics();
+        skins::Runtime skinRuntime(esp::modBase);
         std::thread dataThread(
-            [&dataRunning, &webRadar, &publicRelay, &snapshotRecorder]() {
+            [&dataRunning, &webRadar, &publicRelay, &snapshotRecorder, &skinRuntime]() {
             auto nextDataTime = std::chrono::steady_clock::now();
             auto nextRadarTime = nextDataTime;
             int appliedSamplingRate = 0;
@@ -890,6 +893,11 @@ int main(int argc, char* argv[])
                     menu::getRuntimeConfig();
                 const bool gameForeground =
                     sdl_renderer::isGameForeground();
+                if (config.skinSettings) {
+                    skinRuntime.tick(*config.skinSettings, config.skinsEnabled,
+                        sdl_renderer::isGameUiForeground(),
+                        config.skinDiagnosticsRequested, config.skinRequest);
+                }
                 const bool latencySensitive =
                     gameForeground &&
                     !config.inputSuppressed &&
@@ -959,7 +967,7 @@ int main(int argc, char* argv[])
                          config.droppedWeaponESP),
                     gameForeground &&
                         (config.antiFlash || config.bombTimer),
-                    radarRate > 0 ? radarRate : 20
+                    std::max(radarRate > 0 ? radarRate : 20, config.skinsEnabled ? 20 : 0)
                 };
                 const int samplingRate =
                     runtime_timing::dataSamplingRate(
@@ -1043,6 +1051,7 @@ int main(int argc, char* argv[])
                     nextDataTime = now + dataInterval;
                 }
             }
+            skinRuntime.shutdown();
         });
 
         auto nextRenderTime = std::chrono::steady_clock::now();
@@ -1091,6 +1100,7 @@ int main(int argc, char* argv[])
                 local_fixed_radar::reset();
             }
             esp::renderBombTimer();
+            menu::skinStatus = skinRuntime.status();
             menu::render();
             {
                 const menu::RuntimeConfig config =

@@ -1,0 +1,9 @@
+{
+  "revision": "1e90c3e15dd89504084a1b32def9045528918937",
+  "source": "https://github.com/SteamTracking/GameTracking-CS2",
+  "sha256": {
+    "scripts/items/items_game.txt": "f427df5f23edcd80e9ed16fa65519d3f2ea33166ff02574069b4a8bfa596de39",
+    "resource/csgo_english.txt": "bbb6e2bbf8f0ff8a8e51eecf472091f5c27eb80d672a17262fbfa1b30fe1f660"
+  },
+  "notice": "Weapon names, paint-kit names and item metadata are Valve game data. No textures or third-party skin-changer code are distributed."
+}

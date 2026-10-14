@@ -36,10 +36,22 @@ COPY external-cheat-base/ external-cheat-base/
 COPY tests/ tests/
 COPY vendor/ vendor/
 COPY scripts/generate_fixed_map_catalog.py scripts/generate_fixed_map_catalog.py
+COPY scripts/generate_skin_catalog.py scripts/generate_skin_catalog.py
 COPY --from=web-radar-builder /web-radar/dist/ web-radar/dist/
 COPY --from=web-radar-builder /web-radar/public/maps/ web-radar/public/maps/
 
 RUN python3 scripts/generate_fixed_map_catalog.py --check
+RUN python3 scripts/generate_skin_catalog.py --check
+
+RUN g++ \
+        -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror \
+        -Iexternal-cheat-base/src \
+        tests/skin_changer_tests.cpp \
+        external-cheat-base/src/features/skins/skin_config.cpp \
+        external-cheat-base/src/features/skins/skin_backend.cpp \
+        external-cheat-base/src/features/skins/skin_changer.cpp \
+        -o /tmp/skin_changer_tests \
+    && /tmp/skin_changer_tests
 
 RUN g++ \
         -std=c++20 \
@@ -163,6 +175,10 @@ RUN set -eu; \
     && for source in \
         external-cheat-base/src/features/esp.cpp \
         external-cheat-base/src/features/aimbot.cpp \
+        external-cheat-base/src/features/skins/skin_config.cpp \
+        external-cheat-base/src/features/skins/skin_backend.cpp \
+        external-cheat-base/src/features/skins/skin_changer.cpp \
+        external-cheat-base/src/features/skins/skin_runtime.cpp \
         external-cheat-base/src/features/local_radar/local_fixed_radar.cpp \
         external-cheat-base/src/features/web_radar/public_relay_producer.cpp \
         external-cheat-base/src/features/web_radar/web_radar_service.cpp \
@@ -233,6 +249,10 @@ RUN mkdir -p /artifacts \
         -Iexternal-cheat-base/generated \
         external-cheat-base/src/features/esp.cpp \
         external-cheat-base/src/features/aimbot.cpp \
+        external-cheat-base/src/features/skins/skin_config.cpp \
+        external-cheat-base/src/features/skins/skin_backend.cpp \
+        external-cheat-base/src/features/skins/skin_changer.cpp \
+        external-cheat-base/src/features/skins/skin_runtime.cpp \
         external-cheat-base/src/features/local_radar/local_fixed_radar.cpp \
         external-cheat-base/src/features/web_radar/public_relay_producer.cpp \
         external-cheat-base/src/features/web_radar/web_radar_service.cpp \
@@ -268,7 +288,9 @@ RUN mkdir -p /artifacts \
     && cp external-cheat-base/vendor/SDL2/lib/x64/SDL2.dll /artifacts/SDL2.dll \
     && mkdir -p /artifacts/web-radar \
     && cp -a web-radar/dist /artifacts/web-radar/dist \
-    && cp vendor/civetweb/LICENSE.md /artifacts/CIVETWEB-LICENSE.md
+    && cp vendor/civetweb/LICENSE.md /artifacts/CIVETWEB-LICENSE.md \
+    && cp external-cheat-base/src/features/skins/SOURCE.json /artifacts/SKIN-DATA-SOURCE.json \
+    && cp external-cheat-base/src/features/skins/NOTICE.txt /artifacts/SKIN-DATA-NOTICE.txt
 
 FROM scratch AS artifacts
 COPY --from=builder /artifacts/ /

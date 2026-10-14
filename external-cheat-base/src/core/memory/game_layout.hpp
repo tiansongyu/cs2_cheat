@@ -11,6 +11,9 @@ namespace game_layout
 {
     constexpr uintptr_t ENTITY_LIST_CHUNK_ARRAY = 0x10;
     constexpr uintptr_t ENTITY_IDENTITY_STRIDE = 0x70;
+    // CEntityIdentity's packed handle is not emitted as a schema field.
+    constexpr uintptr_t ENTITY_IDENTITY_HANDLE = 0x10;
+    constexpr uintptr_t ECON_ATTRIBUTE_STRIDE = 0x48;
     constexpr uint32_t ENTITY_CHUNK_SHIFT = 9;
     constexpr uint32_t ENTITY_CHUNK_MASK = 0x1FF;
     constexpr uint32_t ENTITY_HANDLE_MASK = 0x7FFF;

@@ -1,0 +1,10 @@
+The firearm names, finish names, paint-kit identifiers, compatibility pairs,
+wear ranges, and model metadata in the generated skin catalog originate from
+Valve's Counter-Strike 2 item definitions and localization files.
+
+These game data remain the property of Valve and are subject to Valve's terms.
+No weapon textures, preview images, or third-party skin-changer implementations
+are included. SOURCE.json records the exact source revision and SHA-256 hashes.
+
+Catalog generation and the application implementation are original project code
+covered by the repository's MIT license.

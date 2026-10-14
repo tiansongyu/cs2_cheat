@@ -67,6 +67,22 @@ Web Radar and the memory-writing Anti-Flash option are disabled by default. Enab
 
 Runtime logs are written to `%TEMP%\cs2-esp.log`.
 
+## Local firearm skins
+
+The **Skins** menu adds local firearm finishes for offline testing: 34 firearms,
+1,448 compatible weapon/paint-kit pairs, wear and pattern controls, persistent
+selections, parameter read-back, and guarded restoration. Start with
+`--allow-memory-writes`, choose a finish, click **Apply & save**, and enable
+**Enable local skins**. Selections are stored in
+`%LOCALAPPDATA%\AegisCS2\skins-v1.ini`; the feature starts disabled.
+
+If the material has not changed, switch weapons or rebuy the firearm. Read-back
+verifies parameters, not rendered appearance; CS2 visual behavior still requires
+Windows offline-game acceptance. Knives, gloves, stickers, charms, and StatTrak
+are outside this first version. This implementation does not execute code in the
+game or modify account inventory. See the Chinese README for acceptance steps
+and `external-cheat-base/src/features/skins/SOURCE.json` for catalog provenance.
+
 ## Radar
 
 ### Local and browser modes

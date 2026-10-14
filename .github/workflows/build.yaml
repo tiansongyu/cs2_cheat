@@ -44,6 +44,18 @@ jobs:
         ref: ${{ inputs.source_sha || github.sha }}
     - name: Verify generated fixed-map catalog
       run: python3 scripts/generate_fixed_map_catalog.py --check
+    - name: Verify pinned firearm skin catalog
+      run: python3 scripts/generate_skin_catalog.py --check
+    - name: Build and run firearm skin changer regression tests
+      run: |
+        g++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror \
+          -Iexternal-cheat-base/src \
+          tests/skin_changer_tests.cpp \
+          external-cheat-base/src/features/skins/skin_config.cpp \
+          external-cheat-base/src/features/skins/skin_backend.cpp \
+          external-cheat-base/src/features/skins/skin_changer.cpp \
+          -o skin_changer_tests
+        ./skin_changer_tests
     - name: Build viewport regression tests
       run: |
         g++ -std=c++20 -O2 -Wall -Wextra -Werror \
@@ -208,6 +220,56 @@ jobs:
       run: |
         msbuild external-cheat-base.sln /p:Configuration=Release /p:Platform=x64
 
+    - name: Run skin regression tests with native Windows memory APIs
+      shell: cmd
+      run: |
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+        mkdir "%RUNNER_TEMP%\skin-tests"
+        cl /nologo /std:c++20 /EHsc /W3 /WX /DUNICODE /D_UNICODE /DNOMINMAX ^
+          /Iexternal-cheat-base\src /Iexternal-cheat-base\generated ^
+          tests\skin_memory_windows_tests.cpp ^
+          external-cheat-base\src\features\skins\skin_runtime.cpp ^
+          external-cheat-base\src\features\skins\skin_config.cpp ^
+          external-cheat-base\src\features\skins\skin_backend.cpp ^
+          external-cheat-base\src\features\skins\skin_changer.cpp ^
+          external-cheat-base\src\core\memory\memory.cpp ^
+          /Fo:"%RUNNER_TEMP%\skin-tests\\" /Fe:"%RUNNER_TEMP%\skin_memory_windows_tests.exe"
+        if errorlevel 1 exit /b 1
+        "%RUNNER_TEMP%\skin_memory_windows_tests.exe"
+        if errorlevel 1 exit /b 1
+        cl /nologo /std:c++20 /EHsc /W3 /WX /DUNICODE /D_UNICODE /DNOMINMAX ^
+          /Iexternal-cheat-base\src tests\skin_changer_tests.cpp ^
+          external-cheat-base\src\features\skins\skin_config.cpp ^
+          external-cheat-base\src\features\skins\skin_backend.cpp ^
+          external-cheat-base\src\features\skins\skin_changer.cpp ^
+          /Fo:"%RUNNER_TEMP%\skin-tests\\" /Fe:"%RUNNER_TEMP%\skin_changer_windows_tests.exe"
+        if errorlevel 1 exit /b 1
+        "%RUNNER_TEMP%\skin_changer_windows_tests.exe"
+        if errorlevel 1 exit /b 1
+
+    - name: Render Skins menu without a game or native window
+      shell: cmd
+      run: |
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+        cl /nologo /std:c++20 /EHsc /W3 /DUNICODE /D_UNICODE /DNOMINMAX /DSDL_MAIN_HANDLED ^
+          /Iexternal-cheat-base\src /Iexternal-cheat-base\generated ^
+          /Iexternal-cheat-base\vendor\SDL2\include /Iexternal-cheat-base\vendor\imgui ^
+          tests\skin_menu_smoke_tests.cpp ^
+          external-cheat-base\src\features\skins\skin_config.cpp ^
+          external-cheat-base\src\features\skins\skin_backend.cpp ^
+          external-cheat-base\src\features\skins\skin_changer.cpp ^
+          external-cheat-base\vendor\imgui\imgui.cpp ^
+          external-cheat-base\vendor\imgui\imgui_draw.cpp ^
+          external-cheat-base\vendor\imgui\imgui_tables.cpp ^
+          external-cheat-base\vendor\imgui\imgui_widgets.cpp ^
+          external-cheat-base\vendor\imgui\imgui_impl_sdlrenderer2.cpp ^
+          external-cheat-base\vendor\SDL2\lib\x64\SDL2.lib ^
+          /Fo:"%RUNNER_TEMP%\skin-tests\\" /Fe:"%RUNNER_TEMP%\skin_menu_smoke_tests.exe"
+        if errorlevel 1 exit /b 1
+        copy /Y external-cheat-base\vendor\SDL2\lib\x64\SDL2.dll "%RUNNER_TEMP%\SDL2.dll"
+        "%RUNNER_TEMP%\skin_menu_smoke_tests.exe" "%RUNNER_TEMP%\skin-tests"
+        if errorlevel 1 exit /b 1
+
     - name: Verify release layout
       shell: pwsh
       run: |
@@ -219,7 +281,9 @@ jobs:
           "x64/Release/web-radar/dist/maps/de_dust2/radar.png",
           "x64/Release/web-radar/dist/maps/NOTICE.txt",
           "x64/Release/web-radar/dist/maps/SOURCE.json",
-          "x64/Release/CIVETWEB-LICENSE.md"
+          "x64/Release/CIVETWEB-LICENSE.md",
+          "x64/Release/SKIN-DATA-SOURCE.json",
+          "x64/Release/SKIN-DATA-NOTICE.txt"
         )
         foreach ($path in $required) {
           if (-not (Test-Path $path)) {

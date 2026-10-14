@@ -37,6 +37,7 @@ namespace sdl_renderer
     void updateWindowPosition();
     bool isGameVisible();
     bool isGameForeground();
+    bool isGameUiForeground();
     bool isInputAllowed();
     bool isGameDisconnected();
     int getTargetRefreshRate();

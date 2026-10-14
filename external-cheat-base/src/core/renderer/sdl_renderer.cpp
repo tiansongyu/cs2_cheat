@@ -58,6 +58,7 @@ namespace
     bool mixedMonitorBlocked = false;
     bool overlayPositionFailed = false;
     std::atomic<bool> gameForeground{ false };
+    std::atomic<bool> gameUiForeground{ false };
     std::atomic<bool> inputAllowed{ false };
     std::atomic<bool> gameDisconnected{ false };
     std::atomic<bool> acceleratedRenderer{ false };
@@ -1302,6 +1303,7 @@ void sdl_renderer::destroy()
     mixedMonitorBlocked = false;
     overlayPositionFailed = false;
     gameForeground.store(false, std::memory_order_relaxed);
+    gameUiForeground.store(false, std::memory_order_relaxed);
     inputAllowed.store(false, std::memory_order_relaxed);
     acceleratedRenderer.store(false, std::memory_order_relaxed);
     vsyncEnabled.store(false, std::memory_order_relaxed);
@@ -1438,6 +1440,7 @@ void sdl_renderer::updateWindowPosition()
     if (!IsWindow(gameHwnd)) {
         gameDisconnected.store(true, std::memory_order_relaxed);
         gameForeground.store(false, std::memory_order_relaxed);
+        gameUiForeground.store(false, std::memory_order_relaxed);
         inputAllowed.store(false, std::memory_order_relaxed);
         ShowWindow(overlayHwnd, SW_HIDE);
         return;
@@ -1451,6 +1454,7 @@ void sdl_renderer::updateWindowPosition()
     lastUpdate = now;
 
     const bool uiForeground = foregroundBelongsToGameUi();
+    gameUiForeground.store(uiForeground, std::memory_order_relaxed);
     const bool gameClientForeground = isGameClientForeground();
     gameForeground.store(
         gameClientForeground,
@@ -1657,6 +1661,11 @@ bool sdl_renderer::isGameVisible()
 bool sdl_renderer::isGameForeground()
 {
     return gameForeground.load(std::memory_order_relaxed);
+}
+
+bool sdl_renderer::isGameUiForeground()
+{
+    return gameUiForeground.load(std::memory_order_relaxed);
 }
 
 bool sdl_renderer::isInputAllowed()
