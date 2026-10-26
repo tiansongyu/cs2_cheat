@@ -18,13 +18,20 @@ namespace skins
         public:
             bool read(const std::uintptr_t address, void* value, const std::size_t size) override
             {
-                return memory::ReadRaw(address, value, size);
+                const bool result = memory::ReadRaw(address, value, size);
+                lastError_ = result ? 0 : GetLastError();
+                return result;
             }
             bool write(const std::uintptr_t address, const void* value, const std::size_t size) override
             {
-                return memory::TryWriteRaw(address, value, size);
+                const bool result = memory::TryWriteRaw(address, value, size);
+                lastError_ = result ? 0 : GetLastError();
+                return result;
             }
             [[nodiscard]] bool writesAllowed() const override { return memory::WritesAllowed(); }
+            [[nodiscard]] std::uint32_t lastError() const override { return lastError_; }
+        private:
+            std::uint32_t lastError_{};
         };
 
         game::EntityLayout entityLayout()
@@ -90,13 +97,26 @@ namespace skins
         std::chrono::steady_clock::time_point nextTick{};
         std::uint64_t lastRequest{};
         bool lastEnabled = false;
+        bool lastForeground = false;
+        bool lastDiagnostics = false;
         mutable std::mutex mutex;
         Status published;
 
         void publish()
         {
             const auto& current = changer.status();
-            if (current.failures != published.failures) diagnostics::log(L"Skin application failed; inspect the Skins page.");
+            if (current.failures != published.failures) {
+                const std::string_view detail(failureText(current.lastFailure.code));
+                const auto message = L"Skin: " + std::wstring(detail.begin(), detail.end()) +
+                    L"; Win32 error " + std::to_wstring(current.lastFailure.nativeError);
+                diagnostics::log(message.c_str());
+            }
+            if (current.state == State::readFailed &&
+                (current.state != published.state || current.readIssue != published.readIssue)) {
+                const std::string_view detail(readIssueText(current.readIssue));
+                const auto message = L"Skin read: " + std::wstring(detail.begin(), detail.end());
+                diagnostics::log(message.c_str());
+            }
             if (current.applications != published.applications) diagnostics::log(L"Skin parameters written and read back; visual refresh requires game verification.");
             std::lock_guard<std::mutex> lock(mutex);
             published = current;
@@ -110,10 +130,13 @@ namespace skins
                        const bool diagnostics, const std::uint64_t request)
     {
         const auto now = std::chrono::steady_clock::now();
-        if (now < impl_->nextTick && enabled == impl_->lastEnabled && request == impl_->lastRequest) return;
+        if (now < impl_->nextTick && enabled == impl_->lastEnabled && request == impl_->lastRequest &&
+            foreground == impl_->lastForeground && diagnostics == impl_->lastDiagnostics) return;
         impl_->nextTick = now + std::chrono::milliseconds(enabled ? 50 : 250);
         impl_->lastEnabled = enabled;
         impl_->lastRequest = request;
+        impl_->lastForeground = foreground;
+        impl_->lastDiagnostics = diagnostics;
         impl_->changer.tick(settings, enabled, foreground, diagnostics, request, now);
         impl_->publish();
     }

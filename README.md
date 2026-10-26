@@ -79,7 +79,19 @@ Web Radar 和写内存的防闪光默认关闭。仅在明确进行离线测试�
 3. 点击 **Apply & save**，勾选 **Enable local skins**。
 4. 在 **Held firearms** 查看参数读回结果，在游戏画面中检查实际外观。
 5. 如果材质尚未改变，切换武器或重新购买；**Reapply** 可重新请求应用。
-6. 关闭开关会恢复仍由本地玩家持有且身份有效的武器；**Restore all** 同时清空保存的选择。
+6. 关闭开关或点击 **Disable & restore**，恢复仍由本地玩家持有且身份有效的武器，并保留保存的选择。
+
+**Use held firearm** 可快速定位当前手持枪械。参数修改保留为草稿；**Undo draft**
+撤销未应用修改，**Reset firearm** 和 **Reset all drafts** 只重置草稿，
+点击 **Apply & save** 后才影响当前方案。保存失败时继续使用原先的方案。
+
+**Presets** 支持命名保存和载入多套配置。名称使用 1–48 个英文字母、数字、空格、
+`-` 或 `_`，保存在 `%LOCALAPPDATA%\AegisCS2\skin-presets`。**Load as draft**
+载入后仍需点击 **Apply & save**；**Save draft as preset** 会替换同名预设。
+
+**Held firearms** 并列显示目标皮肤、磨损和种子，以及实际读回值。**Diagnostics**
+提供偏移版本、采样状态和累计计数，**Copy diagnostic report** 复制构建元数据、
+失败原因、Win32 错误码及枪械参数，不包含进程地址和玩家身份信息。
 
 选择保存在 `%LOCALAPPDATA%\AegisCS2\skins-v1.ini`；重启后换皮开关保持关闭。
 首次验收建议使用 AK-47 Redline（磨损 0.20、种子 42），再测试 AWP Dragon Lore 和
@@ -90,10 +102,12 @@ Glock-18 Fade，并检查关闭恢复、重生、拾取、切图和游戏重启�
 实现没有调用游戏内部函数或执行远程代码，也不修改账户库存。
 切枪后新建的第一人称模型会单独更新；反复覆盖参数的实体会在三次应用后停止写入，
 直至点击 **Reapply** 或实体重建。失焦暂停写入但保留恢复记录。
-恢复时跳过归属已改变、身份已失效或值已被游戏替换的字段。
+恢复时跳过归属已改变、身份已失效或值已被游戏替换的字段；临时读取失败会保留
+恢复记录并有限重试。部分背包句柄不可读时仍可处理已验证的枪械，暂不丢弃未知实体的恢复记录。
 
-偏移文件固定到 `cs2-dumper` 提交 `4116de000e085d62bbd42334c67b35bda37bda4f`
-（生成日期 2026-10-06）；游戏更新后仍需重新匹配。
+当前偏移提交见 `last_commit.txt`。构建时运行 `scripts/generate_skin_build_info.mjs`，
+自动记录实际使用的偏移提交、生成日期及文件哈希；手动更新偏移后重新构建即可更新诊断信息。
+这些信息用于定位版本差异，不保证已适配游戏更新；实际兼容性仍需离线验证。
 皮肤数据来源与哈希见 `external-cheat-base/src/features/skins/SOURCE.json`。
 复核生成目录：
 

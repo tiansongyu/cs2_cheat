@@ -14,6 +14,7 @@ namespace game
         virtual bool read(std::uintptr_t address, void* value, std::size_t size) = 0;
         virtual bool write(std::uintptr_t address, const void* value, std::size_t size) = 0;
         [[nodiscard]] virtual bool writesAllowed() const = 0;
+        [[nodiscard]] virtual std::uint32_t lastError() const { return 0; }
 
         template <typename T>
         bool readValue(const std::uintptr_t address, T& value)

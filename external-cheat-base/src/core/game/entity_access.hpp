@@ -46,11 +46,16 @@ namespace game
     };
 
     enum class WeaponReadStatus { ready, noLocalPlayer, notAlive, readFailed };
+    enum class AccessResult { valid, stale, unreadable };
+    enum class WeaponReadIssue { none, localPawn, identity, pawnState, services, inventory, weapon, inventoryChanged };
 
     struct LocalWeapons
     {
         WeaponReadStatus status = WeaponReadStatus::readFailed;
         std::vector<LocalWeapon> weapons;
+        WeaponReadIssue issue = WeaponReadIssue::none;
+        bool complete = false;
+        std::uint32_t skippedHandles{};
     };
 
     class EntityAccess
@@ -76,38 +81,64 @@ namespace game
             return (handle & 0x7FFFU) != 0;
         }
 
-        std::uintptr_t resolve(const std::uint32_t handle)
+        AccessResult resolveChecked(const std::uint32_t handle, std::uintptr_t& entity)
         {
+            entity = 0;
             if (handle == 0 || handle == 0xFFFFFFFFU) {
-                return 0;
+                return AccessResult::stale;
             }
             std::uintptr_t list = 0;
             std::uintptr_t chunk = 0;
-            std::uintptr_t entity = 0;
             const std::uint32_t index = handle & 0x7FFFU;
             std::uint32_t currentHandle = 0;
-            if (!index || !memory_.readValue(module_ + layout_.entityList, list) || !list ||
-                !memory_.readValue(list + layout_.chunkArray + sizeof(std::uintptr_t) * (index >> 9U), chunk) ||
-                !chunk || !memory_.readValue(chunk + layout_.identityStride * (index & 0x1FFU), entity) ||
-                !entity || !referenceHandle(entity, currentHandle) || currentHandle != handle) {
-                return 0;
-            }
-            return entity;
+            if (!index) return AccessResult::stale;
+            if (!memory_.readValue(module_ + layout_.entityList, list)) return AccessResult::unreadable;
+            if (!list) return AccessResult::stale;
+            if (!memory_.readValue(list + layout_.chunkArray + sizeof(std::uintptr_t) * (index >> 9U), chunk)) return AccessResult::unreadable;
+            if (!chunk) return AccessResult::stale;
+            if (!memory_.readValue(chunk + layout_.identityStride * (index & 0x1FFU), entity)) return AccessResult::unreadable;
+            if (!entity) return AccessResult::stale;
+            if (!referenceHandle(entity, currentHandle)) return AccessResult::unreadable;
+            return currentHandle == handle ? AccessResult::valid : AccessResult::stale;
         }
 
-        bool stillOwned(const WeaponKey& key)
+        std::uintptr_t resolve(const std::uint32_t handle)
+        {
+            std::uintptr_t entity = 0;
+            return resolveChecked(handle, entity) == AccessResult::valid ? entity : 0;
+        }
+
+        AccessResult ownership(const WeaponKey& key)
         {
             std::uintptr_t pawn = 0;
             std::uint32_t pawnHandle = 0;
             std::uint32_t owner = 0;
             std::int32_t health = 0;
             std::uint8_t life = 0;
-            return memory_.readValue(module_ + layout_.localPawn, pawn) && pawn == key.pawn &&
-                referenceHandle(pawn, pawnHandle) && pawnHandle == key.pawnHandle &&
-                resolve(key.handle) == key.entity &&
-                memory_.readValue(pawn + layout_.health, health) && health > 0 && health <= 200 &&
-                memory_.readValue(pawn + layout_.lifeState, life) && life == 0 &&
-                memory_.readValue(key.entity + layout_.owner, owner) && owner == key.pawnHandle;
+            if (!memory_.readValue(module_ + layout_.localPawn, pawn)) return AccessResult::unreadable;
+            if (!pawn || pawn != key.pawn) return AccessResult::stale;
+            if (!referenceHandle(pawn, pawnHandle)) return AccessResult::unreadable;
+            if (pawnHandle != key.pawnHandle) return AccessResult::stale;
+            std::uintptr_t resolved = 0;
+            const auto resolution = resolveChecked(key.handle, resolved);
+            if (resolution != AccessResult::valid) return resolution;
+            if (resolved != key.entity) return AccessResult::stale;
+            std::uintptr_t identity = 0;
+            if (!memory_.readValue(key.entity + layout_.identity, identity)) return AccessResult::unreadable;
+            if (!identity) return AccessResult::stale;
+            std::uint32_t handle = 0;
+            if (!referenceHandle(key.entity, handle)) return AccessResult::unreadable;
+            if (handle != key.handle) return AccessResult::stale;
+            if (!memory_.readValue(pawn + layout_.health, health) ||
+                !memory_.readValue(pawn + layout_.lifeState, life) ||
+                !memory_.readValue(key.entity + layout_.owner, owner)) return AccessResult::unreadable;
+            return health > 0 && health <= 200 && life == 0 && owner == key.pawnHandle
+                ? AccessResult::valid : AccessResult::stale;
+        }
+
+        bool stillOwned(const WeaponKey& key)
+        {
+            return ownership(key) == AccessResult::valid;
         }
 
         LocalWeapons sample()
@@ -115,6 +146,7 @@ namespace game
             LocalWeapons result;
             std::uintptr_t pawn = 0;
             if (!memory_.readValue(module_ + layout_.localPawn, pawn)) {
+                result.issue = WeaponReadIssue::localPawn;
                 return result;
             }
             if (!pawn) {
@@ -129,6 +161,7 @@ namespace game
                 !memory_.readValue(pawn + layout_.health, health) ||
                 !memory_.readValue(pawn + layout_.lifeState, life) ||
                 !memory_.readValue(pawn + layout_.team, team)) {
+                result.issue = WeaponReadIssue::pawnState;
                 return result;
             }
             if (health <= 0 || life != 0 || (team != 2 && team != 3)) {
@@ -136,6 +169,7 @@ namespace game
                 return result;
             }
             if (health > 200) {
+                result.issue = WeaponReadIssue::pawnState;
                 return result;
             }
             std::uintptr_t services = 0;
@@ -153,12 +187,15 @@ namespace game
                 !memory_.readValue(services + layout_.activeWeapon, active) ||
                 !memory_.readValue(services + layout_.weapons, vector) ||
                 vector.count > 32 || (vector.count && !vector.elements)) {
+                result.issue = WeaponReadIssue::inventory;
                 return result;
             }
             std::array<std::uint32_t, 32> handles{};
             if (vector.count && !memory_.read(vector.elements, handles.data(), vector.count * sizeof(handles[0]))) {
+                result.issue = WeaponReadIssue::inventory;
                 return result;
             }
+            result.complete = true;
             for (std::uint32_t index = 0; index < vector.count; ++index) {
                 const auto handle = handles[index];
                 bool duplicate = false;
@@ -173,17 +210,25 @@ namespace game
                 std::uint16_t definition = 0;
                 if (!entity || !memory_.readValue(entity + layout_.owner, owner) ||
                     !memory_.readValue(entity + layout_.attributeManager + layout_.item + layout_.definition, definition)) {
-                    return result;
+                    result.complete = false;
+                    result.issue = WeaponReadIssue::weapon;
+                    ++result.skippedHandles;
+                    continue;
                 }
                 if (owner == pawnHandle) {
                     result.weapons.push_back({{pawn, pawnHandle, entity, handle}, definition, handle == active});
                 }
             }
             RemoteVector check;
+            std::array<std::uint32_t, 32> checkedHandles{};
             std::uintptr_t pawnCheck = 0;
             if (!memory_.readValue(services + layout_.weapons, check) || check != vector ||
-                !memory_.readValue(module_ + layout_.localPawn, pawnCheck) || pawnCheck != pawn) {
+                !memory_.readValue(module_ + layout_.localPawn, pawnCheck) || pawnCheck != pawn ||
+                (vector.count && !memory_.read(vector.elements, checkedHandles.data(), vector.count * sizeof(handles[0]))) ||
+                checkedHandles != handles) {
                 result.weapons.clear();
+                result.complete = false;
+                result.issue = WeaponReadIssue::inventoryChanged;
                 return result;
             }
             result.status = WeaponReadStatus::ready;

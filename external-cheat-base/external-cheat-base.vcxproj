@@ -69,6 +69,9 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>SDL2.lib;SDL2main.lib;Ws2_32.lib;Shell32.lib;Bcrypt.lib;Winhttp.lib;Ole32.lib;Windowscodecs.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <PreBuildEvent>
+      <Command>node "$(SolutionDir)scripts\generate_skin_build_info.mjs" || exit /b 1</Command>
+    </PreBuildEvent>
     <PostBuildEvent>
       <Command>xcopy /Y "$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64\SDL2.dll" "$(OutDir)"&#xD;&#xA;copy /Y "$(SolutionDir)vendor\civetweb\LICENSE.md" "$(OutDir)CIVETWEB-LICENSE.md"&#xD;&#xA;copy /Y "$(SolutionDir)external-cheat-base\src\features\skins\SOURCE.json" "$(OutDir)SKIN-DATA-SOURCE.json"&#xD;&#xA;copy /Y "$(SolutionDir)external-cheat-base\src\features\skins\NOTICE.txt" "$(OutDir)SKIN-DATA-NOTICE.txt"&#xD;&#xA;if not exist "$(SolutionDir)web-radar\dist\index.html" (echo Build web-radar before MSBuild. &amp; exit /b 1)&#xD;&#xA;node "$(SolutionDir)web-radar\scripts\validate-bundle.mjs" "$(SolutionDir)web-radar\dist" || exit /b 1&#xD;&#xA;if exist "$(OutDir)web-radar\dist" rmdir /S /Q "$(OutDir)web-radar\dist"&#xD;&#xA;xcopy /E /I /Y "$(SolutionDir)web-radar\dist" "$(OutDir)web-radar\dist"</Command>
     </PostBuildEvent>
@@ -92,6 +95,9 @@
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <AdditionalDependencies>SDL2.lib;SDL2main.lib;Ws2_32.lib;Shell32.lib;Bcrypt.lib;Winhttp.lib;Ole32.lib;Windowscodecs.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <PreBuildEvent>
+      <Command>node "$(SolutionDir)scripts\generate_skin_build_info.mjs" || exit /b 1</Command>
+    </PreBuildEvent>
     <PostBuildEvent>
       <Command>xcopy /Y "$(SolutionDir)external-cheat-base\vendor\SDL2\lib\x64\SDL2.dll" "$(OutDir)"&#xD;&#xA;copy /Y "$(SolutionDir)vendor\civetweb\LICENSE.md" "$(OutDir)CIVETWEB-LICENSE.md"&#xD;&#xA;copy /Y "$(SolutionDir)external-cheat-base\src\features\skins\SOURCE.json" "$(OutDir)SKIN-DATA-SOURCE.json"&#xD;&#xA;copy /Y "$(SolutionDir)external-cheat-base\src\features\skins\NOTICE.txt" "$(OutDir)SKIN-DATA-NOTICE.txt"&#xD;&#xA;if not exist "$(SolutionDir)web-radar\dist\index.html" (echo Build web-radar before MSBuild. &amp; exit /b 1)&#xD;&#xA;node "$(SolutionDir)web-radar\scripts\validate-bundle.mjs" "$(SolutionDir)web-radar\dist" || exit /b 1&#xD;&#xA;if exist "$(OutDir)web-radar\dist" rmdir /S /Q "$(OutDir)web-radar\dist"&#xD;&#xA;xcopy /E /I /Y "$(SolutionDir)web-radar\dist" "$(OutDir)web-radar\dist"</Command>
     </PostBuildEvent>
@@ -122,6 +128,7 @@
     <ClInclude Include="src\features\skins\skin_catalog_data.hpp" />
     <ClInclude Include="src\features\skins\skin_config.hpp" />
     <ClInclude Include="src\features\skins\skin_backend.hpp" />
+    <ClInclude Include="src\features\skins\skin_build_info.hpp" />
     <ClInclude Include="src\features\skins\skin_changer.hpp" />
     <ClInclude Include="src\features\skins\skin_runtime.hpp" />
     <ClInclude Include="src\features\web_radar\public_relay_config.hpp" />

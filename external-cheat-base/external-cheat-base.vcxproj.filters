@@ -54,6 +54,9 @@
     <ClInclude Include="src\features\skins\skin_backend.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\features\skins\skin_build_info.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\features\skins\skin_changer.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>

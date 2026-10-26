@@ -13,6 +13,14 @@ RUN npm test \
     && npm run build \
     && node scripts/validate-bundle.mjs dist
 
+COPY scripts/generate_skin_build_info.mjs /skin-metadata/scripts/generate_skin_build_info.mjs
+COPY tests/skin_build_info_tests.mjs /skin-metadata/tests/skin_build_info_tests.mjs
+COPY external-cheat-base/generated/ /skin-metadata/external-cheat-base/generated/
+COPY external-cheat-base/src/features/skins/SOURCE.json /skin-metadata/external-cheat-base/src/features/skins/SOURCE.json
+COPY last_commit.txt /skin-metadata/last_commit.txt
+RUN node --test /skin-metadata/tests/skin_build_info_tests.mjs \
+    && node /skin-metadata/scripts/generate_skin_build_info.mjs --root /skin-metadata
+
 FROM ubuntu:24.04 AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -33,6 +41,7 @@ RUN ln -s windows.h /usr/x86_64-w64-mingw32/include/Windows.h \
 
 WORKDIR /workspace
 COPY external-cheat-base/ external-cheat-base/
+COPY --from=web-radar-builder /skin-metadata/external-cheat-base/src/features/skins/skin_build_info.hpp external-cheat-base/src/features/skins/skin_build_info.hpp
 COPY tests/ tests/
 COPY vendor/ vendor/
 COPY scripts/generate_fixed_map_catalog.py scripts/generate_fixed_map_catalog.py

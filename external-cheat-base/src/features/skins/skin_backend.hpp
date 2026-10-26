@@ -9,6 +9,20 @@
 
 namespace skins
 {
+    enum class FailureCode
+    {
+        none, invalidProfile, ownershipChanged, ownershipRead, parameterRead, invalidParameter,
+        attributeRead, invalidAttributes, guardRead, guardChanged, preconditionChanged,
+        writeDenied, writeFailed, readbackFailed, restoreRead, restoreWrite
+    };
+
+    struct FailureInfo
+    {
+        FailureCode code = FailureCode::none;
+        std::uint32_t nativeError{};
+    };
+
+    [[nodiscard]] const char* failureText(FailureCode code);
     struct SkinLayout
     {
         std::uintptr_t paintKit{};
@@ -69,6 +83,12 @@ namespace skins
         float wear{};
         bool active{};
         bool readSucceeded{};
+        std::int32_t seed{};
+        std::int32_t targetPaintKit{};
+        float targetWear{};
+        std::int32_t targetSeed{};
+        unsigned attempts{};
+        FailureInfo failure{};
     };
 
     class Backend
@@ -82,6 +102,7 @@ namespace skins
         virtual WriteResult apply(const game::WeaponKey& key, std::vector<Mutation>& mutations) = 0;
         virtual WriteResult restore(const game::WeaponKey& key, std::vector<Mutation>& mutations) = 0;
         virtual WeaponDiagnostic inspect(const game::LocalWeapon& weapon) = 0;
+        [[nodiscard]] virtual FailureInfo failureInfo() const { return {}; }
     };
 
     class MemoryBackend final : public Backend
@@ -98,10 +119,12 @@ namespace skins
         WriteResult apply(const game::WeaponKey& key, std::vector<Mutation>& mutations) override;
         WriteResult restore(const game::WeaponKey& key, std::vector<Mutation>& mutations) override;
         WeaponDiagnostic inspect(const game::LocalWeapon& weapon) override;
+        [[nodiscard]] FailureInfo failureInfo() const override { return failure_; }
 
     private:
         bool readBits(std::uintptr_t address, std::uint8_t size, std::uint64_t& value);
-        bool guardsMatch(const Mutation& mutation);
+        game::AccessResult guardsMatch(const Mutation& mutation);
+        bool fail(FailureCode code);
         bool append(std::vector<Mutation>& mutations, std::uintptr_t address,
                     std::uint64_t value, std::uint8_t size,
                     const std::array<ValueGuard, 4>& guards = {}, bool restore = true);
@@ -109,10 +132,11 @@ namespace skins
                         std::uint64_t mask);
         bool appendAttributes(std::vector<Mutation>& mutations, std::uintptr_t item,
                               const WeaponSkinConfig& profile);
-        void invalidate(const game::WeaponKey& key);
+        void invalidate(const game::WeaponKey& key, WriteResult& result);
 
         game::RemoteMemory& memory_;
         game::EntityAccess access_;
         SkinLayout layout_;
+        FailureInfo failure_;
     };
 }

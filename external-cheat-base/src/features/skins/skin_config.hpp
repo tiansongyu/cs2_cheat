@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace skins
 {
@@ -52,4 +54,14 @@ namespace skins
     [[nodiscard]] LoadResult loadSettings(const std::filesystem::path& path);
     // Returns an empty string on success. A failed save leaves the old file intact.
     [[nodiscard]] std::string saveSettings(const std::filesystem::path& path, const Settings& settings);
+    [[nodiscard]] bool validPresetName(std::string_view name);
+    struct PresetList
+    {
+        std::vector<std::string> names;
+        std::string error;
+    };
+    [[nodiscard]] PresetList listPresets(const std::filesystem::path& directory);
+    [[nodiscard]] std::string savePreset(const std::filesystem::path& directory,
+                                         std::string_view name, const Settings& settings);
+    [[nodiscard]] LoadResult loadPreset(const std::filesystem::path& directory, std::string_view name);
 }

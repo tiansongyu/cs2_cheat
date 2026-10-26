@@ -22,14 +22,24 @@ namespace
         std::uintptr_t failWriteAt{};
         bool partialWrite = false;
         std::uint64_t writes{};
+        std::uint32_t nativeError{};
+        std::uintptr_t consumeRefresh{};
+        std::uintptr_t changeAfterRead{};
+        std::uint32_t replacementHandle{};
 
         bool read(const std::uintptr_t address, void* value, const std::size_t size) override
         {
             if (address == unreadable || address == verifyFailure || !address || address > bytes.size() || size > bytes.size() - address) {
                 if (address == verifyFailure) verifyFailure = 0;
+                nativeError = 299;
                 return false;
             }
             std::memcpy(value, bytes.data() + address, size);
+            nativeError = 0;
+            if (address == changeAfterRead) {
+                std::memcpy(bytes.data() + address, &replacementHandle, sizeof(replacementHandle));
+                changeAfterRead = 0;
+            }
             return true;
         }
         bool write(const std::uintptr_t address, const void* value, const std::size_t size) override
@@ -39,13 +49,17 @@ namespace
             if (address == failWriteAt) {
                 failWriteAt = 0;
                 if (partialWrite) std::memcpy(bytes.data() + address, value, 1);
+                nativeError = 5;
                 return false;
             }
             if (!address || address > bytes.size() || size > bytes.size() - address) return false;
             std::memcpy(bytes.data() + address, value, size);
+            nativeError = 0;
+            if (address == consumeRefresh && size == 1) bytes[address] = 1;
             return true;
         }
         [[nodiscard]] bool writesAllowed() const override { return allowed; }
+        [[nodiscard]] std::uint32_t lastError() const override { return nativeError; }
 
         template <typename T> void put(const std::uintptr_t address, const T value)
         {
@@ -265,7 +279,7 @@ namespace
         assert(fixture.memory.writes == writes && fixture.changer.status().trackedWeapons == 1);
         fixture.memory.unreadable = Fixture::module + 0x108;
         fixture.tick(false);
-        assert(fixture.memory.writes == writes && fixture.changer.status().state == skins::State::readFailed);
+        assert(fixture.memory.writes == writes && fixture.changer.status().state == skins::State::restoring);
         fixture.memory.unreadable = 0;
         fixture.memory.put(Fixture::weapon + 0x84, std::int32_t{123}); // Game replaced this field.
         fixture.tick(false);
@@ -282,6 +296,7 @@ namespace
             fixture.memory.partialWrite = true;
             fixture.tick();
             assert(fixture.changer.status().state == skins::State::failed);
+            assert(fixture.changer.status().lastFailure.nativeError == 5);
             assert(fixture.memory.get<int>(Fixture::weapon + 0x80) == 0);
             assert(fixture.memory.get<float>(Fixture::weapon + 0x88) == 0);
             assert(fixture.memory.get<std::uint32_t>(Fixture::item + 0x18) == 123);
@@ -296,9 +311,11 @@ namespace
     {
         Fixture fixture;
         fixture.tick();
+        const auto originalWrites = fixture.memory.writes;
         fixture.settings.profiles[0].wear = 0.3f;
         fixture.settings.profiles[0].seed = 100;
         fixture.tick(true, 1);
+        assert(fixture.memory.writes - originalWrites <= 3); // Delta update, no restore/apply flicker.
         assert(fixture.memory.get<float>(Fixture::weapon + 0x88) == 0.3f);
         fixture.tick(false);
         assert(fixture.memory.get<float>(Fixture::weapon + 0x88) == 0);
@@ -403,6 +420,116 @@ namespace
         fixture.changer.shutdown();
         assert(fixture.memory.get<int>(Fixture::weapon + 0x80) == 0);
     }
+
+    void testTransientRestoreAndRefreshPulse()
+    {
+        Fixture fixture;
+        fixture.memory.consumeRefresh = Fixture::weapon + 0x90;
+        fixture.tick();
+        assert(fixture.changer.status().state == skins::State::applied);
+        assert(fixture.changer.status().failures == 0);
+        fixture.memory.unreadable = Fixture::node + 8;
+        fixture.tick(false);
+        assert(fixture.changer.status().state == skins::State::restoring);
+        assert(fixture.changer.status().trackedWeapons == 1);
+        assert(fixture.memory.get<std::uint64_t>(Fixture::node + 0x68) == 2);
+        fixture.memory.unreadable = 0;
+        fixture.tick(false);
+        assert(fixture.changer.status().trackedWeapons == 0);
+        assert(fixture.memory.get<std::uint64_t>(Fixture::node + 0x68) == 1);
+
+        fixture.tick(true);
+        fixture.memory.unreadable = Fixture::weapon + 0x60;
+        fixture.tick(false);
+        assert(fixture.changer.status().trackedWeapons == 1);
+        assert(fixture.changer.status().state == skins::State::restoring);
+        fixture.memory.unreadable = 0;
+        fixture.tick(true, 1); // Re-enabling also completes any pending restore.
+        assert(fixture.changer.status().state == skins::State::applied);
+        fixture.tick(false);
+        assert(fixture.memory.get<int>(Fixture::weapon + 0x80) == 0);
+    }
+
+    void testPartialInventoryAndInPlaceChanges()
+    {
+        Fixture fixture;
+        fixture.memory.put(Fixture::services + 0x48, std::uint32_t{2});
+        fixture.memory.put(Fixture::handles + 4, std::uint32_t{0x8000 | 66});
+        fixture.tick();
+        assert(fixture.changer.status().state == skins::State::applied);
+        assert(!fixture.changer.status().inventoryComplete && fixture.changer.status().skippedHandles == 1);
+        assert(fixture.memory.get<int>(Fixture::weapon + 0x80) == 282);
+        fixture.tick(false);
+        assert(fixture.memory.get<int>(Fixture::weapon + 0x80) == 0);
+
+        Fixture changing;
+        changing.memory.changeAfterRead = Fixture::handles;
+        changing.memory.replacementHandle = Fixture::weaponHandle + 0x8000;
+        changing.tick();
+        assert(changing.memory.writes == 0);
+        assert(changing.changer.status().readIssue == game::WeaponReadIssue::inventoryChanged);
+    }
+
+    void testPresetsAndStrictConfiguration()
+    {
+        Fixture fixture;
+        const auto directory = std::filesystem::temp_directory_path() /
+            ("cs2-skin-presets-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        assert(skins::listPresets(directory).names.empty());
+        for (const auto name : {"", "../outside", "a/b", "a\\b", "CON", "NUL", "com1", "LPT9", "a.", " leading"}) {
+            assert(!skins::validPresetName(name));
+            assert(!skins::savePreset(directory, name, fixture.settings).empty());
+        }
+        assert(skins::savePreset(directory, "Rifles 1", fixture.settings).empty());
+        assert(skins::loadPreset(directory, "Rifles 1").settings == fixture.settings);
+        fixture.settings.profiles[0].seed = 123;
+        assert(skins::savePreset(directory, "Rifles 1", fixture.settings).empty());
+        assert(skins::loadPreset(directory, "Rifles 1").settings == fixture.settings);
+        assert(skins::listPresets(directory).names == std::vector<std::string>{"Rifles 1"});
+        {
+            const auto unicodePath = directory / std::filesystem::path(u8"\u4e2d\u6587.ini");
+            std::ofstream file(unicodePath);
+            file << "unsupported preset name";
+        }
+        assert(skins::listPresets(directory).names == std::vector<std::string>{"Rifles 1"});
+        assert(!skins::loadPreset(directory, "Missing").error.empty());
+        const auto path = directory / "Rifles 1.ini";
+        std::filesystem::create_directory(directory / "Rifles 1.ini.tmp");
+        assert(!skins::saveSettings(path, skins::Settings{}).empty());
+        assert(skins::loadSettings(path).settings == fixture.settings);
+        assert(std::filesystem::is_directory(directory / "Rifles 1.ini.tmp"));
+        for (const auto& text : {std::string("[skins]\nschema=1\n[weapon_7]\npaint_kit=282\nwear=0.2\nseed=1\nseed=2\n"),
+                                 std::string("[skins]\nschema=1\n[weapon_7]\npaint_kit=282\n")}) {
+            std::ofstream file(path);
+            file << text;
+            file.close();
+            assert(!skins::loadSettings(path).error.empty());
+        }
+        {
+            std::ofstream file(path);
+            file << "\xEF\xBB\xBF[skins]\nschema=1\n";
+        }
+        assert(skins::loadSettings(path).error.empty());
+        std::filesystem::remove_all(directory);
+    }
+
+    void testDiagnosticReport()
+    {
+        Fixture fixture;
+        fixture.memory.unreadable = Fixture::weapon + 0x80;
+        fixture.tick();
+        assert(fixture.changer.status().lastFailure.code == skins::FailureCode::parameterRead);
+        fixture.memory.unreadable = 0;
+        fixture.tick(true, 1);
+        const auto& row = fixture.changer.status().weapons.front();
+        assert(row.targetPaintKit == 282 && row.seed == 42 && row.targetSeed == 42);
+        const auto report = skins::diagnosticReport(fixture.changer.status(), fixture.settings);
+        assert(report.find("Client schema SHA-256:") != std::string::npos);
+        assert(report.find("282/0.2000/42") != std::string::npos);
+        assert(report.find("0x") == std::string::npos);
+        fixture.tick(true, 1, false);
+        assert(!fixture.changer.status().sampleFresh && !fixture.changer.status().weapons.empty());
+    }
 }
 
 int main()
@@ -417,4 +544,8 @@ int main()
     testAttributeGuards();
     testViewModelGuardsAndCycles();
     testInvalidLayoutAndShutdown();
+    testTransientRestoreAndRefreshPulse();
+    testPartialInventoryAndInPlaceChanges();
+    testPresetsAndStrictConfiguration();
+    testDiagnosticReport();
 }

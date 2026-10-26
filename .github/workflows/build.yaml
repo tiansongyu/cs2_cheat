@@ -46,6 +46,10 @@ jobs:
       run: python3 scripts/generate_fixed_map_catalog.py --check
     - name: Verify pinned firearm skin catalog
       run: python3 scripts/generate_skin_catalog.py --check
+    - name: Verify skin diagnostic build metadata
+      run: node scripts/generate_skin_build_info.mjs --check
+    - name: Test skin build metadata generation
+      run: node --test tests/skin_build_info_tests.mjs
     - name: Build and run firearm skin changer regression tests
       run: |
         g++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror \
@@ -306,6 +310,7 @@ jobs:
         path: x64/Release/Release-Binaries.zip
 
     - name: Create Release
+      if: github.ref == 'refs/heads/main'
       shell: pwsh
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

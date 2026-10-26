@@ -74,6 +74,7 @@ jobs:
       if: steps.revision.outputs.download == 'true'
       run: |
         set -euo pipefail
+        node scripts/generate_skin_build_info.mjs
         docker build --target artifacts .
 
     - name: Commit and push changes
@@ -83,7 +84,7 @@ jobs:
         REVISION: ${{ steps.revision.outputs.sha }}
       run: |
         set -euo pipefail
-        git add external-cheat-base/generated/client_dll.hpp external-cheat-base/generated/offsets.hpp external-cheat-base/generated/buttons.hpp last_commit.txt
+        git add external-cheat-base/generated/client_dll.hpp external-cheat-base/generated/offsets.hpp external-cheat-base/generated/buttons.hpp last_commit.txt external-cheat-base/src/features/skins/skin_build_info.hpp
         if git diff --cached --quiet; then
           echo "pushed=false" >> "$GITHUB_OUTPUT"
           exit 0

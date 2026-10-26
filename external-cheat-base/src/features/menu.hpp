@@ -8,6 +8,7 @@
 #include "features/web_radar/public_relay_config.hpp"
 #include "features/web_radar/snapshot_recorder.hpp"
 #include "features/skins/skin_changer.hpp"
+#include "features/skins/skin_build_info.hpp"
 #include <Windows.h>
 #include <shellapi.h>
 #include <algorithm>
@@ -166,6 +167,11 @@ namespace menu
     inline std::array<char, 96> skinSearch{};
     inline bool skinDraftDirty = false;
     inline std::string skinSettingsMessage;
+    inline bool skinSettingsError = false;
+    inline std::array<char, 49> skinPresetName{};
+    inline skins::PresetList skinPresets;
+    inline bool skinPresetsLoaded = false;
+    inline int selectedSkinPreset = -1;
 
     // ESP Settings
     inline bool espEnabled = true;
@@ -493,6 +499,7 @@ namespace menu
         skinDraft = loaded.settings;
         skinSettings = std::make_shared<const skins::Settings>(skinDraft);
         skinSettingsMessage = loaded.error;
+        skinSettingsError = !loaded.error.empty();
         skinsEnabled = false;
         skinDraftDirty = false;
         publishRuntimeConfig();
@@ -501,14 +508,22 @@ namespace menu
     inline void applySkinSettings()
     {
         if (!skins::validSettings(skinDraft)) {
+            skinSettingsError = true;
             skinSettingsMessage = "Invalid skin selection. Check wear and pattern values.";
             return;
         }
-        skinSettings = std::make_shared<const skins::Settings>(skinDraft);
+        auto candidate = std::make_shared<const skins::Settings>(skinDraft);
+        const auto error = skins::saveSettings(skinSettingsPath(), skinDraft);
+        if (!error.empty()) {
+            skinSettingsError = true;
+            skinSettingsMessage = error + " Active selections were kept.";
+            return;
+        }
+        skinSettings = std::move(candidate);
         ++skinRequest;
         skinDraftDirty = false;
-        const auto error = skins::saveSettings(skinSettingsPath(), skinDraft);
-        skinSettingsMessage = error.empty() ? "Selections applied and saved." : "Applied for this session. " + error;
+        skinSettingsError = false;
+        skinSettingsMessage = "Selections applied and saved.";
     }
 
     inline int readPersistentInt(
@@ -1835,7 +1850,17 @@ namespace menu
     inline void RenderSkinsPage()
     {
         RenderPageHeader("Skins", "Firearm finishes for offline testing.");
-        const float selectionHeight = 310.0f + (!memory::WritesAllowed() ? 50.0f : 0.0f) +
+        const bool attention = skinStatus.state == skins::State::failed || skinStatus.state == skins::State::readFailed ||
+            skinStatus.state == skins::State::restoring;
+        ImGui::PushStyleColor(ImGuiCol_Text, attention ? ImVec4(1.0f, 0.72f, 0.35f, 1.0f) : ImVec4(0.72f, 0.82f, 0.92f, 1.0f));
+        ImGui::TextWrapped("%s", skins::stateText(skinStatus.state));
+        if (skinStatus.state == skins::State::readFailed ||
+            (skinStatus.state == skins::State::restoring && !skinStatus.sampleFresh && skinStatus.readIssue != game::WeaponReadIssue::none))
+            ImGui::TextWrapped("%s", skins::readIssueText(skinStatus.readIssue));
+        if (skinStatus.state != skins::State::readFailed && attention && skinStatus.lastFailure.code != skins::FailureCode::none)
+            ImGui::TextWrapped("%s", skins::failureText(skinStatus.lastFailure.code));
+        ImGui::PopStyleColor();
+        const float selectionHeight = 350.0f + (!memory::WritesAllowed() ? 50.0f : 0.0f) +
             (skinDraftDirty ? 40.0f : 0.0f) + (!skinSettingsMessage.empty() ? 40.0f : 0.0f);
         BeginCard("##SkinSelection", "Firearm finish", "Choose a finish and apply changes.", selectionHeight);
         ImGui::BeginDisabled(!memory::WritesAllowed());
@@ -1859,6 +1884,21 @@ namespace menu
             }
             ImGui::EndCombo();
         }
+        const bool supportedHeldFirearm = skinStatus.sampleFresh && std::any_of(skinStatus.weapons.begin(), skinStatus.weapons.end(),
+            [](const skins::WeaponDiagnostic& current) { return current.active && skins::weaponName(current.weapon) != "Unsupported weapon"; });
+        ImGui::BeginDisabled(!supportedHeldFirearm);
+        if (ImGui::SmallButton("Use held firearm")) {
+            for (const auto& current : skinStatus.weapons) {
+                if (!current.active || !skinStatus.sampleFresh) continue;
+                for (std::size_t index = 0; index < skins::weapons.size(); ++index) {
+                    if (skins::weapons[index].id == current.weapon) {
+                        selectedSkinWeapon = static_cast<int>(index);
+                        skinSearch.fill('\0');
+                    }
+                }
+            }
+        }
+        ImGui::EndDisabled();
         auto& profile = skinDraft.profiles[static_cast<std::size_t>(selectedSkinWeapon)];
         const auto kit = skins::findPaintKit(profile.weapon, profile.paintKit);
         ImGui::SetNextItemWidth(-1);
@@ -1900,47 +1940,127 @@ namespace menu
         ImGui::BeginDisabled(!skinsEnabled || !memory::WritesAllowed());
         if (ImGui::Button("Reapply")) ++skinRequest;
         ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button("Restore all")) {
+        ImGui::BeginDisabled(!skinsEnabled && skinStatus.trackedWeapons == 0);
+        if (ImGui::Button("Disable & restore")) {
             skinsEnabled = false;
-            skinDraft = skins::Settings{};
-            applySkinSettings();
+            ++skinRequest;
+            skinSettingsMessage = "Restore requested. Saved selections are kept.";
+            skinSettingsError = false;
         }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!skinDraftDirty);
+        if (ImGui::Button("Undo draft")) {
+            skinDraft = *skinSettings;
+            skinSettingsMessage = "Draft restored to the applied selections.";
+            skinSettingsError = false;
+        }
+        ImGui::EndDisabled();
+        if (ImGui::SmallButton("Reset firearm")) profile = {profile.weapon, 0, 0.1f, 0};
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset all drafts")) skinDraft = skins::Settings{};
+        skinDraftDirty = skinDraft != *skinSettings;
         if (skinDraftDirty) ImGui::TextWrapped("Unapplied changes. Existing selections remain active until Apply & save.");
-        if (!skinSettingsMessage.empty()) ImGui::TextWrapped("%s", skinSettingsMessage.c_str());
+        if (!skinSettingsMessage.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, skinSettingsError ? ImVec4(1.0f, 0.65f, 0.3f, 1.0f) : ImVec4(0.65f, 0.78f, 0.88f, 1.0f));
+            ImGui::TextWrapped("%s", skinSettingsMessage.c_str());
+            ImGui::PopStyleColor();
+        }
         EndCard();
 
         ImGui::Spacing();
-        BeginCard("##SkinStatus", "Status", "Check the finish in CS2 after applying.", 265.0f);
-        ImGui::TextWrapped("%s", skins::stateText(skinStatus.state));
-        ImGui::TextWrapped("Applications: %llu  |  Tracked firearms: %zu",
-            static_cast<unsigned long long>(skinStatus.applications), skinStatus.trackedWeapons);
-        ImGui::TextWrapped("Writes: %llu  |  Failures: %llu",
-            static_cast<unsigned long long>(skinStatus.writes), static_cast<unsigned long long>(skinStatus.failures));
-        ImGui::TextWrapped("Restored fields: %llu  |  Changed or retired fields skipped: %llu",
-            static_cast<unsigned long long>(skinStatus.restoredFields), static_cast<unsigned long long>(skinStatus.skippedFields));
-        ImGui::TextWrapped("If the finish stays unchanged, switch weapons or rebuy the firearm. Disabling restores valid weapons you still own.");
-        EndCard();
+        if (ImGui::CollapsingHeader("Presets")) {
+            const auto directory = skinSettingsPath().parent_path() / L"skin-presets";
+            const bool refresh = ImGui::SmallButton("Refresh preset list");
+            if (!skinPresetsLoaded || refresh) {
+                skinPresets = skins::listPresets(directory);
+                skinPresetsLoaded = true;
+                selectedSkinPreset = -1;
+            }
+            const char* preview = selectedSkinPreset >= 0 && static_cast<std::size_t>(selectedSkinPreset) < skinPresets.names.size()
+                ? skinPresets.names[static_cast<std::size_t>(selectedSkinPreset)].c_str() : "Select a saved preset";
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::BeginCombo("##SkinPreset", preview)) {
+                for (std::size_t index = 0; index < skinPresets.names.size(); ++index) {
+                    if (ImGui::Selectable(skinPresets.names[index].c_str(), selectedSkinPreset == static_cast<int>(index))) selectedSkinPreset = static_cast<int>(index);
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::BeginDisabled(selectedSkinPreset < 0 || static_cast<std::size_t>(selectedSkinPreset) >= skinPresets.names.size());
+            if (ImGui::Button("Load as draft")) {
+                const auto loaded = skins::loadPreset(directory, skinPresets.names[static_cast<std::size_t>(selectedSkinPreset)]);
+                skinSettingsError = !loaded.error.empty();
+                if (loaded.error.empty()) {
+                    skinDraft = loaded.settings;
+                    skinDraftDirty = skinDraft != *skinSettings;
+                    skinSettingsMessage = "Preset loaded as a draft. Apply & save to activate it.";
+                } else skinSettingsMessage = loaded.error;
+            }
+            ImGui::EndDisabled();
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputTextWithHint("##SkinPresetName", "Preset name: letters, digits, spaces, - or _", skinPresetName.data(), skinPresetName.size());
+            ImGui::BeginDisabled(!skins::validPresetName(skinPresetName.data()));
+            if (ImGui::Button("Save draft as preset")) {
+                const auto error = skins::savePreset(directory, skinPresetName.data(), skinDraft);
+                skinSettingsError = !error.empty();
+                skinSettingsMessage = error.empty() ? "Draft saved as a preset. A matching name is replaced." : error;
+                skinPresetsLoaded = false;
+            }
+            ImGui::EndDisabled();
+            if (skinPresets.names.empty()) ImGui::TextWrapped("No saved presets yet. Name this draft and save it.");
+            if (!skinPresets.error.empty()) ImGui::TextWrapped("%s", skinPresets.error.c_str());
+        }
 
+        ImGui::Spacing();
+        if (ImGui::CollapsingHeader("Diagnostics")) {
+            if (ImGui::Button("Copy diagnostic report")) {
+                const auto report = skins::diagnosticReport(skinStatus, *skinSettings);
+                ImGui::SetClipboardText(report.c_str());
+                skinSettingsMessage = "Diagnostic report copied.";
+                skinSettingsError = false;
+            }
+            ImGui::TextWrapped("Offsets: %.12s (%s)", skins::build_info::offsetRevision.data(), skins::build_info::offsetDate.data());
+            if (!skinStatus.sampleFresh) ImGui::TextWrapped("Showing the last successful sample; current game data is unavailable or paused.");
+            if (skinStatus.sampleFresh && !skinStatus.inventoryComplete) ImGui::TextWrapped("Partial inventory: %u handles skipped. Recovery records are kept.", skinStatus.skippedHandles);
+            ImGui::TextWrapped("Applications: %llu  |  Tracked firearms: %zu",
+                static_cast<unsigned long long>(skinStatus.applications), skinStatus.trackedWeapons);
+            ImGui::TextWrapped("Writes: %llu  |  Failures: %llu",
+                static_cast<unsigned long long>(skinStatus.writes), static_cast<unsigned long long>(skinStatus.failures));
+            ImGui::TextWrapped("Restored fields: %llu  |  Changed or retired fields skipped: %llu",
+                static_cast<unsigned long long>(skinStatus.restoredFields), static_cast<unsigned long long>(skinStatus.skippedFields));
+            ImGui::TextWrapped("If the finish stays unchanged, switch weapons or rebuy the firearm. Disabling restores valid weapons you still own.");
+        }
         ImGui::Spacing();
         BeginCard("##SkinDiagnostics", "Held firearms", "Finish values read from the game.", 250.0f);
-        if (ImGui::BeginTable("##SkinReadback", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+        if (std::none_of(skinStatus.weapons.begin(), skinStatus.weapons.end(),
+                [](const skins::WeaponDiagnostic& current) { return skins::weaponName(current.weapon) != "Unsupported weapon"; }))
+            ImGui::TextWrapped("No supported firearm in the current sample.");
+        if (ImGui::BeginTable("##SkinReadback", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
             ImGui::TableSetupColumn("Weapon");
-            ImGui::TableSetupColumn("Read-back finish");
-            ImGui::TableSetupColumn("Wear");
+            ImGui::TableSetupColumn("Requested");
+            ImGui::TableSetupColumn("Read back");
+            ImGui::TableSetupColumn("State");
             ImGui::TableHeadersRow();
             for (const auto& current : skinStatus.weapons) {
                 const auto name = skins::weaponName(current.weapon);
                 if (name == "Unsupported weapon") continue;
                 const auto finish = skins::findPaintKit(current.weapon, current.paintKit);
+                const auto target = skins::findPaintKit(current.weapon, current.targetPaintKit);
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::Text("%s%s", name.data(), current.active ? " *" : "");
+                ImGui::TextWrapped("%s%s", name.data(), current.active ? " *" : "");
                 ImGui::TableNextColumn();
-                ImGui::TextUnformatted(!current.readSucceeded ? "Read failed" : finish ? finish->name.data() : "Original / game finish");
+                ImGui::TextWrapped("%s", target ? target->name.data() : "Original");
+                if (target) ImGui::TextWrapped("%.3f / %d", current.targetWear, current.targetSeed);
                 ImGui::TableNextColumn();
-                if (current.readSucceeded) ImGui::Text("%.4f", current.wear);
-                else ImGui::TextUnformatted("--");
+                ImGui::TextWrapped("%s", !current.readSucceeded ? "Read failed" : finish ? finish->name.data() :
+                    current.paintKit > 0 ? "Unknown finish" : "Original");
+                if (current.readSucceeded) ImGui::TextWrapped("%.3f / %d", current.wear, current.seed);
+                ImGui::TableNextColumn();
+                const bool matches = current.readSucceeded && current.paintKit == current.targetPaintKit &&
+                    std::abs(current.wear - current.targetWear) < 0.00001f && current.seed == current.targetSeed;
+                ImGui::TextWrapped("%s", current.failure.code != skins::FailureCode::none ? skins::failureText(current.failure.code) :
+                    !current.targetPaintKit ? "Unconfigured" : matches ? "Data verified" : "Pending");
             }
             ImGui::EndTable();
         }

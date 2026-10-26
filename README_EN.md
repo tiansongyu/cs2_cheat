@@ -71,7 +71,8 @@ Runtime logs are written to `%TEMP%\cs2-esp.log`.
 
 The **Skins** menu adds local firearm finishes for offline testing: 34 firearms,
 1,448 compatible weapon/paint-kit pairs, wear and pattern controls, persistent
-selections, parameter read-back, and guarded restoration. Start with
+selections, parameter read-back, named presets, draft undo, detailed diagnostic reports,
+and guarded restoration with retries for transient reads. Start with
 `--allow-memory-writes`, choose a finish, click **Apply & save**, and enable
 **Enable local skins**. Selections are stored in
 `%LOCALAPPDATA%\AegisCS2\skins-v1.ini`; the feature starts disabled.
@@ -82,6 +83,12 @@ Windows offline-game acceptance. Knives, gloves, stickers, charms, and StatTrak
 are outside this first version. This implementation does not execute code in the
 game or modify account inventory. See the Chinese README for acceptance steps
 and `external-cheat-base/src/features/skins/SOURCE.json` for catalog provenance.
+
+**Disable & restore** preserves saved selections. Reset actions change only the
+draft; **Apply & save** activates it after a successful save. **Presets** can save
+and load drafts; loading a preset does not enable it automatically. **Copy diagnostic
+report** includes the actual build's offset revision and hashes, parameter read-back,
+sampling details and Win32 errors, without process addresses or player identifiers.
 
 ## Radar
 

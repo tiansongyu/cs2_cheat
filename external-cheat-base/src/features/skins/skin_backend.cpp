@@ -5,6 +5,34 @@
 
 namespace skins
 {
+    const char* failureText(const FailureCode code)
+    {
+        switch (code) {
+        case FailureCode::none: return "None";
+        case FailureCode::invalidProfile: return "The selected finish or parameters are invalid";
+        case FailureCode::ownershipChanged: return "The weapon identity or owner changed";
+        case FailureCode::ownershipRead: return "Could not revalidate weapon ownership";
+        case FailureCode::parameterRead: return "Could not read finish fields; check offsets";
+        case FailureCode::invalidParameter: return "Finish fields have unexpected values; check offsets";
+        case FailureCode::attributeRead: return "Could not read existing finish attributes";
+        case FailureCode::invalidAttributes: return "The attribute container layout is invalid";
+        case FailureCode::guardRead: return "Could not read a model or attribute guard";
+        case FailureCode::guardChanged: return "The model or attribute allocation changed";
+        case FailureCode::preconditionChanged: return "The game changed a field before application";
+        case FailureCode::writeDenied: return "Memory writes are locked";
+        case FailureCode::writeFailed: return "A memory write failed; rollback was requested";
+        case FailureCode::readbackFailed: return "Written parameters could not be verified";
+        case FailureCode::restoreRead: return "Restore is waiting for a readable weapon";
+        case FailureCode::restoreWrite: return "A restore write could not be verified";
+        }
+        return "Unknown";
+    }
+
+    bool MemoryBackend::fail(const FailureCode code)
+    {
+        failure_ = {code, memory_.lastError()};
+        return false;
+    }
     namespace
     {
         std::uint32_t floatBits(const float value)
@@ -22,14 +50,15 @@ namespace skins
         return address && size > 0 && size <= sizeof(value) && memory_.read(address, &value, size);
     }
 
-    bool MemoryBackend::guardsMatch(const Mutation& mutation)
+    game::AccessResult MemoryBackend::guardsMatch(const Mutation& mutation)
     {
         for (const auto& guard : mutation.guards) {
             if (!guard.address) continue;
             std::uint64_t current = 0;
-            if (!readBits(guard.address, guard.size, current) || current != guard.value) return false;
+            if (!readBits(guard.address, guard.size, current)) return game::AccessResult::unreadable;
+            if (current != guard.value) return game::AccessResult::stale;
         }
-        return true;
+        return game::AccessResult::valid;
     }
 
     bool MemoryBackend::append(std::vector<Mutation>& mutations, const std::uintptr_t address,
@@ -37,7 +66,7 @@ namespace skins
                                const std::array<ValueGuard, 4>& guards, const bool restore)
     {
         std::uint64_t before = 0;
-        if (!readBits(address, size, before)) return false;
+        if (!readBits(address, size, before)) return fail(FailureCode::parameterRead);
         if (before != value) mutations.push_back({address, before, value, size, guards, restore, false});
         return true;
     }
@@ -75,8 +104,8 @@ namespace skins
         struct AttributeVector { std::uint64_t count; std::uintptr_t elements; };
         AttributeVector attributes{};
         const auto address = item + layout_.attributeList + layout_.attributes;
-        if (!memory_.readValue(address, attributes) || attributes.count > 64 ||
-            (attributes.count && !attributes.elements)) return false;
+        if (!memory_.readValue(address, attributes)) return fail(FailureCode::attributeRead);
+        if (attributes.count > 64 || (attributes.count && !attributes.elements)) return fail(FailureCode::invalidAttributes);
         // Existing attributes can override fallback values. Update only the
         // finish attributes already owned by this item; never replace its vector.
         const std::array<ValueGuard, 4> guards{{
@@ -85,7 +114,7 @@ namespace skins
         for (std::uint64_t index = 0; index < attributes.count; ++index) {
             const auto attribute = attributes.elements + index * layout_.attributeStride;
             std::uint16_t definition = 0;
-            if (!memory_.readValue(attribute + layout_.attributeDefinition, definition)) return false;
+            if (!memory_.readValue(attribute + layout_.attributeDefinition, definition)) return fail(FailureCode::attributeRead);
             float value = 0;
             switch (definition) {
             case 6: value = static_cast<float>(profile.paintKit); break;
@@ -106,9 +135,12 @@ namespace skins
                              const bool forceRefresh, std::vector<Mutation>& mutations)
     {
         mutations.clear();
+        failure_ = {};
         const PaintKit* kit = findPaintKit(profile.weapon, profile.paintKit);
-        if (!kit || !validProfile(profile) || weapon.definition != profile.weapon ||
-            !access_.stillOwned(weapon.key)) return false;
+        if (!kit || !validProfile(profile) || weapon.definition != profile.weapon) return fail(FailureCode::invalidProfile);
+        const auto ownership = access_.ownership(weapon.key);
+        if (ownership != game::AccessResult::valid) return fail(ownership == game::AccessResult::unreadable
+            ? FailureCode::ownershipRead : FailureCode::ownershipChanged);
         const auto entity = weapon.key.entity;
         const auto item = entity + access_.layout().attributeManager + access_.layout().item;
         std::uint16_t definition = 0;
@@ -119,14 +151,17 @@ namespace skins
         std::uint8_t disallow = 0;
         std::uint8_t visuals = 0;
         // Plausibility is an additional guard, never proof that offsets match.
-        if (!memory_.readValue(entity + layout_.paintKit, currentPaint) || currentPaint < -1 || currentPaint > 10000 ||
-            !memory_.readValue(entity + layout_.seed, currentSeed) || currentSeed < -1 || currentSeed > 1000 ||
-            !memory_.readValue(entity + layout_.wear, currentWear) || !std::isfinite(currentWear) || currentWear < 0 || currentWear > 1 ||
-            !memory_.readValue(item + layout_.initialized, initialized) || initialized > 1 ||
-            !memory_.readValue(item + layout_.disallowSoc, disallow) || disallow > 1 ||
-            !memory_.readValue(entity + layout_.visualsDataSet, visuals) || visuals > 1) return false;
-        if (!memory_.readValue(item + access_.layout().definition, definition) || definition != profile.weapon ||
-            !append(mutations, entity + layout_.paintKit, static_cast<std::uint32_t>(profile.paintKit), 4) ||
+        if (!memory_.readValue(entity + layout_.paintKit, currentPaint) ||
+            !memory_.readValue(entity + layout_.seed, currentSeed) ||
+            !memory_.readValue(entity + layout_.wear, currentWear) ||
+            !memory_.readValue(item + layout_.initialized, initialized) ||
+            !memory_.readValue(item + layout_.disallowSoc, disallow) ||
+            !memory_.readValue(entity + layout_.visualsDataSet, visuals) ||
+            !memory_.readValue(item + access_.layout().definition, definition)) return fail(FailureCode::parameterRead);
+        if (currentPaint < -1 || currentPaint > 10000 || currentSeed < -1 || currentSeed > 1000 ||
+            !std::isfinite(currentWear) || currentWear < 0 || currentWear > 1 || initialized > 1 ||
+            disallow > 1 || visuals > 1 || definition != profile.weapon) return fail(FailureCode::invalidParameter);
+        if (!append(mutations, entity + layout_.paintKit, static_cast<std::uint32_t>(profile.paintKit), 4) ||
             !append(mutations, entity + layout_.seed, static_cast<std::uint32_t>(profile.seed), 4) ||
             !append(mutations, entity + layout_.wear, floatBits(profile.wear), 4) ||
             !appendAttributes(mutations, item, profile) ||
@@ -176,14 +211,25 @@ namespace skins
     WriteResult MemoryBackend::apply(const game::WeaponKey& key, std::vector<Mutation>& mutations)
     {
         WriteResult result;
+        failure_ = {};
         if (!writesAllowed()) {
+            fail(FailureCode::writeDenied);
             result.failures = 1;
             return result;
         }
         for (auto& mutation : mutations) {
             std::uint64_t current = 0;
-            if (!access_.stillOwned(key) || !guardsMatch(mutation) ||
+            const auto owner = access_.ownership(key);
+            if (owner != game::AccessResult::valid) {
+                fail(owner == game::AccessResult::unreadable ? FailureCode::ownershipRead : FailureCode::ownershipChanged);
+                result.failures = 1;
+                break;
+            }
+            const auto guards = guardsMatch(mutation);
+            if (guards != game::AccessResult::valid ||
                 !readBits(mutation.address, mutation.size, current) || current != mutation.before) {
+                fail(guards == game::AccessResult::unreadable ? FailureCode::guardRead :
+                    guards == game::AccessResult::stale ? FailureCode::guardChanged : FailureCode::preconditionChanged);
                 result.failures = 1;
                 break;
             }
@@ -191,7 +237,14 @@ namespace skins
             // read fails. A later guarded restore can then recover that field.
             mutation.written = true;
             const bool wrote = memory_.write(mutation.address, &mutation.after, mutation.size);
+            const auto writeError = memory_.lastError();
             ++result.writes;
+            if (!mutation.restore && wrote) {
+                // The game can consume this pulse immediately. Only durable
+                // parameters participate in exact read-back and restoration.
+                mutation.written = false;
+                continue;
+            }
             const bool readBack = readBits(mutation.address, mutation.size, current);
             if (!wrote || !readBack || current != mutation.after) {
                 if (!wrote && readBack && current != mutation.after && current != mutation.before) {
@@ -208,11 +261,16 @@ namespace skins
                     if (partial) mutation.after = current;
                 }
                 result.failures = 1;
+                fail(wrote ? FailureCode::readbackFailed : FailureCode::writeFailed);
+                if (!wrote) failure_.nativeError = writeError;
                 break;
             }
         }
         if (result.failures) {
+            const auto primaryFailure = failure_;
             const auto rollback = restore(key, mutations);
+            failure_ = primaryFailure;
+            result.writes += rollback.writes;
             result.restored += rollback.restored;
             result.skipped += rollback.skipped;
             result.failures += rollback.failures;
@@ -222,27 +280,54 @@ namespace skins
         return result;
     }
 
-    void MemoryBackend::invalidate(const game::WeaponKey& key)
+    void MemoryBackend::invalidate(const game::WeaponKey& key, WriteResult& result)
     {
         if (!access_.stillOwned(key)) return;
         std::uint8_t current = 0;
         if (memory_.readValue(key.entity + layout_.visualsDataSet, current) && current == 1) {
             const std::uint8_t clear = 0;
-            memory_.write(key.entity + layout_.visualsDataSet, &clear, sizeof(clear));
+            ++result.writes;
+            if (!memory_.write(key.entity + layout_.visualsDataSet, &clear, sizeof(clear))) {
+                ++result.failures;
+                fail(FailureCode::restoreWrite);
+            }
         }
     }
 
     WriteResult MemoryBackend::restore(const game::WeaponKey& key, std::vector<Mutation>& mutations)
     {
         WriteResult result;
+        failure_ = {};
         if (!writesAllowed()) {
+            fail(FailureCode::writeDenied);
             result.failures = 1;
             return result;
         }
         for (auto iterator = mutations.rbegin(); iterator != mutations.rend(); ++iterator) {
             auto& mutation = *iterator;
             if (!mutation.written) continue;
-            if (!mutation.restore || !access_.stillOwned(key) || !guardsMatch(mutation)) {
+            if (!mutation.restore) {
+                mutation.written = false;
+                continue;
+            }
+            const auto owner = access_.ownership(key);
+            if (owner == game::AccessResult::unreadable) {
+                ++result.failures;
+                fail(FailureCode::restoreRead);
+                continue;
+            }
+            if (owner == game::AccessResult::stale) {
+                mutation.written = false;
+                ++result.skipped;
+                continue;
+            }
+            const auto guards = guardsMatch(mutation);
+            if (guards == game::AccessResult::unreadable) {
+                ++result.failures;
+                fail(FailureCode::restoreRead);
+                continue;
+            }
+            if (guards == game::AccessResult::stale) {
                 mutation.written = false;
                 ++result.skipped;
                 continue;
@@ -254,6 +339,11 @@ namespace skins
             std::uint64_t current = 0;
             if (!readBits(mutation.address, mutation.size, current)) {
                 ++result.failures;
+                fail(FailureCode::restoreRead);
+                continue;
+            }
+            if (current == mutation.before) {
+                mutation.written = false;
                 continue;
             }
             if (current != mutation.after) {
@@ -261,26 +351,30 @@ namespace skins
                 ++result.skipped;
                 continue;
             }
+            ++result.writes;
             if (!memory_.write(mutation.address, &mutation.before, mutation.size) ||
                 !readBits(mutation.address, mutation.size, current) || current != mutation.before) {
                 ++result.failures;
+                fail(FailureCode::restoreWrite);
                 continue;
             }
-            ++result.writes;
             mutation.written = false;
             ++result.restored;
         }
-        if (result.restored) invalidate(key);
+        if (result.restored) invalidate(key, result);
         result.succeeded = result.failures == 0;
         return result;
     }
 
     WeaponDiagnostic MemoryBackend::inspect(const game::LocalWeapon& weapon)
     {
-        WeaponDiagnostic result{weapon.definition, 0, 0, weapon.active, false};
+        WeaponDiagnostic result{};
+        result.weapon = weapon.definition;
+        result.active = weapon.active;
         result.readSucceeded = access_.stillOwned(weapon.key) &&
             memory_.readValue(weapon.key.entity + layout_.paintKit, result.paintKit) &&
             memory_.readValue(weapon.key.entity + layout_.wear, result.wear) &&
+            memory_.readValue(weapon.key.entity + layout_.seed, result.seed) &&
             std::isfinite(result.wear);
         return result;
     }

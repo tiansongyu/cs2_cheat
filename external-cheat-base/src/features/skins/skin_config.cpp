@@ -1,6 +1,8 @@
 #include "skin_config.hpp"
 
 #include <charconv>
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -79,20 +81,25 @@ namespace skins
         Settings candidate;
         WeaponSkinConfig* profile = nullptr;
         std::array<bool, weapons.size()> seen{};
+        std::array<unsigned, weapons.size()> fields{};
+        unsigned* profileFields = nullptr;
+        unsigned lineNumber = 0;
         bool metadata = false;
         bool schemaSeen = false;
         std::string line;
-        const auto reject = [&result]() {
-            result.error = "Invalid skin settings. No profiles were loaded.";
+        const auto reject = [&result, &lineNumber]() {
+            result.error = "Invalid skin settings near line " + std::to_string(lineNumber) + ". No profiles were loaded.";
             return result;
         };
         while (std::getline(file, line)) {
+            if (++lineNumber == 1 && line.starts_with("\xEF\xBB\xBF")) line.erase(0, 3);
             const auto text = trim(line);
             if (text.empty() || text.front() == ';' || text.front() == '#') continue;
             if (text.front() == '[') {
                 if (text.back() != ']') return reject();
                 const auto section = text.substr(1, text.size() - 2);
                 profile = nullptr;
+                profileFields = nullptr;
                 metadata = section == "skins";
                 if (section.starts_with("weapon_")) {
                     int id = 0;
@@ -102,6 +109,7 @@ namespace skins
                             if (seen[index]) return reject();
                             seen[index] = true;
                             profile = &candidate.profiles[index];
+                            profileFields = &fields[index];
                             break;
                         }
                     }
@@ -117,10 +125,16 @@ namespace skins
                 if (schemaSeen || value != "1") return reject();
                 schemaSeen = true;
             } else if (profile) {
+                const unsigned field = key == "paint_kit" ? 1 : key == "wear" ? 2 : key == "seed" ? 4 : 0;
+                if (field && (*profileFields & field)) return reject();
+                *profileFields |= field;
                 if (key == "paint_kit" && !parseInt(value, profile->paintKit)) return reject();
                 if (key == "wear" && !parseFloat(value, profile->wear)) return reject();
                 if (key == "seed" && !parseInt(value, profile->seed)) return reject();
             }
+        }
+        for (std::size_t index = 0; index < seen.size(); ++index) {
+            if (seen[index] && fields[index] != 7) return reject();
         }
         if (!file.eof() || !schemaSeen || !validSettings(candidate)) return reject();
         result.settings = candidate;
@@ -137,6 +151,7 @@ namespace skins
         temporary += L".tmp";
         {
             std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+            if (!file) return "Could not open temporary skin settings. The previous file was kept.";
             file.imbue(std::locale::classic());
             file << "[skins]\nschema=1\n" << std::setprecision(9);
             for (const auto& profile : settings.profiles) {
@@ -144,7 +159,11 @@ namespace skins
                      << "\nwear=" << profile.wear << "\nseed=" << profile.seed << '\n';
             }
             file.flush();
-            if (!file) return "Could not write skin settings. The previous file was kept.";
+            file.close();
+            if (!file) {
+                std::filesystem::remove(temporary, error);
+                return "Could not write skin settings. The previous file was kept.";
+            }
         }
 #ifdef _WIN32
         if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
@@ -159,5 +178,66 @@ namespace skins
         }
 #endif
         return {};
+    }
+
+    bool validPresetName(const std::string_view name)
+    {
+        if (name.empty() || name.size() > 48 || name.front() == ' ' || name.back() == ' ') return false;
+        std::string upper;
+        for (const unsigned char character : name) {
+            if (!((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+                  (character >= '0' && character <= '9') || character == ' ' || character == '-' || character == '_')) return false;
+            upper.push_back(static_cast<char>(std::toupper(character)));
+        }
+        if (upper == "CON" || upper == "PRN" || upper == "AUX" || upper == "NUL") return false;
+        return !(upper.size() == 4 && (upper.starts_with("COM") || upper.starts_with("LPT")) &&
+                 upper.back() >= '1' && upper.back() <= '9');
+    }
+
+    PresetList listPresets(const std::filesystem::path& directory)
+    {
+        PresetList result;
+        std::error_code error;
+        if (!std::filesystem::exists(directory, error)) {
+            if (error) result.error = "Could not inspect the preset directory.";
+            return result;
+        }
+        std::filesystem::directory_iterator iterator(directory, error);
+        unsigned visited = 0;
+        while (!error && iterator != std::filesystem::directory_iterator{}) {
+            if (++visited > 256 || result.names.size() >= 64) {
+                result.error = "Preset list is limited to 64 presets and 256 directory entries.";
+                break;
+            }
+            const auto entry = *iterator;
+            // Presets must be ordinary files, never links outside this directory.
+            const auto status = entry.symlink_status(error);
+            if (error) break;
+            if (std::filesystem::is_regular_file(status) && entry.path().extension() == ".ini") {
+                const auto encoded = entry.path().stem().u8string();
+                const std::string name(reinterpret_cast<const char*>(encoded.data()), encoded.size());
+                if (validPresetName(name)) result.names.push_back(name);
+            }
+            iterator.increment(error);
+        }
+        if (error) result.error = "Could not list presets.";
+        std::sort(result.names.begin(), result.names.end());
+        return result;
+    }
+
+    std::string savePreset(const std::filesystem::path& directory, const std::string_view name, const Settings& settings)
+    {
+        if (!validPresetName(name)) return "Use 1-48 letters, digits, spaces, - or _ for the preset name.";
+        return saveSettings(directory / (std::string(name) + ".ini"), settings);
+    }
+
+    LoadResult loadPreset(const std::filesystem::path& directory, const std::string_view name)
+    {
+        if (!validPresetName(name)) return {Settings{}, "Invalid preset name."};
+        const auto path = directory / (std::string(name) + ".ini");
+        std::error_code error;
+        const auto status = std::filesystem::symlink_status(path, error);
+        if (error || !std::filesystem::is_regular_file(status)) return {Settings{}, "Preset is missing or is not an ordinary file."};
+        return loadSettings(path);
     }
 }
