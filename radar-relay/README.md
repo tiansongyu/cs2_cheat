@@ -185,13 +185,18 @@ dependency:
 docker build -f radar-relay/Dockerfile --target build -t radar-relay-test .
 ```
 
-For a local Go 1.26.5 installation:
+For a local Go installation matching the `toolchain` in [go.mod](go.mod):
 
 ```bash
 cd radar-relay
 go test -mod=vendor -race ./...
 go vet -mod=vendor ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 ```
+
+Keep the toolchain in `go.mod` and the pinned Go build image in `Dockerfile`
+updated together. CI scans the standard library as well as external dependencies,
+so Go security patches are required even when the application code is unchanged.
 
 Tests cover authentication, strict Origin handling, secure cookies, session
 expiry, single-producer enforcement, latest-frame delivery/TTL, viewer caps,
