@@ -363,3 +363,8 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+# Sphinx documentation
+.venv-docs/
+docs/_build/
+# Keep the documentation page despite the repository-wide build* rule.
+!docs/site/build.md

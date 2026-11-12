@@ -13,6 +13,10 @@
 > [!WARNING]
 > 本项目仅用于逆向工程和图形渲染学习。仅可在使用 `-insecure` 启动的离线环境中运行，禁止用于 VAC 服务器或任何在线游戏。使用者须自行承担不当使用造成的风险。
 
+## 项目文档站
+
+文档站采用 Sphinx 与 Read the Docs 主题：[在线文档](https://tiansongyu.github.io/cs2_cheat/) · [本地构建与发布](docs/site/publishing.md)。包含项目概览、构建指南、模块说明、Radar 与故障排查。
+
 ## 学习资料
 
 | 主题 | 视频 | 文档 |

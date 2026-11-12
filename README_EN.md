@@ -13,6 +13,10 @@ An educational CS2 external ESP project built with SDL2, Dear ImGui, and C++20. 
 > [!WARNING]
 > This project is intended only for learning reverse engineering and graphics rendering. Run it only in an offline environment launched with `-insecure`. Do not use it on VAC servers or in any online game. You are responsible for the consequences of misuse.
 
+## Documentation website
+
+The Chinese documentation uses Sphinx and the Read the Docs theme: [online documentation](https://tiansongyu.github.io/cs2_cheat/) · [build and publishing guide](docs/site/publishing.md).
+
 ## Learning Resources
 
 | Topic | Video | Documentation |

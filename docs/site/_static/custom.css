@@ -1,0 +1,15 @@
+/* Preserve the Read the Docs theme; improve Chinese text and wide tables. */
+body, .wy-body-for-nav, h1, h2, h3, h4, h5, h6 {
+  font-family: Lato, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+}
+.rst-content p, .rst-content li { line-height: 1.8; }
+.wy-nav-content { max-width: 1000px; }
+.rst-content .wy-table-responsive table td,
+.rst-content .wy-table-responsive table th { white-space: normal; }
+a:focus-visible, button:focus-visible, input:focus-visible {
+  outline: 3px solid #b95700;
+  outline-offset: 3px;
+}
+@media (max-width: 768px) {
+  .wy-nav-content { padding: 1.5em; }
+}
