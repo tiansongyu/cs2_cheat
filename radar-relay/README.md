@@ -178,8 +178,8 @@ within `shutdownTimeoutSeconds`.
 
 ## Test
 
-The module targets the pinned Go 1.26 toolchain and vendors its only external
-dependency:
+The module targets the pinned Go 1.26 toolchain and vendors its external
+dependencies:
 
 ```bash
 docker build -f radar-relay/Dockerfile --target build -t radar-relay-test .

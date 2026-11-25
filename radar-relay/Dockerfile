@@ -30,6 +30,8 @@ COPY --from=web --chown=65532:65532 /web-radar/dist /srv/web-radar
 COPY --chown=65532:65532 LICENSE /licenses/project-LICENSE
 COPY --chown=65532:65532 radar-relay/THIRD_PARTY_NOTICES.md /licenses/THIRD_PARTY_NOTICES.md
 COPY --chown=65532:65532 radar-relay/vendor/github.com/gorilla/websocket/LICENSE /licenses/gorilla-websocket-LICENSE
+COPY --chown=65532:65532 radar-relay/vendor/golang.org/x/net/LICENSE /licenses/golang-x-net-LICENSE
+COPY --chown=65532:65532 radar-relay/vendor/golang.org/x/net/PATENTS /licenses/golang-x-net-PATENTS
 
 USER 65532:65532
 EXPOSE 8080
